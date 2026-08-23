@@ -9,9 +9,27 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 
 const ROLES = ['admin', 'purchase', 'store', 'inspector', 'authorized', 'production'];
 
+// The browser calls this function directly (not proxied through Vercel),
+// so it's a cross-origin request from the app's own domain — the browser
+// sends a preflight OPTIONS request first, and without these headers on
+// every response (including the OPTIONS one) it never even reaches the
+// POST handling below. This is what the Supabase client's "Failed to send
+// a request to the Edge Function" actually means in practice.
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+};
+
 Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { headers: corsHeaders });
+  }
   if (req.method !== 'POST') {
-    return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405 });
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+      status: 405,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
   }
 
   const authHeader = req.headers.get('Authorization') || '';
@@ -27,23 +45,38 @@ Deno.serve(async (req) => {
   });
   const { data: caller } = await callerClient.auth.getUser();
   if (!caller?.user) {
-    return new Response(JSON.stringify({ error: 'Not authenticated.' }), { status: 401 });
+    return new Response(JSON.stringify({ error: 'Not authenticated.' }), {
+      status: 401,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
   }
 
   const { data: isAdmin } = await callerClient.rpc('is_admin', { uid: caller.user.id });
   if (!isAdmin) {
-    return new Response(JSON.stringify({ error: 'Only an admin can invite users.' }), { status: 403 });
+    return new Response(JSON.stringify({ error: 'Only an admin can invite users.' }), {
+      status: 403,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
   }
 
   const { name, email, role } = await req.json();
   if (!name || !String(name).trim()) {
-    return new Response(JSON.stringify({ error: 'Name is required.' }), { status: 400 });
+    return new Response(JSON.stringify({ error: 'Name is required.' }), {
+      status: 400,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
   }
   if (!email || !String(email).trim()) {
-    return new Response(JSON.stringify({ error: 'Email is required.' }), { status: 400 });
+    return new Response(JSON.stringify({ error: 'Email is required.' }), {
+      status: 400,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
   }
   if (role !== null && !ROLES.includes(role)) {
-    return new Response(JSON.stringify({ error: `Invalid role: ${role}` }), { status: 400 });
+    return new Response(JSON.stringify({ error: `Invalid role: ${role}` }), {
+      status: 400,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
   }
 
   // Service-role client for the two privileged steps below — creating the
@@ -53,7 +86,10 @@ Deno.serve(async (req) => {
 
   const { data: invited, error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(email);
   if (inviteError) {
-    return new Response(JSON.stringify({ error: inviteError.message }), { status: 400 });
+    return new Response(JSON.stringify({ error: inviteError.message }), {
+      status: 400,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
   }
 
   const { error: profileError } = await adminClient.from('users').insert({
@@ -64,11 +100,14 @@ Deno.serve(async (req) => {
     status: 'active',
   });
   if (profileError) {
-    return new Response(JSON.stringify({ error: profileError.message }), { status: 400 });
+    return new Response(JSON.stringify({ error: profileError.message }), {
+      status: 400,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
   }
 
   return new Response(JSON.stringify({ id: invited.user.id }), {
     status: 200,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   });
 });
