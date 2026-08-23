@@ -24,5 +24,15 @@ design tokens ported as-is. Added:
 
 Not yet done, tracked as open items in `README.md`: the real Claude Design
 mockup hasn't been shared, so nav labels/layout are provisional; role list
-isn't finalized; Vercel/Supabase projects aren't created yet (outside this
-session's tooling).
+isn't finalized.
+
+## Fix: self-heal `users.role` NOT NULL drift in schema.sql
+
+Live Phase 0 deploy testing hit "null value in column role violates
+not-null constraint" on sign-up — the deployed `users` table had `role`
+NOT NULL despite `schema.sql` defining it as nullable, because `create
+table if not exists` is a no-op against a table that already existed from
+an earlier run. Added `alter table public.users alter column role drop
+not null;` right after the table creation so re-running the file repairs
+this drift (a no-op when the column's already nullable). Also confirmed:
+Vercel + Supabase are live and Phase 0 sign-up/sign-in works end to end.

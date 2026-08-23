@@ -24,6 +24,16 @@ create table if not exists public.users (
   created_at timestamptz not null default now()
 );
 
+-- `create table if not exists` above is a no-op against a `users` table
+-- that already exists from an earlier run — including one created with a
+-- different `role` definition than intended here. Observed in practice: a
+-- table created before this file's `role text null` was in place ended up
+-- with `role` NOT NULL, which then broke every sign-up with "null value in
+-- column role violates not-null constraint" until fixed by hand. This line
+-- makes re-running this file self-healing for that specific drift — a
+-- no-op if the column is already nullable, so it's safe on every run.
+alter table public.users alter column role drop not null;
+
 alter table public.users enable row level security;
 
 -- Every user can read their own profile row.
