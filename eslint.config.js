@@ -28,6 +28,16 @@ export default [
     },
   },
   {
+    files: ['e2e/**/*.js'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      // Playwright spec files run under Node, but page.evaluate() callbacks
+      // execute in the browser — both sets of globals apply here.
+      globals: { ...globals.node, ...globals.browser },
+    },
+  },
+  {
     ignores: ['dist/**', 'node_modules/**', 'design-reference/**'],
   },
 ];

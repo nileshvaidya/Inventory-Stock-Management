@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # Deliberately no VITE_SUPABASE_* env vars here: unit tests must never
+      # depend on network reachability. With them set, `supabase` becomes a
+      # real (but unreachable) client and any module that fetches on
+      # render could hang or time out against the placeholder host instead
+      # of failing fast.
+      - name: Unit tests (Vitest)
+        run: npm test
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      # e2e tests mock the entire Supabase HTTP layer via page.route() and
+      # run against demo mode + a placeholder URL — no real Supabase
+      # project needed here. Real RLS/RPC behavior is exercised separately
+      # by the `integration` job below, against a live database.
+      - name: E2E tests (Playwright)
+        run: npm run e2e
+        env:
+          VITE_SUPABASE_URL: https://placeholder.supabase.co
+          VITE_SUPABASE_ANON_KEY: placeholder-anon-key
+
+      - name: Build
+        run: npm run build
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || 'https://placeholder.supabase.co' }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || 'placeholder-anon-key' }}
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 14
+
+  integration:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Check for Supabase integration secrets
+        id: check_secrets
+        run: |
+          if [ -n "${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" ]; then
+            echo "has_secrets=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_secrets=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: RLS/RPC integration tests (real Supabase project)
+        if: steps.check_secrets.outputs.has_secrets == 'true'
+        run: npm run test:integration
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+
+      - name: Skipped (no integration secrets configured)
+        if: steps.check_secrets.outputs.has_secrets != 'true'
+        run: |
+          echo "::warning::SUPABASE_SERVICE_ROLE_KEY repo secret not set — RLS integration tests skipped. Add SUPABASE_URL, SUPABASE_ANON_KEY, and SUPABASE_SERVICE_ROLE_KEY under Settings > Secrets and variables > Actions to enable them."

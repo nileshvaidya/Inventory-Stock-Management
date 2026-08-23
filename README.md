@@ -6,8 +6,14 @@ invoice/bill-payment management for ASK Info-Solutions LLP.
 - **Frontend**: plain HTML + Tailwind CSS + vanilla JS (ES modules), no UI
   framework. Vite is the dev server/bundler only.
 - **Auth + DB**: Supabase (Postgres + Row Level Security + Supabase Auth).
-- **Testing**: Vitest + jsdom (unit/logic), ESLint + `tsc --noEmit`
-  (lint/typecheck).
+- **Testing**: Vitest + jsdom (unit/logic), Playwright (e2e, against demo
+  mode + a mocked Supabase HTTP layer — no live project needed), Node
+  integration scripts (`scripts/test-rls-*.mjs`, real RLS/RPC checks
+  against a live Supabase project), ESLint + `tsc --noEmit` (lint/typecheck).
+- **CI/CD**: GitHub Actions (lint → typecheck → unit → e2e → build, plus an
+  `integration` job for the RLS scripts) on every push/PR — see Testing
+  below for what each layer covers and the secrets the integration job
+  needs.
 - **Deploy**: Vercel, backed by Supabase.
 
 This scaffold, its folder conventions, the Nocturne design-token system,
@@ -45,12 +51,49 @@ src/
     tailwind-base.css                                   # @tailwind base
     nocturne.css                                          # design tokens/components, ported from Task_Management
     tailwind-components-utilities.css                       # @tailwind components/utilities
+e2e/
+  phase0.spec.js            # Playwright — auth guard, sign-up validation, inactive-user block, sign-out
+  phase1.spec.js              # Playwright — nav permission matrix, route guards, Users & Roles screen
+scripts/
+  test-rls-users.mjs          # RLS/RPC integration tests against a REAL Supabase project (CI's `integration` job)
 supabase/
   schema.sql               # running source of truth for the DB schema + RLS
   README.md                  # Supabase project setup steps
   functions/
     admin-invite-user/       # Edge Function: creates the auth user + profile row for "Add User"
+.github/workflows/ci.yml   # lint → typecheck → unit → e2e → build, + a separate RLS integration job
 ```
+
+## Testing
+
+Three layers, each covering what the others can't:
+
+- **Unit tests** (`npm test`): pure logic — form validation, the
+  nav-permission matrix, routing. No network, no DOM beyond jsdom.
+- **E2E tests** (`npm run e2e`): full page interactions against demo mode
+  with the entire Supabase HTTP layer mocked via Playwright's
+  `page.route()` — sidebar visibility per role, route guards, dialog
+  validation, the sign-in/sign-out flow. Runs anywhere, no live Supabase
+  project needed, which is also why some Phase 0 signup-validation tests
+  assert "Supabase never got called" rather than which specific error
+  banner shows — several fields carry native HTML constraints
+  (`type="email"`, `minlength`) that match the JS validation exactly, and
+  a real browser blocks the form submission via its own native UI before
+  our JS ever runs for those particular invalid values.
+- **Integration tests** (`npm run test:integration`,
+  `scripts/test-rls-users.mjs`): the one thing the above two can't cover —
+  whether RLS policies and the security-definer RPCs actually enforce what
+  they claim against a real Postgres database. Needs `SUPABASE_URL`,
+  `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` (service role only ever
+  used to create/delete throwaway test users; every assertion runs through
+  an anon-key client signed in as one of them, same as the real app).
+
+CI runs all three on every push/PR. The `integration` job needs those same
+three values as **GitHub Actions repo secrets** (Settings → Secrets and
+variables → Actions → New repository secret) — without them it logs a
+warning and skips rather than failing the whole pipeline. Point them at a
+disposable/staging Supabase project if you have one, not production — the
+script creates and deletes real auth users on every run.
 
 ## Local development
 

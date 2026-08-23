@@ -11,10 +11,13 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "e2e": "playwright test",
+    "test:integration": "node scripts/test-rls-users.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.11.0",
+    "@playwright/test": "^1.47.0",
     "@testing-library/dom": "^10.4.0",
     "@types/node": "^22.7.4",
     "@vitest/coverage-v8": "^2.1.0",
