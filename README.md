@@ -16,7 +16,7 @@ and the auth/layout patterns are ported directly from the
 app, per the build brief. See `design-reference/README.md` for what's
 pending from the real Claude Design mockup.
 
-**Current status: Phase 0 (scaffold, auth, base shell) — see Phase 0 below.**
+**Current status: Phase 1 (User & Role Management) — see Phase 1 below.**
 
 ## Project layout
 
@@ -27,22 +27,29 @@ src/
   router.js                 # hash router + auth guard (one entry per sidebar module)
   api.js                      # Supabase client
   auth.js                       # session/profile helpers, signIn/signUp/signOutUser
-  validation.js                   # pure form-validation logic
-  demoMode.js                       # VITE_DEMO_MODE + ?demoRole= dev bypass
-  state.js                            # small in-memory store + pub-sub
-  layout.js                             # shared app shell (desktop sidebar / mobile top bar+tabs)
-  components.js                           # shared render helpers (escapeHtml, renderIdentityBlock, ...)
-  placeholderScreen.js                      # factory for "coming in Phase N" module screens
-  screens/                                    # one file per sidebar module — login.js, dashboard.js,
-                                                 help.js are real; the rest are Phase 0 placeholders
-                                                 that later phases replace render() in
+  admin.js                        # Users & Roles data layer (fetchAdminUsers/inviteUser/setUserRole/setUserStatus)
+  roles.js                          # confirmed role list — app-layer source of truth, mirrors schema.sql's CHECK
+  navPermissions.js                   # role -> visible-module matrix (sidebar + route guards read this)
+  validation.js                         # pure form-validation logic
+  demoMode.js                             # VITE_DEMO_MODE + ?demoRole= dev bypass
+  state.js                                  # small in-memory store + pub-sub
+  layout.js                                   # shared app shell (desktop sidebar / mobile top bar+tabs)
+  components.js                                 # shared render helpers (escapeHtml, renderIdentityBlock, ...)
+  placeholderScreen.js                            # factory for "coming in Phase N" module screens;
+                                                     applies the navPermissions route guard for every placeholder
+  screens/                                          # one file per sidebar module — login.js, dashboard.js,
+                                                       help.js, users.js are real; the rest are placeholders
+  dialogs/
+    addUserDialog.js                                  # "Add User" modal (Phase 1)
   styles/
-    tailwind-base.css                            # @tailwind base
-    nocturne.css                                    # design tokens/components, ported from Task_Management
-    tailwind-components-utilities.css                 # @tailwind components/utilities
+    tailwind-base.css                                   # @tailwind base
+    nocturne.css                                          # design tokens/components, ported from Task_Management
+    tailwind-components-utilities.css                       # @tailwind components/utilities
 supabase/
   schema.sql               # running source of truth for the DB schema + RLS
   README.md                  # Supabase project setup steps
+  functions/
+    admin-invite-user/       # Edge Function: creates the auth user + profile row for "Add User"
 ```
 
 ## Local development
@@ -80,25 +87,40 @@ Phase 0 build gated the Bill Payments module's restricted-role visibility
 from day one (see `src/layout.js`, `src/screens/billPayments.js`,
 `src/screens/help.js`).
 
-## Phase 0 — open items (need your input before Phase 1)
+## Phase 1 — open items (need your input before Phase 2)
 
-1. **Design mockup**: not yet available to build against — sidebar
-   labels/order here come from the build brief's module list, not the
-   actual Claude Design screens. Icons, spacing, and exact color-coding for
-   statuses are all still open. See `design-reference/README.md`.
-2. **Final role list**: `role` is an unconstrained text column for now.
-   Proposed: Admin, Purchase, Store/Warehouse, Inspector,
-   Accounts/Authorized, Production — confirm before Phase 1 adds the CHECK
-   constraint and admin role-assignment UI. The Bill Payments gate checks
-   for the literal value `'authorized'`; if the confirmed role name differs,
-   that gate needs updating too.
-3. **New account role**: right now a fresh sign-up gets `role = null` and
-   can reach the dashboard shell but no module has any real content yet
-   anyway. Confirm whether that's fine through Phase 1, or whether a
-   role-less account should instead see an explicit "awaiting role
-   assignment" screen.
-4. **Vercel/Supabase project creation**: per your call, these are being set
-   up on your end rather than through this session (no Vercel/Supabase
-   tooling is available here) — Phase 0 isn't "deployed and working" until
-   those exist and their env vars are wired in per the Deployment section
-   above.
+1. **Design mockup**: still not available — the role→module visibility
+   matrix below and the Users & Roles table layout are both built without
+   it. See `design-reference/README.md`.
+2. **Nav permission matrix** (`src/navPermissions.js`): which roles see
+   which sidebar modules isn't specified anywhere in the build brief or the
+   (pending) mockup, so a reasonable default was assumed and needs your
+   sign-off:
+   - Dashboard, Help: everyone
+   - PO Upload, Order Status: Admin, Purchase
+   - Material Inward: Admin, Store
+   - Inspection: Admin, Inspector
+   - Master Material Status: Admin, Purchase, Store, Inspector
+   - Inventory: Admin, Store, Production
+   - BoM Builder: Admin, Production
+   - Work Orders: Admin, Production, Store
+   - Invoices: Admin, Authorized
+   - Reports: Admin, Authorized, Production
+   - Users & Roles, Action Log: Admin only
+   - Bill Payments: Authorized only (per the build brief)
+
+   A role-less account (signed up, not yet assigned) sees only Dashboard +
+   Help — least privilege by default. This is a one-file change
+   (`MODULE_ROLES` in `src/navPermissions.js`) if any of it's wrong.
+3. **Deactivating your own last admin account**: `set_user_status`/
+   `set_user_role` block an admin from changing *their own* row (so no one
+   locks themselves out solo), but nothing yet stops the *last* admin from
+   demoting or deactivating some *other* admin down to zero admins total.
+   Not fixed pre-emptively — flagging it as a decision, not a guess.
+
+## Phase 0 — resolved
+
+Design mockup and Vercel/Supabase creation are still open per above; the
+rest of Phase 0's open items (role list, new-account role) were resolved —
+role list confirmed as proposed, and a role-less account intentionally sees
+almost nothing until an admin assigns a role (see item 2 above).

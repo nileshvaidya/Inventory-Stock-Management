@@ -6,6 +6,7 @@
 import { getCurrentProfile } from './auth.js';
 import { renderShell } from './layout.js';
 import { escapeHtml } from './components.js';
+import { canViewModule } from './navPermissions.js';
 
 /**
  * @param {{ route: string, title: string, phase: number, description: string }} opts
@@ -15,6 +16,13 @@ export function makePlaceholderScreen({ route, title, phase, description }) {
     const user = await getCurrentProfile();
     if (!user) {
       window.location.hash = '#/login';
+      return;
+    }
+    // P1-3: a role without access to this module gets redirected away, not
+    // just a hidden nav link — same guard every real (non-placeholder)
+    // screen needs to apply itself once it's built (see src/screens/users.js).
+    if (!canViewModule(route, user.role)) {
+      window.location.hash = '#/dashboard';
       return;
     }
 

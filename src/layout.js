@@ -7,6 +7,7 @@
 // build brief's module list, not yet pixel-matched to the mockup.
 import { escapeHtml, renderIdentityBlock, initials } from './components.js';
 import { signOutUser } from './auth.js';
+import { canViewModule } from './navPermissions.js';
 
 const NAV_ITEMS = [
   { route: '/dashboard', label: 'Dashboard', phase: 0 },
@@ -24,8 +25,9 @@ const NAV_ITEMS = [
   { route: '/action-log', label: 'Action Log', phase: 9 },
   // Restricted module (build brief §1): must not appear in the sidebar for
   // any role other than 'authorized' — never just CSS-hidden, filtered out
-  // of the nav list entirely before it's ever rendered.
-  { route: '/bill-payments', label: 'Bill Payments', phase: 10, restricted: true },
+  // of the nav list entirely before it's ever rendered. Visibility for
+  // every module (this one included) is decided by navPermissions.js.
+  { route: '/bill-payments', label: 'Bill Payments', phase: 10 },
 ];
 
 const LOGO_SVG = (size) => `
@@ -40,7 +42,7 @@ const LOGO_SVG = (size) => `
  * @returns {HTMLElement} the content mount point for the calling screen to render into
  */
 export function renderShell(container, { activeRoute, user }) {
-  const visibleNavItems = NAV_ITEMS.filter((item) => !item.restricted || user.role === 'authorized');
+  const visibleNavItems = NAV_ITEMS.filter((item) => canViewModule(item.route, user.role));
 
   const navHtml = (mobile) =>
     visibleNavItems.map((item) => {

@@ -1,4 +1,6 @@
 // Pure validation logic — no DOM, no Supabase — cheap to unit test directly.
+import { ROLE_VALUES } from './roles.js';
+
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /**
@@ -35,5 +37,30 @@ export function validateSigninForm(form) {
   const { email = '', password = '' } = form || {};
   if (!email.trim()) errors.email = 'Email is required.';
   if (!password) errors.password = 'Password is required.';
+  return { valid: Object.keys(errors).length === 0, errors };
+}
+
+/**
+ * "Add User" (Phase 1) — no password: the new account is created via a
+ * real Supabase Auth invite (see supabase/functions/admin-invite-user),
+ * not a self-chosen password. Role is optional (an admin can invite
+ * someone and assign their role later).
+ * @param {{ name?: string, email?: string, role?: string|null }} form
+ */
+export function validateInviteUserForm(form) {
+  /** @type {Record<string, string>} */
+  const errors = {};
+  const { name = '', email = '', role = null } = form || {};
+
+  if (!name.trim()) errors.name = 'Name is required.';
+  if (!email.trim()) {
+    errors.email = 'Email is required.';
+  } else if (!EMAIL_RE.test(email.trim())) {
+    errors.email = 'Enter a valid email address.';
+  }
+  if (role && !ROLE_VALUES.includes(role)) {
+    errors.role = `Invalid role: ${role}`;
+  }
+
   return { valid: Object.keys(errors).length === 0, errors };
 }

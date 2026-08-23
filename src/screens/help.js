@@ -8,6 +8,7 @@
 import { getCurrentProfile } from '../auth.js';
 import { renderShell } from '../layout.js';
 import { escapeHtml } from '../components.js';
+import { canViewModule } from '../navPermissions.js';
 
 const SECTIONS = [
   { title: 'Dashboard', body: 'Your landing page after signing in.' },
@@ -36,7 +37,7 @@ const RESTRICTED_SECTION = {
  * @param {string|null} role
  */
 export function renderHelp(role) {
-  const sections = role === 'authorized' ? [...SECTIONS, RESTRICTED_SECTION] : SECTIONS;
+  const sections = canViewModule('/bill-payments', role) ? [...SECTIONS, RESTRICTED_SECTION] : SECTIONS;
   return `
     <h1 style="margin-bottom:16px">Help</h1>
     ${sections

@@ -12,6 +12,26 @@
    `.env` (see `.env.example`) and into your Vercel project's environment
    variables. Never commit either.
 
+## Edge Functions (Phase 1)
+
+`supabase/functions/admin-invite-user` handles "Add User" on the Users &
+Roles screen — it needs the Auth Admin API
+(`auth.admin.inviteUserByEmail`), which only ever works with the
+service-role key, so it can't run client-side. Deploy it once (and again
+after any change to `index.ts`):
+
+```bash
+supabase link --project-ref <your-project-ref>   # one-time, if not already linked
+supabase functions deploy admin-invite-user
+```
+
+`SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` are
+injected automatically for every deployed function — no manual secret
+configuration needed. Until this is deployed, "Add User" will fail with a
+network/404 error; everything else on the Users & Roles screen (role
+assignment, activate/deactivate) runs through plain Postgres RPCs in
+`schema.sql` and needs no separate deployment.
+
 ## Storage buckets
 
 Not needed until Phase 2 (PO PDFs) / Phase 5 (invoice files) / Phase 10
