@@ -29,9 +29,28 @@ export async function inviteUser(form, client = supabase) {
     body: form,
     headers: { Authorization: `Bearer ${token}` },
   });
-  if (error) return { data: null, error: { message: error.message } };
+  if (error) return { data: null, error: { message: await extractFunctionErrorMessage(error) } };
   if (data?.error) return { data: null, error: { message: data.error } };
   return { data, error: null };
+}
+
+/**
+ * The Supabase JS client's `functions.invoke()` doesn't surface the actual
+ * JSON body a non-2xx Edge Function response returned — `error.message` is
+ * just a generic "Edge Function returned a non-2xx status code". The real
+ * reason (e.g. "Only an admin can invite users.") is on `error.context`,
+ * the raw fetch Response, and has to be read out by hand.
+ * @param {any} error
+ */
+async function extractFunctionErrorMessage(error) {
+  try {
+    const body = await error.context?.json();
+    if (body?.error) return body.error;
+  } catch {
+    // context wasn't JSON (e.g. a network-level failure with no response
+    // body at all) — fall through to the generic SDK message below.
+  }
+  return error.message || 'Could not send the invite.';
 }
 
 /**
