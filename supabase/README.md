@@ -32,6 +32,19 @@ network/404 error; everything else on the Users & Roles screen (role
 assignment, activate/deactivate) runs through plain Postgres RPCs in
 `schema.sql` and needs no separate deployment.
 
+## CI integration tests
+
+`scripts/test-rls-users.mjs` exercises the RLS policies and RPCs above
+against a real project. It needs `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and
+`SUPABASE_SERVICE_ROLE_KEY` — set these as **GitHub Actions repository
+secrets** (Settings → Secrets and variables → Actions → New repository
+secret) to enable the `integration` job in `.github/workflows/ci.yml`;
+without them it logs a warning and skips rather than failing CI. Point
+these at a disposable/staging project if you have one rather than
+production — the script creates and deletes real auth users on every run.
+Run locally with `npm run test:integration` (needs the same three values
+in your local `.env`).
+
 ## Storage buckets
 
 Not needed until Phase 2 (PO PDFs) / Phase 5 (invoice files) / Phase 10
