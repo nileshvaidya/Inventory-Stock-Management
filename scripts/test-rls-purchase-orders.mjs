@@ -133,11 +133,14 @@ async function run() {
     assert(afterArchive.deleted_at !== null, "the PO's deleted_at persisted");
 
     await admin.from('purchase_orders').update({ deleted_at: null }).eq('id', poId);
-    const { error: storeArchiveErr } = await clientStore
-      .from('purchase_orders')
-      .update({ deleted_at: new Date().toISOString() })
-      .eq('id', poId);
-    assert(!!storeArchiveErr, 'store role cannot archive a PO');
+    // Postgres RLS filters an UPDATE's USING clause before the statement
+    // ever runs — for a caller the policy excludes, that's zero matching
+    // rows, which PostgREST reports as a quiet 200/no-op, not an error.
+    // The real assertion is whether the row actually changed, not whether
+    // the client call "errored".
+    await clientStore.from('purchase_orders').update({ deleted_at: new Date().toISOString() }).eq('id', poId);
+    const { data: afterStoreAttempt } = await admin.from('purchase_orders').select('deleted_at').eq('id', poId).single();
+    assert(afterStoreAttempt.deleted_at === null, 'store role cannot archive a PO (RLS silently filters the update to zero rows)');
   } finally {
     console.log('\nCleaning up test data...');
     await cleanup({ userIds, projectId, vendorId, poId });
