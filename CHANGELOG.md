@@ -64,3 +64,48 @@ Accounts/Authorized, Production (`admin`/`purchase`/`store`/`inspector`/
   `is_admin()` itself).
 - Unit tests for the invite-user form validation and the nav-permission
   matrix.
+
+## Automated test harness: E2E (Playwright) + RLS integration + CI
+
+Ported the Task_Management/WorkSync testing pattern: `e2e/phase0.spec.js`
+and `e2e/phase1.spec.js` (Playwright, Supabase HTTP layer mocked via
+`page.route()`, no live project needed), `scripts/test-rls-users.mjs`
+(real RLS/RPC checks against a live Supabase project), and
+`.github/workflows/ci.yml` (lint → typecheck → unit → e2e → build on every
+push/PR, plus a separate `integration` job for the RLS script). Diagnosed
+and fixed, live: a malformed `SUPABASE_URL`, a `role` NOT NULL drift, and
+CORS headers missing from `admin-invite-user` — see the repo's commit
+history for the full trail.
+
+## Phase 2: Purchase Orders — upload, parse, Project/Order link, Order Status
+
+- `src/pdfParser.js`: pdf.js text extraction + a best-effort regex heuristic
+  (`<description> <qty> <rate>`) to pre-populate the line-item review
+  table. No real PO template to calibrate against yet, so accuracy is
+  unproven against real layouts — every row is editable/deletable and rows
+  can be added by hand (P2-2, P2-6), so a bad or empty parse never blocks
+  saving a PO. Caught and fixed a real regex bug during testing: without a
+  mandatory separator between quantity and rate, backtracking could split
+  a single number like "10" into qty=1/rate=0.
+- Vendor Master (`src/vendors.js`, confirmed in-scope "suggested feature"):
+  company-wide read, admin/purchase-only write, with inline "+ New Vendor"
+  in the PO Upload form instead of a separate sidebar module.
+- `src/screens/poUpload.js`: PDF upload, editable line-item table,
+  Project/Vendor select with inline create, a non-blocking totals-mismatch
+  warning (P2-7) when the parsed total doesn't match the line items' sum.
+- `src/screens/orderStatus.js`: Date/Project/Status filters, CSV export
+  (`src/csvExport.js` — generic, reusable by later phases' tables per the
+  build brief's "export on every major table" scope item), and a soft
+  delete/archive action with a "Show archived" toggle (confirmed in-scope
+  soft-delete item) instead of hard delete.
+- `supabase/schema.sql`: `vendors`, `projects`, `purchase_orders` (full
+  status list defined now — `to_be_received` through `rejected` — even
+  though Phase 2 only ever writes `to_be_received`; Phase 3 lights up the
+  rest), `po_line_items`. Company-wide SELECT, admin/purchase-only
+  INSERT/UPDATE via a new `is_purchase_or_admin()` security-definer
+  function.
+- `scripts/test-rls-purchase-orders.mjs`: RLS integration tests (admin/
+  purchase can create+archive, other roles cannot; company-wide read).
+- `e2e/phase2.spec.js`: route guards, manual line-item entry, inline
+  project creation, form validation, Order Status rendering + CSV export
+  download, empty state.

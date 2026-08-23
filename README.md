@@ -22,7 +22,7 @@ and the auth/layout patterns are ported directly from the
 app, per the build brief. See `design-reference/README.md` for what's
 pending from the real Claude Design mockup.
 
-**Current status: Phase 1 (User & Role Management) — see Phase 1 below.**
+**Current status: Phase 2 (Purchase Orders: upload, parse, Order Status) — see Phase 2 below.**
 
 ## Project layout
 
@@ -130,36 +130,26 @@ Phase 0 build gated the Bill Payments module's restricted-role visibility
 from day one (see `src/layout.js`, `src/screens/billPayments.js`,
 `src/screens/help.js`).
 
-## Phase 1 — open items (need your input before Phase 2)
+## Phase 1 — resolved
 
-1. **Design mockup**: still not available — the role→module visibility
-   matrix below and the Users & Roles table layout are both built without
-   it. See `design-reference/README.md`.
-2. **Nav permission matrix** (`src/navPermissions.js`): which roles see
-   which sidebar modules isn't specified anywhere in the build brief or the
-   (pending) mockup, so a reasonable default was assumed and needs your
-   sign-off:
-   - Dashboard, Help: everyone
-   - PO Upload, Order Status: Admin, Purchase
-   - Material Inward: Admin, Store
-   - Inspection: Admin, Inspector
-   - Master Material Status: Admin, Purchase, Store, Inspector
-   - Inventory: Admin, Store, Production
-   - BoM Builder: Admin, Production
-   - Work Orders: Admin, Production, Store
-   - Invoices: Admin, Authorized
-   - Reports: Admin, Authorized, Production
-   - Users & Roles, Action Log: Admin only
-   - Bill Payments: Authorized only (per the build brief)
+Nav permission matrix confirmed as proposed (`src/navPermissions.js`).
+Still open, not blocking: the Claude Design mockup, and the "last admin"
+edge case noted below.
 
-   A role-less account (signed up, not yet assigned) sees only Dashboard +
-   Help — least privilege by default. This is a one-file change
-   (`MODULE_ROLES` in `src/navPermissions.js`) if any of it's wrong.
-3. **Deactivating your own last admin account**: `set_user_status`/
-   `set_user_role` block an admin from changing *their own* row (so no one
-   locks themselves out solo), but nothing yet stops the *last* admin from
-   demoting or deactivating some *other* admin down to zero admins total.
-   Not fixed pre-emptively — flagging it as a decision, not a guess.
+## Phase 2 — open items (need your input before Phase 3)
+
+1. **Design mockup**: still not available — PO Upload/Order Status layout
+   is built without it.
+2. **PDF parsing accuracy**: `src/pdfParser.js` extracts text with pdf.js
+   and applies a best-effort heuristic (lines matching `<description> <qty>
+   <rate>`) to populate the review table — there's no real PO template to
+   calibrate against yet. Every parsed row is editable/deletable and rows
+   can be added by hand before saving (P2-2, P2-6), so a bad parse never
+   blocks creating a PO, but don't expect high accuracy against your actual
+   PO layouts until we can tune it against real samples.
+3. **Deactivating your own last admin account** (carried over from Phase
+   1): still not guarded against — flagging again since it hasn't been
+   addressed.
 
 ## Phase 0 — resolved
 

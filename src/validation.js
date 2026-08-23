@@ -64,3 +64,47 @@ export function validateInviteUserForm(form) {
 
   return { valid: Object.keys(errors).length === 0, errors };
 }
+
+/**
+ * A single PO line item row in the review table (Phase 2).
+ * @param {{ itemName?: string, quantity?: string|number, rate?: string|number }} row
+ */
+export function validateLineItem(row) {
+  /** @type {Record<string, string>} */
+  const errors = {};
+  const { itemName = '', quantity = '', rate = '' } = row || {};
+
+  if (!String(itemName).trim()) errors.itemName = 'Item name is required.';
+  const qtyNum = Number(quantity);
+  if (quantity === '' || !Number.isFinite(qtyNum) || qtyNum <= 0) {
+    errors.quantity = 'Quantity must be a positive number.';
+  }
+  const rateNum = Number(rate);
+  if (rate === '' || !Number.isFinite(rateNum) || rateNum < 0) {
+    errors.rate = 'Rate must be zero or a positive number.';
+  }
+
+  return { valid: Object.keys(errors).length === 0, errors };
+}
+
+/**
+ * The PO Upload form as a whole (Phase 2). At least one valid line item
+ * is required — an empty PO isn't useful, and the review table already
+ * lets the user add rows by hand when parsing found nothing (P2-6).
+ * @param {{ projectId?: string, orderDate?: string, lineItems?: unknown[] }} form
+ */
+export function validatePurchaseOrderForm(form) {
+  /** @type {Record<string, string>} */
+  const errors = {};
+  const { projectId = '', orderDate = '', lineItems = [] } = form || {};
+
+  if (!projectId) errors.projectId = 'Select or create a Project/Order.';
+  if (!orderDate) errors.orderDate = 'Order date is required.';
+  if (lineItems.length === 0) {
+    errors.lineItems = 'Add at least one line item.';
+  } else if (lineItems.some((row) => !validateLineItem(row).valid)) {
+    errors.lineItems = 'Fix the highlighted line item(s) before saving.';
+  }
+
+  return { valid: Object.keys(errors).length === 0, errors };
+}

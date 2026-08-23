@@ -161,3 +161,154 @@ end;
 $$;
 
 grant execute on function public.set_user_status(uuid, text) to authenticated;
+
+-- Phase 2: Purchase Orders (upload, parse, Project/Order link, Order
+-- Status), plus Vendor Master (build brief's "suggested additional
+-- features" — confirmed in scope, feeds PO forms instead of free text).
+--
+-- is_purchase_or_admin mirrors is_admin's security-definer rationale: a
+-- plain subquery on public.users inside a policy runs under the *calling*
+-- user's own RLS, which only grants visibility into their own row.
+create or replace function public.is_purchase_or_admin(uid uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.users
+    where id = uid and role in ('admin', 'purchase') and status = 'active'
+  );
+$$;
+
+grant execute on function public.is_purchase_or_admin(uuid) to authenticated;
+
+create table if not exists public.vendors (
+  id uuid primary key default gen_random_uuid(),
+  name text not null check (char_length(trim(name)) > 0),
+  gstin text null,
+  contact text null,
+  default_payment_terms_days integer null,
+  created_at timestamptz not null default now(),
+  deleted_at timestamptz null
+);
+
+alter table public.vendors enable row level security;
+
+-- Company-wide read (PO/Invoice forms need to list vendors regardless of
+-- the viewer's role) — write restricted to admin/purchase, same split as
+-- purchase_orders below.
+drop policy if exists "Authenticated users can view vendors" on public.vendors;
+create policy "Authenticated users can view vendors"
+  on public.vendors for select
+  to authenticated
+  using (true);
+
+drop policy if exists "Purchase/admin can create vendors" on public.vendors;
+create policy "Purchase/admin can create vendors"
+  on public.vendors for insert
+  to authenticated
+  with check (public.is_purchase_or_admin(auth.uid()));
+
+drop policy if exists "Purchase/admin can update vendors" on public.vendors;
+create policy "Purchase/admin can update vendors"
+  on public.vendors for update
+  to authenticated
+  using (public.is_purchase_or_admin(auth.uid()))
+  with check (public.is_purchase_or_admin(auth.uid()));
+
+create table if not exists public.projects (
+  id uuid primary key default gen_random_uuid(),
+  name text not null unique,
+  created_at timestamptz not null default now(),
+  deleted_at timestamptz null
+);
+
+alter table public.projects enable row level security;
+
+drop policy if exists "Authenticated users can view projects" on public.projects;
+create policy "Authenticated users can view projects"
+  on public.projects for select
+  to authenticated
+  using (true);
+
+drop policy if exists "Purchase/admin can create projects" on public.projects;
+create policy "Purchase/admin can create projects"
+  on public.projects for insert
+  to authenticated
+  with check (public.is_purchase_or_admin(auth.uid()));
+
+-- Full status list defined now even though Phase 2 only ever writes
+-- 'to_be_received' — Phase 3 lights up the rest of the transitions, same
+-- "create the full contract, light up what this phase needs" approach as
+-- the Task_Management scaffold's Phase 2 tasks table.
+create table if not exists public.purchase_orders (
+  id uuid primary key default gen_random_uuid(),
+  po_number text null,
+  project_id uuid not null references public.projects (id),
+  vendor_id uuid null references public.vendors (id),
+  order_date date not null default current_date,
+  payment_terms_days integer null,
+  status text not null default 'to_be_received' check (
+    status in ('to_be_received', 'partially_received', 'material_received', 'received_inspected', 'rejected')
+  ),
+  stated_total numeric null,
+  source_pdf_name text null,
+  created_by uuid not null references public.users (id),
+  created_at timestamptz not null default now(),
+  deleted_at timestamptz null
+);
+
+create index if not exists purchase_orders_project_id_idx on public.purchase_orders (project_id);
+create index if not exists purchase_orders_order_date_idx on public.purchase_orders (order_date);
+
+alter table public.purchase_orders enable row level security;
+
+drop policy if exists "Authenticated users can view purchase orders" on public.purchase_orders;
+create policy "Authenticated users can view purchase orders"
+  on public.purchase_orders for select
+  to authenticated
+  using (true);
+
+drop policy if exists "Purchase/admin can create purchase orders" on public.purchase_orders;
+create policy "Purchase/admin can create purchase orders"
+  on public.purchase_orders for insert
+  to authenticated
+  with check (public.is_purchase_or_admin(auth.uid()) and created_by = auth.uid());
+
+-- Update policy covers both status transitions (Phase 3+) and the
+-- soft-delete action (Order Status "delete" sets deleted_at, per the
+-- build brief's soft-delete-on-POs scope item) — one policy, since both
+-- are the same "admin/purchase can modify a PO" permission.
+drop policy if exists "Purchase/admin can update purchase orders" on public.purchase_orders;
+create policy "Purchase/admin can update purchase orders"
+  on public.purchase_orders for update
+  to authenticated
+  using (public.is_purchase_or_admin(auth.uid()))
+  with check (public.is_purchase_or_admin(auth.uid()));
+
+create table if not exists public.po_line_items (
+  id uuid primary key default gen_random_uuid(),
+  po_id uuid not null references public.purchase_orders (id) on delete cascade,
+  item_name text not null check (char_length(trim(item_name)) > 0),
+  quantity numeric not null check (quantity > 0),
+  rate numeric not null check (rate >= 0),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists po_line_items_po_id_idx on public.po_line_items (po_id);
+
+alter table public.po_line_items enable row level security;
+
+drop policy if exists "Authenticated users can view PO line items" on public.po_line_items;
+create policy "Authenticated users can view PO line items"
+  on public.po_line_items for select
+  to authenticated
+  using (true);
+
+drop policy if exists "Purchase/admin can create PO line items" on public.po_line_items;
+create policy "Purchase/admin can create PO line items"
+  on public.po_line_items for insert
+  to authenticated
+  with check (public.is_purchase_or_admin(auth.uid()));

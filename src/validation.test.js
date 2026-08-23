@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { validateSignupForm, validateSigninForm, validateInviteUserForm } from './validation.js';
+import {
+  validateSignupForm,
+  validateSigninForm,
+  validateInviteUserForm,
+  validateLineItem,
+  validatePurchaseOrderForm,
+} from './validation.js';
 
 describe('validateSignupForm', () => {
   it('accepts a valid form', () => {
@@ -60,5 +66,56 @@ describe('validateInviteUserForm', () => {
     const { valid, errors } = validateInviteUserForm({ name: 'Jane', email: 'jane@example.com', role: 'manager' });
     expect(valid).toBe(false);
     expect(errors.role).toBeTruthy();
+  });
+});
+
+describe('validateLineItem', () => {
+  it('accepts a valid row', () => {
+    expect(validateLineItem({ itemName: 'Widget', quantity: 10, rate: 25.5 }).valid).toBe(true);
+  });
+
+  it('accepts a zero rate (free item) but not a zero quantity', () => {
+    expect(validateLineItem({ itemName: 'Widget', quantity: 10, rate: 0 }).valid).toBe(true);
+    expect(validateLineItem({ itemName: 'Widget', quantity: 0, rate: 10 }).valid).toBe(false);
+  });
+
+  it('rejects a missing item name', () => {
+    const { valid, errors } = validateLineItem({ itemName: '', quantity: 10, rate: 5 });
+    expect(valid).toBe(false);
+    expect(errors.itemName).toBeTruthy();
+  });
+
+  it('rejects a negative rate or non-numeric quantity', () => {
+    expect(validateLineItem({ itemName: 'Widget', quantity: 10, rate: -1 }).valid).toBe(false);
+    expect(validateLineItem({ itemName: 'Widget', quantity: 'abc', rate: 5 }).valid).toBe(false);
+  });
+});
+
+describe('validatePurchaseOrderForm', () => {
+  const validLineItems = [{ itemName: 'Widget', quantity: 10, rate: 5 }];
+
+  it('accepts a valid form', () => {
+    const { valid } = validatePurchaseOrderForm({ projectId: 'p1', orderDate: '2026-01-01', lineItems: validLineItems });
+    expect(valid).toBe(true);
+  });
+
+  it('rejects a missing project or order date', () => {
+    expect(validatePurchaseOrderForm({ orderDate: '2026-01-01', lineItems: validLineItems }).valid).toBe(false);
+    expect(validatePurchaseOrderForm({ projectId: 'p1', lineItems: validLineItems }).valid).toBe(false);
+  });
+
+  it('rejects an empty line item list', () => {
+    const { valid, errors } = validatePurchaseOrderForm({ projectId: 'p1', orderDate: '2026-01-01', lineItems: [] });
+    expect(valid).toBe(false);
+    expect(errors.lineItems).toBeTruthy();
+  });
+
+  it('rejects a form with an invalid line item row', () => {
+    const { valid } = validatePurchaseOrderForm({
+      projectId: 'p1',
+      orderDate: '2026-01-01',
+      lineItems: [{ itemName: '', quantity: 10, rate: 5 }],
+    });
+    expect(valid).toBe(false);
   });
 });

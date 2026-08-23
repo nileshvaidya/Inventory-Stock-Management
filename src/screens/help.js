@@ -12,8 +12,8 @@ import { canViewModule } from '../navPermissions.js';
 
 const SECTIONS = [
   { title: 'Dashboard', body: 'Your landing page after signing in.' },
-  { title: 'PO Upload', body: 'Upload an approved PO PDF; items, quantity, and rate are parsed for review. (Phase 2)' },
-  { title: 'Order Status', body: 'Track every PO by date, project/order, and status. (Phase 2)' },
+  { title: 'PO Upload', body: 'Upload an approved PO PDF; items, quantity, and rate are parsed for review, then linked to a Project/Order and optional Vendor.' },
+  { title: 'Order Status', body: 'Track every PO, filterable by date, project/order, and status, with CSV export.' },
   { title: 'Material Inward', body: 'Log receipts against a PO, including partial deliveries. (Phase 3)' },
   { title: 'Inspection', body: 'Accept or reject received material, in full or in part. (Phase 3)' },
   { title: 'Master Material Status', body: 'Company-wide view of every PO/item’s receipt and inspection status. (Phase 3)' },
