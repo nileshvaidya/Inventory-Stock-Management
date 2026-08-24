@@ -22,7 +22,7 @@ and the auth/layout patterns are ported directly from the
 app, per the build brief. See `design-reference/README.md` for what's
 pending from the real Claude Design mockup.
 
-**Current status: Phase 3 (Material Inward, Inspection, Master Material Status) — see Phase 3 below.**
+**Current status: Phase 4 (Inventory: Item Master + stock movement ledger) — see Phase 4 below.**
 
 ## Project layout
 
@@ -44,7 +44,9 @@ src/
   masterMaterialStatus.js                         # reads the master_material_status view (Phase 3)
   poStatus.js                                       # shared PO status labels/tags — purchase_orders.status is now
                                                        # auto-computed server-side (see schema.sql's Phase 3 triggers)
-  validation.js                                       # pure form-validation logic
+  items.js                                            # Item Master data layer (Phase 4)
+  inventory.js                                          # current_stock view + stock_movements ledger (Phase 4)
+  validation.js                                           # pure form-validation logic
   demoMode.js                             # VITE_DEMO_MODE + ?demoRole= dev bypass
   state.js                                  # small in-memory store + pub-sub
   layout.js                                   # shared app shell (desktop sidebar / mobile top bar+tabs)
@@ -64,10 +66,12 @@ e2e/
   phase1.spec.js              # Playwright — nav permission matrix, route guards, Users & Roles screen
   phase2.spec.js                # Playwright — PO Upload (incl. Map Fields Manually), Order Status
   phase3.spec.js                  # Playwright — Material Inward, Inspection, Master Material Status
+  phase4.spec.js                    # Playwright — Inventory (Item Master, ledger, below-reorder)
 scripts/
   test-rls-users.mjs          # RLS/RPC integration tests against a REAL Supabase project (CI's `integration` job)
   test-rls-purchase-orders.mjs  # ...for vendors/projects/purchase_orders/po_line_items/import_field_mappings
   test-rls-material-inward.mjs    # ...for material_inward/inspection_results + recompute_po_status + the view
+  test-rls-inventory.mjs            # ...for items/stock_movements + the auto-stock-in trigger + current_stock
 supabase/
   schema.sql               # running source of truth for the DB schema + RLS
   README.md                  # Supabase project setup steps
@@ -250,17 +254,57 @@ read-only).
 
 ### Phase 3 — open items
 
-1. **Production/staging schema**: `supabase/schema.sql`'s Phase 3 section
-   (`material_inward`, `material_inward_line_items`, `inspection_results`,
-   `is_store_or_admin`, `is_inspector_or_admin`, `recompute_po_status` +
-   its triggers, and the `master_material_status` view) needs to be run on
-   both staging and production — same "paste the missing section, verify
-   with an introspection query" process as Phase 2's addendum. CI's
-   `integration` job (`scripts/test-rls-material-inward.mjs`) will fail
-   until staging has it; production isn't gated by CI at all, so please
-   confirm separately once you've run it there.
+1. **Production/staging schema**: confirmed applied to both staging (CI's
+   `integration` job passes) and production.
 2. **Design mockup**: still not available — these three screens are built
    without it, same as Phase 2.
+3. **Deactivating your own last admin account** (carried over from Phase
+   1): still not guarded against.
+
+## Phase 4 — Inventory (Item Master + stock movement ledger)
+
+Confirmed two design decisions before building (no mockup, and both shape
+how stock ends up accurate rather than something re-entered by hand):
+
+- **PO Upload gets an Item selector.** Each line item row has a "Linked
+  Item" dropdown (plus an inline "+ New Item", same UX as Project/Vendor)
+  so a new/edited PO line item can optionally link to an Item Master entry
+  (`po_line_items.item_id`, nullable — existing rows keep their free-text
+  `item_name` only and simply don't feed the ledger below).
+- **Accepted inspections auto-create an inbound stock movement.** A
+  security-definer trigger on `inspection_results` (`trg_stock_in_from_inspection`)
+  fires whenever `accepted_qty > 0`: if the received line's PO line item has
+  an Item linked, it inserts a matching `stock_movements` row
+  (`movement_type = 'in'`, `quantity = accepted_qty`,
+  `reference_type = 'inspection'`) automatically — no manual re-entry, and
+  "current stock" reflects real receiving activity from day one. A known
+  limitation: this fires on **insert only** — a later correction via
+  `UPDATE` on `inspection_results` does not retroactively adjust stock.
+
+`current_stock` (a Postgres view, same "security invoker inherits RLS"
+pattern as `master_material_status`) rolls up `stock_movements` per item
+into `qty_in`/`qty_out`/`current_qty`, joined with the Item Master's
+`reorder_level` so Inventory can flag items below reorder.
+
+- `src/screens/inventory.js` (Admin/Store/Production): current stock,
+  filterable by name/category/below-reorder-only, each row expandable into
+  its full movement ledger. "+ New Item" and manual "Log Movement" (an
+  opening balance or a hand correction) are Store/Admin only — enforced
+  both by hiding the controls for Production and, more importantly, by RLS
+  server-side (`is_store_or_admin`), so Production is read-only in
+  practice, not just in the UI.
+- `src/screens/poUpload.js`: the new Item selector per line item, described
+  above.
+
+### Phase 4 — open items
+
+1. **Production/staging schema**: `supabase/schema.sql`'s Phase 4 section
+   (`items`, `stock_movements`, `can_manage_items`, the
+   `trg_stock_in_from_inspection` trigger, `po_line_items.item_id`, and the
+   `current_stock` view) needs to be run on both staging and production —
+   same process as every phase's addendum so far. CI's `integration` job
+   (`scripts/test-rls-inventory.mjs`) will fail until staging has it.
+2. **Design mockup**: still not available.
 3. **Deactivating your own last admin account** (carried over from Phase
    1): still not guarded against.
 

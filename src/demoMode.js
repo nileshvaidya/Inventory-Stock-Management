@@ -4,9 +4,10 @@
 // shell be click-tested before a real Supabase project is wired up. Never
 // reference this from auth.js's real sign-in/sign-up path.
 //
-// Role keys are placeholders pending Phase 1's finalized role list (Admin,
-// Purchase, Store/Warehouse, Inspector, Accounts/Authorized, Production —
-// see README.md open questions).
+// Only the roles actually exercised by demo-mode e2e tests are listed here
+// — add another entry if a test needs one (see src/roles.js for the full
+// confirmed role list: admin, purchase, store, inspector, authorized,
+// production).
 export const DEMO_USERS = {
   admin: {
     id: 'demo-u1',
@@ -27,6 +28,13 @@ export const DEMO_USERS = {
     name: 'Demo Store',
     email: 'store@example.com',
     role: 'store',
+    status: 'active',
+  },
+  production: {
+    id: 'demo-u4',
+    name: 'Demo Production',
+    email: 'production@example.com',
+    role: 'production',
     status: 'active',
   },
 };

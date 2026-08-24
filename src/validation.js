@@ -166,6 +166,48 @@ export function validateInspectionForm(form) {
 }
 
 /**
+ * New Item form (Phase 4) — used both by the Inventory screen's own "+ New
+ * Item" and PO Upload's inline quick-add. Only the name is required;
+ * category/UoM/reorder level are optional everywhere they're collected.
+ * @param {{ name?: string, reorderLevel?: string|number|null }} form
+ */
+export function validateItemForm(form) {
+  /** @type {Record<string, string>} */
+  const errors = {};
+  const { name = '', reorderLevel = '' } = form || {};
+
+  if (!name.trim()) errors.name = 'Item name is required.';
+  if (reorderLevel !== '' && reorderLevel !== null && reorderLevel !== undefined) {
+    const levelNum = Number(reorderLevel);
+    if (!Number.isFinite(levelNum) || levelNum < 0) {
+      errors.reorderLevel = 'Reorder level must be zero or a positive number.';
+    }
+  }
+
+  return { valid: Object.keys(errors).length === 0, errors };
+}
+
+/**
+ * Manual Stock Movement form (Phase 4) — an opening balance or a hand
+ * correction, entered by store/admin from the Inventory screen.
+ * @param {{ itemId?: string, movementType?: string, quantity?: string|number }} form
+ */
+export function validateStockMovementForm(form) {
+  /** @type {Record<string, string>} */
+  const errors = {};
+  const { itemId = '', movementType = '', quantity = '' } = form || {};
+
+  if (!itemId) errors.itemId = 'Select an item.';
+  if (movementType !== 'in' && movementType !== 'out') errors.movementType = 'Select In or Out.';
+  const qtyNum = Number(quantity);
+  if (quantity === '' || !Number.isFinite(qtyNum) || qtyNum <= 0) {
+    errors.quantity = 'Enter a positive quantity.';
+  }
+
+  return { valid: Object.keys(errors).length === 0, errors };
+}
+
+/**
  * The PO Upload form as a whole (Phase 2). At least one valid line item
  * is required — an empty PO isn't useful, and the review table already
  * lets the user add rows by hand when parsing found nothing (P2-6).

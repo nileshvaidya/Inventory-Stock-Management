@@ -7,6 +7,7 @@ import { test, expect } from '@playwright/test';
 async function mockEmptyLookups(page) {
   await page.route('**/rest/v1/projects**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
   await page.route('**/rest/v1/vendors**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
+  await page.route('**/rest/v1/items**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
 }
 
 test.describe('Phase 2 — route guards', () => {
@@ -95,6 +96,7 @@ test.describe('Phase 2 — PO Upload', () => {
         body: JSON.stringify([{ id: 'v1', name: 'Acme Supplies', gstin: null, contact: null, default_payment_terms_days: null }]),
       })
     );
+    await page.route('**/rest/v1/items**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
     let mappingSaveCalled = false;
     await page.route('**/rest/v1/import_field_mappings**', (route) => {
       mappingSaveCalled = true;
@@ -121,6 +123,60 @@ test.describe('Phase 2 — PO Upload', () => {
 
     await expect(page.getByText('Layout remembered')).toBeVisible();
     expect(mappingSaveCalled).toBe(true);
+  });
+
+  test('P4: "+ New Item" creates an item inline, and linking a row to it is saved as item_id', async ({ page }) => {
+    await page.route('**/rest/v1/projects**', (route) => {
+      if (route.request().method() === 'POST') {
+        return route.fulfill({
+          status: 201,
+          contentType: 'application/json',
+          body: JSON.stringify({ id: 'p1', name: 'Bridge Build' }),
+        });
+      }
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+    });
+    await page.route('**/rest/v1/vendors**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
+    await page.route('**/rest/v1/items**', (route) => {
+      if (route.request().method() === 'POST') {
+        return route.fulfill({
+          status: 201,
+          contentType: 'application/json',
+          body: JSON.stringify({ id: 'item-1', name: 'Base Angle', category: null, unit_of_measure: null, reorder_level: null }),
+        });
+      }
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+    });
+
+    let poLineItemsInsertBody = null;
+    await page.route('**/rest/v1/purchase_orders**', (route) =>
+      route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ id: 'po-1' }) })
+    );
+    await page.route('**/rest/v1/po_line_items**', (route) => {
+      poLineItemsInsertBody = route.request().postDataJSON();
+      route.fulfill({ status: 201, contentType: 'application/json', body: '[]' });
+    });
+
+    await page.goto('/?demoRole=admin#/po-upload');
+    await page.click('[data-action="new-item"]');
+    await page.fill('[data-role="new-item-name"]', 'Base Angle');
+    await page.click('[data-action="confirm-new-item"]');
+
+    await page.click('[data-action="add-row"]');
+    await page.fill('[data-action="item-name"][data-index="0"]', 'Base Angle');
+    await page.fill('[data-action="item-qty"][data-index="0"]', '100');
+    await page.fill('[data-action="item-rate"][data-index="0"]', '45');
+    await page.selectOption('[data-action="item-link"][data-index="0"]', 'item-1');
+
+    await page.click('[data-action="new-project"]');
+    await page.fill('[data-role="new-project-name"]', 'Bridge Build');
+    await page.click('[data-action="confirm-new-project"]');
+
+    await page.click('[data-action="save"]');
+    await expect(page.locator('text=Purchase order saved.')).toBeVisible();
+    expect(poLineItemsInsertBody).toEqual([
+      { po_id: 'po-1', item_name: 'Base Angle', quantity: 100, rate: 45, item_id: 'item-1' },
+    ]);
   });
 
   test('"+ New" creates and selects a project inline (P2-3)', async ({ page }) => {

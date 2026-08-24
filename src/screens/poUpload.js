@@ -10,6 +10,7 @@ import { extractPdfText, parsePoText, parseStatedTotal, parsePoNumber, parseOrde
 import { tokenizeLine, parseNumberToken, deriveColumnTemplate, applyColumnTemplate } from '../docMapping.js';
 import { fetchProjects, createProject } from '../projects.js';
 import { fetchVendors, createVendor } from '../vendors.js';
+import { fetchItems, createItem } from '../items.js';
 import { createPurchaseOrder } from '../purchaseOrders.js';
 import { fetchMappingForVendor, saveMappingForVendor } from '../importMappings.js';
 import { validatePurchaseOrderForm, validateLineItem } from '../validation.js';
@@ -22,6 +23,9 @@ function initialState() {
   return {
     projects: [],
     vendors: [],
+    items: [],
+    newItemMode: false,
+    newItemName: '',
     lineItems: [],
     parseError: null,
     parsedFileName: null,
@@ -91,7 +95,7 @@ async function applyExtractedText(store, text, { fileName } = {}) {
   store.setState({
     ...(fileName !== undefined ? { parsedFileName: fileName } : {}),
     parseError: rows.length === 0 ? "Couldn't find any recognizable item/qty/rate lines in this PDF." : null,
-    lineItems: rows.map((r) => ({ itemName: r.itemName, quantity: r.quantity, rate: r.rate })),
+    lineItems: rows.map((r) => ({ itemName: r.itemName, quantity: r.quantity, rate: r.rate, itemId: '' })),
     statedTotal: parseStatedTotal(text),
     poNumber: parsedPoNumber ?? '',
     orderDate: parsedOrderDate ?? todayISO(),
@@ -116,8 +120,8 @@ export async function render(container) {
   const store = createStore(initialState());
 
   async function loadLookups() {
-    const [projects, vendors] = await Promise.all([fetchProjects(), fetchVendors()]);
-    store.setState({ projects, vendors });
+    const [projects, vendors, items] = await Promise.all([fetchProjects(), fetchVendors(), fetchItems()]);
+    store.setState({ projects, vendors, items });
   }
 
   function paint() {
@@ -170,16 +174,26 @@ function renderContent(container, state) {
     </div>
 
     <div class="card elev-sm" style="margin-bottom:16px;padding:0;overflow-x:auto">
-      <div style="padding:14px;display:flex;align-items:center;justify-content:space-between">
+      <div style="padding:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
         <h3 class="card-title" style="font-size:16px;margin:0">Line Items</h3>
-        <button type="button" class="btn btn-secondary" data-action="add-row" style="padding:5px 12px;font-size:12px">+ Add Row</button>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          ${
+            state.newItemMode
+              ? `<input class="input" data-role="new-item-name" placeholder="New item name" value="${escapeHtml(state.newItemName)}" style="padding:5px 8px;font-size:12px" />
+                 <button type="button" class="btn btn-secondary" data-action="confirm-new-item" style="padding:5px 10px;font-size:12px">Add</button>
+                 <button type="button" class="btn btn-ghost" data-action="cancel-new-item" style="padding:5px 8px;font-size:12px">✕</button>`
+              : `<button type="button" class="btn btn-ghost" data-action="new-item" style="padding:5px 10px;font-size:12px">+ New Item</button>`
+          }
+          <button type="button" class="btn btn-secondary" data-action="add-row" style="padding:5px 12px;font-size:12px">+ Add Row</button>
+        </div>
       </div>
+      <p class="card-body" style="padding:0 14px 10px;margin:0">Linking a row to an Item Master entry feeds Inventory's stock ledger once it's received — optional, and existing/unlinked rows still save fine with just their item name.</p>
       ${
         state.lineItems.length === 0
           ? `<div style="padding:0 14px 14px;font-size:13px;color:var(--color-neutral-500)">No line items yet — upload a PDF or add a row manually.</div>`
-          : `<table class="table" style="min-width:520px">
-              <thead><tr><th>Item</th><th>Qty</th><th>Rate</th><th>Amount</th><th></th></tr></thead>
-              <tbody>${state.lineItems.map((row, i) => renderLineItemRow(row, i)).join('')}</tbody>
+          : `<table class="table" style="min-width:680px">
+              <thead><tr><th>Item</th><th>Linked Item</th><th>Qty</th><th>Rate</th><th>Amount</th><th></th></tr></thead>
+              <tbody>${state.lineItems.map((row, i) => renderLineItemRow(row, i, state.items)).join('')}</tbody>
             </table>`
       }
       <div style="padding:10px 14px;font-size:13px;border-top:1px solid var(--color-divider);display:flex;justify-content:flex-end;gap:16px">
@@ -333,18 +347,24 @@ function renderTokenMapper(state) {
   `;
 }
 
-function renderLineItemRow(row, index) {
+function renderLineItemRow(row, index, items) {
   const { valid, errors } = validateLineItem(row);
   const amount = lineItemAmount(row);
   return `
     <tr data-line-item-row="${index}">
       <td><input class="input" data-action="item-name" data-index="${index}" value="${escapeHtml(row.itemName)}" style="min-width:160px;${errors.itemName ? 'border-color:var(--color-accent-2)' : ''}" /></td>
+      <td>
+        <select class="input" data-action="item-link" data-index="${index}" style="min-width:140px">
+          <option value="">Not linked</option>
+          ${items.map((it) => `<option value="${escapeHtml(it.id)}" ${row.itemId === it.id ? 'selected' : ''}>${escapeHtml(it.name)}</option>`).join('')}
+        </select>
+      </td>
       <td><input class="input" data-action="item-qty" data-index="${index}" type="number" step="any" value="${escapeHtml(row.quantity)}" style="width:90px;${errors.quantity ? 'border-color:var(--color-accent-2)' : ''}" /></td>
       <td><input class="input" data-action="item-rate" data-index="${index}" type="number" step="any" value="${escapeHtml(row.rate)}" style="width:90px;${errors.rate ? 'border-color:var(--color-accent-2)' : ''}" /></td>
       <td style="font-size:13px">${amount.toFixed(2)}</td>
       <td><button type="button" class="btn btn-ghost" data-action="remove-row" data-index="${index}" aria-label="Remove row">🗑</button></td>
     </tr>
-    ${!valid ? `<tr><td colspan="5" style="padding:0 8px 8px;font-size:11px;color:var(--color-accent-2-200)">${escapeHtml(Object.values(errors)[0])}</td></tr>` : ''}
+    ${!valid ? `<tr><td colspan="6" style="padding:0 8px 8px;font-size:11px;color:var(--color-accent-2-200)">${escapeHtml(Object.values(errors)[0])}</td></tr>` : ''}
   `;
 }
 
@@ -373,7 +393,7 @@ function wireEvents(container, store, user) {
   }
 
   container.querySelector('[data-action="add-row"]')?.addEventListener('click', () => {
-    store.setState({ lineItems: [...store.getState().lineItems, { itemName: '', quantity: '', rate: '' }] });
+    store.setState({ lineItems: [...store.getState().lineItems, { itemName: '', quantity: '', rate: '', itemId: '' }] });
   });
 
   container.querySelectorAll('[data-action="remove-row"]').forEach((btn) => {
@@ -396,6 +416,25 @@ function wireEvents(container, store, user) {
   container.querySelectorAll('[data-action="item-rate"]').forEach((el) =>
     el.addEventListener('input', () => updateRow(Number(el.dataset.index), { rate: el.value }))
   );
+  container.querySelectorAll('[data-action="item-link"]').forEach((el) =>
+    el.addEventListener('change', () => updateRow(Number(el.dataset.index), { itemId: el.value }))
+  );
+
+  container.querySelector('[data-action="new-item"]')?.addEventListener('click', () => {
+    store.setState({ newItemMode: true, newItemName: '' });
+  });
+  container.querySelector('[data-action="cancel-new-item"]')?.addEventListener('click', () => {
+    store.setState({ newItemMode: false });
+  });
+  container.querySelector('[data-role="new-item-name"]')?.addEventListener('input', (e) => {
+    store.setState({ newItemName: e.target.value });
+  });
+  container.querySelector('[data-action="confirm-new-item"]')?.addEventListener('click', async () => {
+    const name = store.getState().newItemName.trim();
+    if (!name) return;
+    const item = await createItem({ name });
+    store.setState({ items: [...store.getState().items, item], newItemMode: false });
+  });
 
   container.querySelector('[data-action="toggle-mapping"]')?.addEventListener('click', () => {
     store.setState({ mappingOpen: !store.getState().mappingOpen });
@@ -487,7 +526,7 @@ function wireEvents(container, store, user) {
     });
 
     store.setState({
-      lineItems: [...state.lineItems, { itemName, quantity, rate }],
+      lineItems: [...state.lineItems, { itemName, quantity, rate, itemId: '' }],
       lastDerivedTemplate: template,
       mapLineIndex: null,
       mapActiveSlot: null,
@@ -580,9 +619,17 @@ function wireEvents(container, store, user) {
           itemName: row.itemName.trim(),
           quantity: Number(row.quantity),
           rate: Number(row.rate),
+          itemId: row.itemId || null,
         })),
       });
-      store.setState({ ...initialState(), projects: state.projects, vendors: state.vendors, savedOk: true, saving: false });
+      store.setState({
+        ...initialState(),
+        projects: state.projects,
+        vendors: state.vendors,
+        items: state.items,
+        savedOk: true,
+        saving: false,
+      });
     } catch (err) {
       store.setState({ saving: false, saveError: err.message || 'Could not save the purchase order.' });
     }

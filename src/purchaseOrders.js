@@ -32,7 +32,7 @@ export async function fetchPurchaseOrders(filters = {}, client = supabase) {
  * problem in practice.
  * @param {{ poNumber?: string|null, projectId: string, vendorId?: string|null, orderDate: string,
  *   paymentTermsDays?: number|null, statedTotal?: number|null, sourcePdfName?: string|null,
- *   createdBy: string, lineItems: { itemName: string, quantity: number, rate: number }[] }} form
+ *   createdBy: string, lineItems: { itemName: string, quantity: number, rate: number, itemId?: string|null }[] }} form
  * @param {any} [client]
  */
 export async function createPurchaseOrder(form, client = supabase) {
@@ -61,6 +61,7 @@ export async function createPurchaseOrder(form, client = supabase) {
         item_name: item.itemName,
         quantity: item.quantity,
         rate: item.rate,
+        item_id: item.itemId || null,
       }))
     );
     if (itemsError) throw itemsError;

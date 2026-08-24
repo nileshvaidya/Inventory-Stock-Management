@@ -8,6 +8,8 @@ import {
   validateInwardLineItem,
   validateInwardForm,
   validateInspectionForm,
+  validateItemForm,
+  validateStockMovementForm,
 } from './validation.js';
 
 describe('validateSignupForm', () => {
@@ -208,5 +210,58 @@ describe('validateInspectionForm', () => {
     const { valid, errors } = validateInspectionForm({ acceptedQty: 8, rejectedQty: 2, rejectionReason: '', receivedQty: 10 });
     expect(valid).toBe(false);
     expect(errors.rejectionReason).toBeTruthy();
+  });
+});
+
+describe('validateItemForm', () => {
+  it('accepts a name-only form (everything else optional)', () => {
+    expect(validateItemForm({ name: 'Base Angle' }).valid).toBe(true);
+  });
+
+  it('accepts a valid reorder level', () => {
+    expect(validateItemForm({ name: 'Base Angle', reorderLevel: 50 }).valid).toBe(true);
+  });
+
+  it('rejects a missing name', () => {
+    const { valid, errors } = validateItemForm({ name: '' });
+    expect(valid).toBe(false);
+    expect(errors.name).toBeTruthy();
+  });
+
+  it('rejects a negative or non-numeric reorder level', () => {
+    expect(validateItemForm({ name: 'Base Angle', reorderLevel: -5 }).valid).toBe(false);
+    expect(validateItemForm({ name: 'Base Angle', reorderLevel: 'abc' }).valid).toBe(false);
+  });
+
+  it('treats an empty reorder level as unset, not invalid', () => {
+    expect(validateItemForm({ name: 'Base Angle', reorderLevel: '' }).valid).toBe(true);
+  });
+});
+
+describe('validateStockMovementForm', () => {
+  it('accepts a valid In movement', () => {
+    expect(validateStockMovementForm({ itemId: 'item-1', movementType: 'in', quantity: 10 }).valid).toBe(true);
+  });
+
+  it('accepts a valid Out movement', () => {
+    expect(validateStockMovementForm({ itemId: 'item-1', movementType: 'out', quantity: 5 }).valid).toBe(true);
+  });
+
+  it('rejects a missing item', () => {
+    const { valid, errors } = validateStockMovementForm({ movementType: 'in', quantity: 10 });
+    expect(valid).toBe(false);
+    expect(errors.itemId).toBeTruthy();
+  });
+
+  it('rejects an invalid movement type', () => {
+    const { valid, errors } = validateStockMovementForm({ itemId: 'item-1', movementType: 'adjustment', quantity: 10 });
+    expect(valid).toBe(false);
+    expect(errors.movementType).toBeTruthy();
+  });
+
+  it('rejects a zero, negative, or non-numeric quantity', () => {
+    expect(validateStockMovementForm({ itemId: 'item-1', movementType: 'in', quantity: 0 }).valid).toBe(false);
+    expect(validateStockMovementForm({ itemId: 'item-1', movementType: 'in', quantity: -5 }).valid).toBe(false);
+    expect(validateStockMovementForm({ itemId: 'item-1', movementType: 'in', quantity: 'abc' }).valid).toBe(false);
   });
 });

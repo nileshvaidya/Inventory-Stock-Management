@@ -256,3 +256,59 @@ line item, not a per-PO rollup.
   Material Inward save + a validation-blocks-save case, a full Inspection
   save (partial accept/reject with a reason) + a validation-blocks-save
   case, and Master Material Status rendering + CSV export + empty state.
+
+## Phase 4: Inventory (Item Master + stock movement ledger)
+
+Confirmed two design decisions before building: PO Upload gets an Item
+selector (rather than matching free-text item names, which is fragile),
+and accepted inspections auto-create an inbound stock movement (rather
+than starting with manual entries only) — so "current stock" reflects
+real receiving activity without a separate re-entry step.
+
+- `supabase/schema.sql`: `items` (Item Master: name, category, unit of
+  measure, reorder level) and `stock_movements` (the ledger: item,
+  in/out, quantity, an optional reference type/id, notes) —
+  `can_manage_items` (purchase/store/admin) gates `items` writes, since
+  both PO Upload and the Inventory screen create items;
+  `is_store_or_admin` (already existed from Phase 3) gates manual
+  `stock_movements` writes. `po_line_items.item_id` is a new nullable FK
+  — additive, so existing rows keep their free-text `item_name` only and
+  simply don't feed the ledger.
+- `trg_stock_in_from_inspection`: a security-definer trigger on
+  `inspection_results` that inserts a matching `stock_movements` row
+  (`in`, `quantity = accepted_qty`, `reference_type = 'inspection'`)
+  whenever an inspection accepts anything for a line item that has an
+  Item linked — an inspector's own action needs no direct
+  `stock_movements` grant, same rationale as `recompute_po_status`.
+  Fires on insert only; documented as a known limitation that a later
+  correction via `UPDATE` on `inspection_results` doesn't retroactively
+  adjust stock.
+- `current_stock`: a view (`qty_in`/`qty_out`/`current_qty` per item,
+  joined with `reorder_level`) — same "plain view inherits the
+  underlying tables' RLS" pattern as `master_material_status`.
+- `src/screens/poUpload.js`: each line item row gets a "Linked Item"
+  dropdown, plus an inline "+ New Item" (same UX as Project/Vendor) near
+  the Line Items header. Optional — unlinked rows still save fine with
+  just their item name.
+- `src/screens/inventory.js` (Admin/Store/Production): current stock,
+  filterable by name/category/below-reorder-only; each row expands into
+  its full movement ledger. "+ New Item" and manual "Log Movement" are
+  Store/Admin only, enforced by RLS server-side, not just hidden from
+  Production in the UI.
+- `src/validation.js`: `validateItemForm` (name required, everything else
+  optional), `validateStockMovementForm` (item + in/out + positive qty).
+- `scripts/test-rls-inventory.mjs` (new, added to `npm run
+  test:integration`): item-creation permissions per role; the
+  auto-stock-in trigger firing with the correct quantity/reference on an
+  accepted inspection; `current_stock`'s numbers matching a real
+  auto-in + manual-out sequence; manual movement permissions per role.
+- `e2e/phase4.spec.js`: route guard, stock list + below-reorder flag +
+  ledger view, a store-role manual movement, Production's read-only
+  affordances, new-item creation, and an empty state. Added a
+  `production` demo user (`src/demoMode.js`) since Phase 4 was the first
+  screen needing to exercise that specific role in a browser test.
+  `e2e/phase2.spec.js` also gained a Phase 4 case (new item + linking a
+  PO line item to it, verifying `item_id` reaches the save payload) and
+  had its `items` lookup mocked into `mockEmptyLookups` and one
+  custom-route test, since PO Upload's `loadLookups` now also fetches
+  Items.

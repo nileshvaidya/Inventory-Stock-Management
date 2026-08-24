@@ -662,3 +662,147 @@ left join (
 where po.deleted_at is null;
 
 grant select on public.master_material_status to authenticated;
+
+-- Phase 4: Inventory (Item Master + a stock movement ledger). Confirmed
+-- with the user before building: PO Upload gets an Item selector so new
+-- line items can link to the Item Master (existing line items keep their
+-- free-text item_name and simply don't feed the ledger), and accepted
+-- inspections auto-create an inbound stock movement — so "current stock"
+-- reflects real receiving activity without a separate manual re-entry step.
+create or replace function public.can_manage_items(uid uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.users
+    where id = uid and role in ('admin', 'purchase', 'store') and status = 'active'
+  );
+$$;
+
+grant execute on function public.can_manage_items(uuid) to authenticated;
+
+create table if not exists public.items (
+  id uuid primary key default gen_random_uuid(),
+  name text not null check (char_length(trim(name)) > 0),
+  category text null,
+  unit_of_measure text null,
+  reorder_level numeric null check (reorder_level is null or reorder_level >= 0),
+  created_at timestamptz not null default now(),
+  deleted_at timestamptz null
+);
+
+alter table public.items enable row level security;
+
+drop policy if exists "Authenticated users can view items" on public.items;
+create policy "Authenticated users can view items"
+  on public.items for select
+  to authenticated
+  using (true);
+
+drop policy if exists "Purchase/store/admin can create items" on public.items;
+create policy "Purchase/store/admin can create items"
+  on public.items for insert
+  to authenticated
+  with check (public.can_manage_items(auth.uid()));
+
+drop policy if exists "Purchase/store/admin can update items" on public.items;
+create policy "Purchase/store/admin can update items"
+  on public.items for update
+  to authenticated
+  using (public.can_manage_items(auth.uid()))
+  with check (public.can_manage_items(auth.uid()));
+
+-- Nullable, additive: existing po_line_items rows keep their free-text
+-- item_name only; a new/edited row can optionally link an Item so its
+-- receipts feed the stock ledger below.
+alter table public.po_line_items add column if not exists item_id uuid null references public.items (id);
+
+create table if not exists public.stock_movements (
+  id uuid primary key default gen_random_uuid(),
+  item_id uuid not null references public.items (id),
+  movement_type text not null check (movement_type in ('in', 'out')),
+  quantity numeric not null check (quantity > 0),
+  reference_type text null,
+  reference_id uuid null,
+  notes text null,
+  created_by uuid not null references public.users (id),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists stock_movements_item_id_idx on public.stock_movements (item_id);
+
+alter table public.stock_movements enable row level security;
+
+drop policy if exists "Authenticated users can view stock movements" on public.stock_movements;
+create policy "Authenticated users can view stock movements"
+  on public.stock_movements for select
+  to authenticated
+  using (true);
+
+-- Manual entries (opening balance, adjustment) are store/admin only.
+-- Auto-created "in" movements from accepted inspections (the trigger
+-- below) bypass this policy entirely — that function is security definer,
+-- same rationale as recompute_po_status: an inspector's own action
+-- shouldn't need a direct stock_movements grant.
+drop policy if exists "Store/admin can create stock movements" on public.stock_movements;
+create policy "Store/admin can create stock movements"
+  on public.stock_movements for insert
+  to authenticated
+  with check (public.is_store_or_admin(auth.uid()) and created_by = auth.uid());
+
+-- Auto stock-in from Phase 3 inspections: fires once, on insert only (an
+-- inspection_results row is a one-time disposal of a receipt line per its
+-- own design — see the Phase 3 comment above), and only when the received
+-- line's PO line item has an Item linked. A correction made later via
+-- UPDATE on inspection_results does NOT retroactively adjust stock — a
+-- known, documented limitation, not a silent gap.
+create or replace function public.trg_stock_in_from_inspection()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  target_item_id uuid;
+begin
+  if new.accepted_qty > 0 then
+    select pli.item_id into target_item_id
+    from public.material_inward_line_items mil
+    join public.po_line_items pli on pli.id = mil.po_line_item_id
+    where mil.id = new.inward_line_item_id;
+
+    if target_item_id is not null then
+      insert into public.stock_movements (item_id, movement_type, quantity, reference_type, reference_id, created_by)
+      values (target_item_id, 'in', new.accepted_qty, 'inspection', new.id, new.inspected_by);
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists stock_in_after_inspection on public.inspection_results;
+create trigger stock_in_after_inspection
+after insert on public.inspection_results
+for each row execute function public.trg_stock_in_from_inspection();
+
+-- Current stock per item — a plain view (security invoker), inheriting
+-- the same company-wide read RLS already on items/stock_movements.
+create or replace view public.current_stock as
+select
+  i.id as item_id,
+  i.name,
+  i.category,
+  i.unit_of_measure,
+  i.reorder_level,
+  coalesce(sum(case when sm.movement_type = 'in' then sm.quantity else 0 end), 0) as qty_in,
+  coalesce(sum(case when sm.movement_type = 'out' then sm.quantity else 0 end), 0) as qty_out,
+  coalesce(sum(case when sm.movement_type = 'in' then sm.quantity else -sm.quantity end), 0) as current_qty
+from public.items i
+left join public.stock_movements sm on sm.item_id = i.id
+where i.deleted_at is null
+group by i.id;
+
+grant select on public.current_stock to authenticated;
