@@ -208,14 +208,17 @@ function wireEvents(container, store, user) {
         const parsedRows = parsePoText(text);
         const parsedPoNumber = parsePoNumber(text);
         const parsedOrderDate = parseOrderDate(text);
-        const current = store.getState();
+        // A newly selected file replaces the previous parse entirely,
+        // rather than appending to it — each upload represents a single
+        // PO, so switching files (before saving) means starting over with
+        // the new one, not merging both POs' line items together.
         store.setState({
           parsedFileName: file.name,
           parseError: parsedRows.length === 0 ? "Couldn't find any recognizable item/qty/rate lines in this PDF." : null,
-          lineItems: [...current.lineItems, ...parsedRows.map((r) => ({ itemName: r.itemName, quantity: r.quantity, rate: r.rate }))],
+          lineItems: parsedRows.map((r) => ({ itemName: r.itemName, quantity: r.quantity, rate: r.rate })),
           statedTotal: parseStatedTotal(text),
-          poNumber: parsedPoNumber ?? current.poNumber,
-          orderDate: parsedOrderDate ?? current.orderDate,
+          poNumber: parsedPoNumber ?? '',
+          orderDate: parsedOrderDate ?? todayISO(),
         });
       } catch {
         store.setState({ parsedFileName: file.name, parseError: "Couldn't read this PDF.", lineItems: store.getState().lineItems });
