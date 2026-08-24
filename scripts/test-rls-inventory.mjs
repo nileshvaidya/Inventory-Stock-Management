@@ -91,8 +91,8 @@ async function run() {
       .insert({ name: `RLS Test Item ${stamp}`, category: 'Steel', unit_of_measure: 'Nos.', reorder_level: 50 })
       .select()
       .single();
-    assert(!itemErr, 'purchase role can create an item');
-    itemIds.push(item.id);
+    assert(!itemErr, `purchase role can create an item${itemErr ? ` (${itemErr.message})` : ''}`);
+    if (item) itemIds.push(item.id);
 
     const { error: storeItemErr } = await clientStore.from('items').insert({ name: `RLS Test Item Store ${stamp}` });
     assert(!storeItemErr, 'store role can create an item');
@@ -104,82 +104,91 @@ async function run() {
     const { error: inspectorItemErr } = await clientInspector.from('items').insert({ name: `RLS Test Item Inspector ${stamp}` });
     assert(!!inspectorItemErr, 'inspector role cannot create an item');
 
-    console.log('\nItems: any authenticated role can read (Inventory, PO Upload item picker)...');
-    const { data: itemForInspector } = await clientInspector.from('items').select('id').eq('id', item.id);
-    assert((itemForInspector ?? []).some((r) => r.id === item.id), "inspector role can see purchase's item");
+    // Everything below needs the item created above — if that insert
+    // failed (e.g. this Supabase project hasn't had the Phase 4 migration
+    // applied yet), skip it as an explicit failure instead of
+    // dereferencing null data and crashing before cleanup runs for the
+    // users/projects/vendors set up so far.
+    if (item) {
+      console.log('\nItems: any authenticated role can read (Inventory, PO Upload item picker)...');
+      const { data: itemForInspector } = await clientInspector.from('items').select('id').eq('id', item.id);
+      assert((itemForInspector ?? []).some((r) => r.id === item.id), "inspector role can see purchase's item");
 
-    // PO fixture: one line item linked to the Item created above, so the
-    // auto-stock-in trigger has something to attach to.
-    const { data: project } = await admin.from('projects').insert({ name: `RLS Test Project Inv ${stamp}` }).select().single();
-    projectId = project.id;
-    const { data: vendor } = await admin.from('vendors').insert({ name: `RLS Test Vendor Inv ${stamp}` }).select().single();
-    vendorId = vendor.id;
-    const { data: po } = await admin
-      .from('purchase_orders')
-      .insert({ project_id: projectId, vendor_id: vendorId, order_date: '2026-01-01', created_by: purchaseUser.id })
-      .select()
-      .single();
-    poIds.push(po.id);
-    const { data: lineItem } = await admin
-      .from('po_line_items')
-      .insert({ po_id: po.id, item_name: `RLS Test Item ${stamp}`, quantity: 100, rate: 45, item_id: item.id })
-      .select()
-      .single();
+      // PO fixture: one line item linked to the Item created above, so the
+      // auto-stock-in trigger has something to attach to.
+      const { data: project } = await admin.from('projects').insert({ name: `RLS Test Project Inv ${stamp}` }).select().single();
+      projectId = project.id;
+      const { data: vendor } = await admin.from('vendors').insert({ name: `RLS Test Vendor Inv ${stamp}` }).select().single();
+      vendorId = vendor.id;
+      const { data: po } = await admin
+        .from('purchase_orders')
+        .insert({ project_id: projectId, vendor_id: vendorId, order_date: '2026-01-01', created_by: purchaseUser.id })
+        .select()
+        .single();
+      poIds.push(po.id);
+      const { data: lineItem } = await admin
+        .from('po_line_items')
+        .insert({ po_id: po.id, item_name: `RLS Test Item ${stamp}`, quantity: 100, rate: 45, item_id: item.id })
+        .select()
+        .single();
 
-    console.log('\nAuto stock-in: an accepted inspection on a linked line item creates a matching stock_movements row...');
-    const { data: inward } = await clientStore
-      .from('material_inward')
-      .insert({ po_id: po.id, received_date: '2026-01-10', received_by: storeUser.id })
-      .select()
-      .single();
-    const { data: inwardLine } = await clientStore
-      .from('material_inward_line_items')
-      .insert({ inward_id: inward.id, po_line_item_id: lineItem.id, received_qty: 100 })
-      .select()
-      .single();
-    const { data: inspection } = await clientInspector
-      .from('inspection_results')
-      .insert({ inward_line_item_id: inwardLine.id, accepted_qty: 90, rejected_qty: 10, rejection_reason: 'Surface damage', inspected_by: inspectorUser.id })
-      .select()
-      .single();
+      console.log('\nAuto stock-in: an accepted inspection on a linked line item creates a matching stock_movements row...');
+      const { data: inward } = await clientStore
+        .from('material_inward')
+        .insert({ po_id: po.id, received_date: '2026-01-10', received_by: storeUser.id })
+        .select()
+        .single();
+      const { data: inwardLine } = await clientStore
+        .from('material_inward_line_items')
+        .insert({ inward_id: inward.id, po_line_item_id: lineItem.id, received_qty: 100 })
+        .select()
+        .single();
+      const { data: inspection } = await clientInspector
+        .from('inspection_results')
+        .insert({ inward_line_item_id: inwardLine.id, accepted_qty: 90, rejected_qty: 10, rejection_reason: 'Surface damage', inspected_by: inspectorUser.id })
+        .select()
+        .single();
 
-    const { data: autoMovements } = await admin
-      .from('stock_movements')
-      .select('*')
-      .eq('item_id', item.id)
-      .eq('reference_type', 'inspection');
-    assert((autoMovements ?? []).length === 1, 'exactly one auto-created stock movement exists for this inspection');
-    const autoMovement = autoMovements?.[0];
-    assert(autoMovement?.movement_type === 'in', "the auto-created movement's type is 'in'");
-    assert(Number(autoMovement?.quantity) === 90, "the auto-created movement's quantity is the accepted_qty (90), not the full received_qty");
-    assert(autoMovement?.reference_id === inspection.id, "the auto-created movement's reference_id points at the inspection");
+      const { data: autoMovements } = await admin
+        .from('stock_movements')
+        .select('*')
+        .eq('item_id', item.id)
+        .eq('reference_type', 'inspection');
+      assert((autoMovements ?? []).length === 1, 'exactly one auto-created stock movement exists for this inspection');
+      const autoMovement = autoMovements?.[0];
+      assert(autoMovement?.movement_type === 'in', "the auto-created movement's type is 'in'");
+      assert(Number(autoMovement?.quantity) === 90, "the auto-created movement's quantity is the accepted_qty (90), not the full received_qty");
+      assert(autoMovement?.reference_id === inspection.id, "the auto-created movement's reference_id points at the inspection");
 
-    console.log('\ncurrent_stock view: reflects the auto stock-in, readable by any role...');
-    const { data: stockAfterIn } = await clientInspector.from('current_stock').select('*').eq('item_id', item.id).single();
-    assert(Number(stockAfterIn.current_qty) === 90, 'current_qty is 90 after the auto stock-in');
-    assert(Number(stockAfterIn.qty_in) === 90, 'qty_in is 90');
-    assert(Number(stockAfterIn.qty_out) === 0, 'qty_out is 0');
+      console.log('\ncurrent_stock view: reflects the auto stock-in, readable by any role...');
+      const { data: stockAfterIn } = await clientInspector.from('current_stock').select('*').eq('item_id', item.id).single();
+      assert(Number(stockAfterIn.current_qty) === 90, 'current_qty is 90 after the auto stock-in');
+      assert(Number(stockAfterIn.qty_in) === 90, 'qty_in is 90');
+      assert(Number(stockAfterIn.qty_out) === 0, 'qty_out is 0');
 
-    console.log('\nStock movements: store/admin can log a manual movement, purchase/inspector cannot...');
-    const { error: manualOutErr } = await clientStore
-      .from('stock_movements')
-      .insert({ item_id: item.id, movement_type: 'out', quantity: 30, notes: 'Manual issue', created_by: storeUser.id });
-    assert(!manualOutErr, 'store role can log a manual "out" movement');
+      console.log('\nStock movements: store/admin can log a manual movement, purchase/inspector cannot...');
+      const { error: manualOutErr } = await clientStore
+        .from('stock_movements')
+        .insert({ item_id: item.id, movement_type: 'out', quantity: 30, notes: 'Manual issue', created_by: storeUser.id });
+      assert(!manualOutErr, 'store role can log a manual "out" movement');
 
-    const { error: purchaseMovementErr } = await clientPurchase
-      .from('stock_movements')
-      .insert({ item_id: item.id, movement_type: 'in', quantity: 10, created_by: purchaseUser.id });
-    assert(!!purchaseMovementErr, 'purchase role cannot log a manual stock movement');
+      const { error: purchaseMovementErr } = await clientPurchase
+        .from('stock_movements')
+        .insert({ item_id: item.id, movement_type: 'in', quantity: 10, created_by: purchaseUser.id });
+      assert(!!purchaseMovementErr, 'purchase role cannot log a manual stock movement');
 
-    const { error: inspectorMovementErr } = await clientInspector
-      .from('stock_movements')
-      .insert({ item_id: item.id, movement_type: 'in', quantity: 10, created_by: inspectorUser.id });
-    assert(!!inspectorMovementErr, 'inspector role cannot log a manual stock movement');
+      const { error: inspectorMovementErr } = await clientInspector
+        .from('stock_movements')
+        .insert({ item_id: item.id, movement_type: 'in', quantity: 10, created_by: inspectorUser.id });
+      assert(!!inspectorMovementErr, 'inspector role cannot log a manual stock movement');
 
-    console.log('\ncurrent_stock view: reflects the manual "out" movement on top of the auto stock-in...');
-    const { data: stockAfterOut } = await admin.from('current_stock').select('*').eq('item_id', item.id).single();
-    assert(Number(stockAfterOut.current_qty) === 60, 'current_qty is 60 (90 in - 30 out)');
-    assert(Number(stockAfterOut.qty_out) === 30, 'qty_out is 30');
+      console.log('\ncurrent_stock view: reflects the manual "out" movement on top of the auto stock-in...');
+      const { data: stockAfterOut } = await admin.from('current_stock').select('*').eq('item_id', item.id).single();
+      assert(Number(stockAfterOut.current_qty) === 60, 'current_qty is 60 (90 in - 30 out)');
+      assert(Number(stockAfterOut.qty_out) === 30, 'qty_out is 30');
+    } else {
+      assert(false, 'skipped all downstream item/stock checks — the item create above failed, see its message');
+    }
   } finally {
     console.log('\nCleaning up test data...');
     await cleanup({ userIds, projectId, vendorId, poIds, itemIds });
