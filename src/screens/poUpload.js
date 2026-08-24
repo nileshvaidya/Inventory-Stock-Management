@@ -6,7 +6,7 @@ import { renderShell } from '../layout.js';
 import { escapeHtml } from '../components.js';
 import { createStore } from '../state.js';
 import { canViewModule } from '../navPermissions.js';
-import { extractPdfText, parsePoText, parseStatedTotal } from '../pdfParser.js';
+import { extractPdfText, parsePoText, parseStatedTotal, parsePoNumber, parseOrderDate } from '../pdfParser.js';
 import { fetchProjects, createProject } from '../projects.js';
 import { fetchVendors, createVendor } from '../vendors.js';
 import { createPurchaseOrder } from '../purchaseOrders.js';
@@ -206,11 +206,16 @@ function wireEvents(container, store, user) {
       try {
         const text = await extractPdfText(file);
         const parsedRows = parsePoText(text);
+        const parsedPoNumber = parsePoNumber(text);
+        const parsedOrderDate = parseOrderDate(text);
+        const current = store.getState();
         store.setState({
           parsedFileName: file.name,
           parseError: parsedRows.length === 0 ? "Couldn't find any recognizable item/qty/rate lines in this PDF." : null,
-          lineItems: [...store.getState().lineItems, ...parsedRows.map((r) => ({ itemName: r.itemName, quantity: r.quantity, rate: r.rate }))],
+          lineItems: [...current.lineItems, ...parsedRows.map((r) => ({ itemName: r.itemName, quantity: r.quantity, rate: r.rate }))],
           statedTotal: parseStatedTotal(text),
+          poNumber: parsedPoNumber ?? current.poNumber,
+          orderDate: parsedOrderDate ?? current.orderDate,
         });
       } catch {
         store.setState({ parsedFileName: file.name, parseError: "Couldn't read this PDF.", lineItems: store.getState().lineItems });

@@ -109,3 +109,42 @@ history for the full trail.
 - `e2e/phase2.spec.js`: route guards, manual line-item entry, inline
   project creation, form validation, Order Status rendering + CSV export
   download, empty state.
+
+## Fix: PDF parsing against a real PO
+
+A real PO PDF (`PO/AISL/2026-27/0032`, Odoo-generated) exposed that
+`extractPdfText()` never actually worked: pdf.js's `getTextContent()`
+returns one item per positioned text run with no inherent line breaks, and
+the original code space-joined every item on a page into a single line —
+so `parsePoText()`'s line-by-line regex had nothing to match against any
+real PDF, only against hand-written test strings that already had `\n`s.
+Fixed `src/pdfParser.js`:
+
+- `extractPdfText()` now reconstructs real lines from each text item's
+  `transform` matrix (Y position groups items into a line, top to bottom;
+  X position orders items within a line, left to right).
+- `parsePoText()` gained a second pattern for the real-world line shape —
+  `<description> <qty, comma-formatted> <unit-of-measure> <rate,
+  comma-formatted> <discount/tax/amount columns>` — tried after the
+  original simple `<description> <qty> <rate>` shape, so existing behavior
+  is unchanged for PDFs that already worked.
+- Lines containing a `+<digits>` token (a phone country code, e.g. a
+  supplier's `+91 90228 17411` contact line) are excluded from line-item
+  matching — on real letterhead/contact blocks this otherwise reads as a
+  plausible `<qty> <rate>` pair and produces a bogus row.
+- `parseStatedTotal()` now prefers "Untaxed Amount" (pre-tax) over "Total"
+  when both are present — Indian POs commonly state the pre-tax subtotal
+  separately from the tax-inclusive grand total, and line items are
+  entered pre-tax, so comparing against "Total" produced a false mismatch
+  warning on every taxed PO. Also handles a leading ₹ symbol.
+- New `parsePoNumber()` and `parseOrderDate()` helpers pre-fill the PO
+  Number and Order Date fields from the parsed PDF
+  (`src/screens/poUpload.js`) — `parseOrderDate()` tolerates the label
+  ("Order Date:") and its value landing on different reconstructed lines,
+  since multi-column table layouts (header row, then a values row below)
+  are common.
+
+Verified against the real PDF: line item, stated total, PO number, and
+order date all now extract correctly. Added unit test coverage in
+`src/pdfParser.test.js` using a reconstructed-lines fixture calibrated to
+the real PO's actual content/layout.

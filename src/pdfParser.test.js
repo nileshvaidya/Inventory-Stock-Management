@@ -1,5 +1,24 @@
 import { describe, it, expect } from 'vitest';
-import { parsePoText, parseStatedTotal } from './pdfParser.js';
+import { parsePoText, parseStatedTotal, parsePoNumber, parseOrderDate } from './pdfParser.js';
+
+// A reconstructed-lines rendering of a real Odoo-style Indian PO
+// (PO/AISL/2026-27/0032), used to calibrate the real-world line-item and
+// total parsing. Numbers/labels match the actual PDF content.
+const REAL_PO_TEXT = [
+  'Shipping address ASK - warehouse # 2 367, LAXMINARAYAN APT',
+  'Purchase Order # PO/AISL/2026-27/0032',
+  'Buyer ASK INFO-SOLUTIONS LLP',
+  'India  +91 90228 17411',
+  'Buyer Order Date: Expected Arrival:',
+  'ASK INFO-SOLUTIONS LLP 13/08/2026 14/08/2026',
+  'Description Qty Unit Price Disc. Taxes Amount',
+  'Base Angle   1,500.00   Nos.   45.00   0.00 %   GST 18%   ₹   67,500.00',
+  'Untaxed Amount   ₹   67,500.00',
+  'SGST/UTGST   ₹   6,075.00',
+  'CGST   ₹   6,075.00',
+  'Total   ₹   79,650.00',
+  'Delivery Schedule 1500 Nos. 1st Sept 2026',
+].join('\n');
 
 describe('parsePoText', () => {
   it('parses clean "item qty rate" lines', () => {
@@ -32,6 +51,26 @@ describe('parsePoText', () => {
     const rows = parsePoText('Widget 0 10\nGadget -5 10');
     expect(rows).toEqual([]);
   });
+
+  it('parses a real PO line with comma-formatted qty and a unit-of-measure column, ignoring trailing discount/tax/amount columns', () => {
+    const rows = parsePoText(REAL_PO_TEXT);
+    expect(rows).toEqual([{ itemName: 'Base Angle', quantity: 1500, rate: 45 }]);
+  });
+
+  it('does not mistake a phone number ("+91 90228 17411") for a line item', () => {
+    expect(parsePoText('India  +91 90228 17411')).toEqual([]);
+  });
+
+  it('does not mistake header, metadata, or totals lines for line items', () => {
+    const noise = [
+      'Purchase Order # PO/AISL/2026-27/0032',
+      'Order Date: 13/08/2026',
+      'Description Qty Unit Price Disc. Taxes Amount',
+      'Untaxed Amount   ₹   67,500.00',
+      'Total   ₹   79,650.00',
+    ].join('\n');
+    expect(parsePoText(noise)).toEqual([]);
+  });
 });
 
 describe('parseStatedTotal', () => {
@@ -49,5 +88,45 @@ describe('parseStatedTotal', () => {
 
   it('returns null for empty text', () => {
     expect(parseStatedTotal('')).toBe(null);
+  });
+
+  it('prefers "Untaxed Amount" (pre-tax) over "Total" (tax-inclusive) and handles the ₹ symbol', () => {
+    expect(parseStatedTotal(REAL_PO_TEXT)).toBe(67500);
+  });
+
+  it('falls back to "Total" with a ₹ symbol when there is no "Untaxed Amount" line', () => {
+    expect(parseStatedTotal('Item 1 2 3\nTotal   ₹   79,650.00')).toBe(79650);
+  });
+});
+
+describe('parsePoNumber', () => {
+  it('finds a "Purchase Order # <number>" line', () => {
+    expect(parsePoNumber(REAL_PO_TEXT)).toBe('PO/AISL/2026-27/0032');
+  });
+
+  it('returns null when no PO number line is present', () => {
+    expect(parsePoNumber('Widget A 10 25.50')).toBe(null);
+  });
+
+  it('returns null for empty text', () => {
+    expect(parsePoNumber('')).toBe(null);
+  });
+});
+
+describe('parseOrderDate', () => {
+  it('finds an "Order Date: DD/MM/YYYY" line and converts to ISO', () => {
+    expect(parseOrderDate('Order Date: 13/08/2026')).toBe('2026-08-13');
+  });
+
+  it('finds the date when "Order Date:" and its value are on different reconstructed lines (multi-column layout)', () => {
+    expect(parseOrderDate(REAL_PO_TEXT)).toBe('2026-08-13');
+  });
+
+  it('returns null when no order date line is present', () => {
+    expect(parseOrderDate('Widget A 10 25.50')).toBe(null);
+  });
+
+  it('returns null for empty text', () => {
+    expect(parseOrderDate('')).toBe(null);
   });
 });

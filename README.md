@@ -140,16 +140,27 @@ edge case noted below.
 
 1. **Design mockup**: still not available — PO Upload/Order Status layout
    is built without it.
-2. **PDF parsing accuracy**: `src/pdfParser.js` extracts text with pdf.js
-   and applies a best-effort heuristic (lines matching `<description> <qty>
-   <rate>`) to populate the review table — there's no real PO template to
-   calibrate against yet. Every parsed row is editable/deletable and rows
-   can be added by hand before saving (P2-2, P2-6), so a bad parse never
-   blocks creating a PO, but don't expect high accuracy against your actual
-   PO layouts until we can tune it against real samples.
+2. **PDF parsing accuracy**: fixed and calibrated against a real PO
+   (`PO/AISL/2026-27/0032`) — see "PDF parsing fix" below.
+   `src/pdfParser.js` reconstructs real text lines from pdf.js's
+   Y/X-positioned text items (the original version space-joined an entire
+   page into one line, so line-item parsing never actually worked against
+   a real PDF), matches both a simple `<description> <qty> <rate>` shape
+   and a real-world `<description> <qty> <unit-of-measure> <rate>
+   <discount/tax/amount columns>` shape, and now also pre-fills PO Number
+   and Order Date when found. Every parsed row is still editable/deletable
+   and rows can be added by hand before saving (P2-2, P2-6), so a bad or
+   partial parse never blocks creating a PO — but this is calibrated
+   against one real vendor template, not a guarantee across every possible
+   PO layout.
 3. **Deactivating your own last admin account** (carried over from Phase
    1): still not guarded against — flagging again since it hasn't been
    addressed.
+4. **Production schema**: Phase 2's schema.sql additions (`vendors`,
+   `projects`, `purchase_orders`, `po_line_items`, `is_purchase_or_admin`)
+   were confirmed applied to staging (CI's `integration` job passes against
+   it) — please confirm they've also been run on the **production**
+   Supabase project before Phase 3 adds more tables on top.
 
 ## Phase 0 — resolved
 
