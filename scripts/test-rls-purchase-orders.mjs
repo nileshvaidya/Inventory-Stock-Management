@@ -1,6 +1,6 @@
 // RLS/RPC integration tests for Phase 2's tables (vendors, projects,
-// purchase_orders, po_line_items), run against a REAL Supabase project —
-// same pattern and rationale as test-rls-users.mjs.
+// purchase_orders, po_line_items, import_field_mappings), run against a
+// REAL Supabase project — same pattern and rationale as test-rls-users.mjs.
 import 'dotenv/config';
 import { createClient } from '@supabase/supabase-js';
 
@@ -52,7 +52,8 @@ async function signedInClient(email) {
   return client;
 }
 
-async function cleanup({ userIds, projectId, vendorId, poId }) {
+async function cleanup({ userIds, projectId, vendorId, poId, mappingId }) {
+  if (mappingId) await admin.from('import_field_mappings').delete().eq('id', mappingId);
   if (poId) await admin.from('purchase_orders').delete().eq('id', poId);
   if (projectId) await admin.from('projects').delete().eq('id', projectId);
   if (vendorId) await admin.from('vendors').delete().eq('id', vendorId);
@@ -66,7 +67,7 @@ async function run() {
   const purchaseUser = await createUser({ name: `RLS Test Purchase ${stamp}`, email: `rls-purchase-${stamp}@example.com`, role: 'purchase' });
   const storeUser = await createUser({ name: `RLS Test Store ${stamp}`, email: `rls-store-po-${stamp}@example.com`, role: 'store' });
   const userIds = [purchaseUser.id, storeUser.id];
-  let projectId, vendorId, poId;
+  let projectId, vendorId, poId, mappingId;
 
   try {
     const clientPurchase = await signedInClient(purchaseUser.email);
@@ -141,9 +142,52 @@ async function run() {
     await clientStore.from('purchase_orders').update({ deleted_at: new Date().toISOString() }).eq('id', poId);
     const { data: afterStoreAttempt } = await admin.from('purchase_orders').select('deleted_at').eq('id', poId).single();
     assert(afterStoreAttempt.deleted_at === null, 'store role cannot archive a PO (RLS silently filters the update to zero rows)');
+
+    console.log('\nImport field mappings (Map Fields Manually, Phase 2 addendum): purchase role can save one, store role cannot...');
+    const templateV1 = { tokenCount: 5, itemNameTokenIndices: [0, 1], qtyTokenIndex: 2, rateTokenIndex: 3 };
+    const { data: mapping, error: mappingErr } = await clientPurchase
+      .from('import_field_mappings')
+      .insert({ doc_type: 'purchase_order', vendor_id: vendorId, template: templateV1, created_by: purchaseUser.id })
+      .select()
+      .single();
+    assert(!mappingErr, 'purchase role can create an import field mapping');
+    mappingId = mapping?.id;
+
+    const { error: storeMappingErr } = await clientStore
+      .from('import_field_mappings')
+      .insert({ doc_type: 'purchase_order', vendor_id: vendorId, template: templateV1, created_by: storeUser.id });
+    assert(!!storeMappingErr, 'store role cannot create an import field mapping');
+
+    console.log('\nImport field mappings: any authenticated role can read (auto-applied on future uploads)...');
+    const { data: mappingForStore } = await clientStore
+      .from('import_field_mappings')
+      .select('id, template')
+      .eq('id', mappingId);
+    assert((mappingForStore ?? []).some((m) => m.id === mappingId), "store role can read purchase's saved mapping");
+
+    console.log('\nImport field mappings: purchase role can update (re-map) an existing template, store role cannot...');
+    const templateV2 = { ...templateV1, rateTokenIndex: 4 };
+    const { error: updateMappingErr } = await clientPurchase
+      .from('import_field_mappings')
+      .update({ template: templateV2 })
+      .eq('id', mappingId);
+    assert(!updateMappingErr, 'purchase role can update its vendor mapping');
+    const { data: afterUpdate } = await admin.from('import_field_mappings').select('template').eq('id', mappingId).single();
+    assert(afterUpdate.template.rateTokenIndex === 4, "the mapping's updated template persisted");
+
+    await clientStore.from('import_field_mappings').update({ template: templateV1 }).eq('id', mappingId);
+    const { data: afterStoreMappingAttempt } = await admin
+      .from('import_field_mappings')
+      .select('template')
+      .eq('id', mappingId)
+      .single();
+    assert(
+      afterStoreMappingAttempt.template.rateTokenIndex === 4,
+      'store role cannot update an import field mapping (RLS silently filters the update to zero rows)'
+    );
   } finally {
     console.log('\nCleaning up test data...');
-    await cleanup({ userIds, projectId, vendorId, poId });
+    await cleanup({ userIds, projectId, vendorId, poId, mappingId });
   }
 
   console.log(`\n${passed} passed, ${failed} failed`);

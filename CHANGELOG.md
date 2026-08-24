@@ -148,3 +148,58 @@ Verified against the real PDF: line item, stated total, PO number, and
 order date all now extract correctly. Added unit test coverage in
 `src/pdfParser.test.js` using a reconstructed-lines fixture calibrated to
 the real PO's actual content/layout.
+
+## Fix: PO Upload — selecting a new PDF replaced-then-appended instead of replacing
+
+Uploading a second PDF before saving mixed both POs' line items into one
+table — the file-change handler spread the previous `lineItems` in with
+the newly parsed rows. Each upload represents a single PO, so switching
+files now starts over with the new file's parse, also resetting PO
+Number/Order Date to the new file's values (or blank/today) instead of
+carrying over the previous file's (`src/screens/poUpload.js`).
+
+## Phase 2 addendum: Map Fields Manually (visual field-mapping fallback)
+
+No regex heuristic covers every vendor's PO layout — the next follow-up
+question was "what happens when one doesn't match, and can that be fixed
+without touching code every time." Added a manual field-mapping fallback
+to PO Upload, built to generalize to other document types later:
+
+- `src/docMapping.js` (new, pure, doc-type-agnostic): `tokenizeLine()`
+  splits a line into position-tagged tokens; `deriveColumnTemplate()` turns
+  one manually-mapped example row into a reusable `{ tokenCount,
+  itemNameTokenIndices, qtyTokenIndex, rateTokenIndex }` template — a
+  "recorded macro", not a layout-detection model — deliberately simple:
+  only lines with the exact same token count as the example are
+  considered, keeping false positives low without inferring anything about
+  the layout beyond what the user pointed at; `applyColumnTemplate()`
+  applies a saved template to fresh lines, returning the same shape as
+  `pdfParser.js`'s `parsePoText()` so both strategies are interchangeable.
+- `src/importMappings.js` (new) + `supabase/schema.sql`'s
+  `import_field_mappings` table (company-wide read, admin/purchase-only
+  write, same RLS split as `vendors`/`projects`) — persists a saved
+  template per `(doc_type, vendor_id)`, shared across the whole team, not
+  just the browser that created it. `doc_type` is free text rather than a
+  CHECK-constrained enum specifically so Invoices/Delivery Challans/
+  Payment Receipts can reuse this same table in later phases without a
+  migration.
+- `src/screens/poUpload.js`: a new "Map Fields Manually" panel (raw
+  extracted lines, or pasted text as a fallback when extraction itself
+  finds nothing) — click a line, then click its word(s) to fill Item
+  Name/Qty/Rate, "Add Row" appends into the same editable line-items table
+  every other row lives in. After mapping one row, "Remember this layout
+  for &lt;Vendor&gt;" saves it; future uploads from that vendor try the
+  saved template automatically whenever the built-in regexes find nothing.
+  Scoped to line items only for this pass — PO Number/Order Date already
+  had plain editable inputs, so a dedicated mapping UI for two single
+  values wasn't worth it here.
+- `src/docMapping.test.js`: unit tests for tokenizing, template derivation,
+  and template application (matching lines, rejecting wrong token counts,
+  non-numeric qty/rate, invalid quantities/rates, no-template/no-lines).
+- `e2e/phase2.spec.js`: two new tests — building a line item purely from
+  pasted text via click-to-assign mapping (using a line shape the built-in
+  regexes deliberately don't recognize, so the test actually exercises the
+  manual path), and saving/remembering a per-vendor template.
+- `scripts/test-rls-purchase-orders.mjs`: RLS coverage for
+  `import_field_mappings` — purchase/admin can create, read, and update a
+  mapping; store role can read but not create or update.

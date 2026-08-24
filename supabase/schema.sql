@@ -312,3 +312,52 @@ create policy "Purchase/admin can create PO line items"
   on public.po_line_items for insert
   to authenticated
   with check (public.is_purchase_or_admin(auth.uid()));
+
+-- Phase 2 addendum: per-vendor field-mapping templates for PDF/text import
+-- (src/docMapping.js, src/importMappings.js) — when the built-in parsing
+-- heuristics in src/pdfParser.js don't recognize a vendor's PO layout, a
+-- purchase/admin user can manually map it once in the PO Upload screen and
+-- have it auto-applied on future uploads from that vendor.
+--
+-- doc_type is free text, not a CHECK-constrained enum: future document
+-- types (invoices, delivery challans, payment receipts) will reuse this
+-- same table in later phases without a migration, unlike
+-- purchase_orders.status above, which enumerates a fixed, already-known set.
+create table if not exists public.import_field_mappings (
+  id uuid primary key default gen_random_uuid(),
+  doc_type text not null check (char_length(trim(doc_type)) > 0),
+  vendor_id uuid not null references public.vendors (id) on delete cascade,
+  template jsonb not null,
+  created_by uuid not null references public.users (id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (doc_type, vendor_id)
+);
+
+alter table public.import_field_mappings enable row level security;
+
+-- Company-wide read: any purchase/admin uploader benefits from a
+-- teammate's earlier mapping for the same vendor, not just its author.
+drop policy if exists "Authenticated users can view import field mappings" on public.import_field_mappings;
+create policy "Authenticated users can view import field mappings"
+  on public.import_field_mappings for select
+  to authenticated
+  using (true);
+
+drop policy if exists "Purchase/admin can create import field mappings" on public.import_field_mappings;
+create policy "Purchase/admin can create import field mappings"
+  on public.import_field_mappings for insert
+  to authenticated
+  with check (public.is_purchase_or_admin(auth.uid()) and created_by = auth.uid());
+
+-- Update policy is needed alongside insert: saveMappingForVendor() uses an
+-- upsert (on the doc_type/vendor_id unique constraint) so re-mapping the
+-- same vendor overwrites the existing template rather than erroring on a
+-- duplicate key — Supabase's upsert issues an INSERT ... ON CONFLICT DO
+-- UPDATE, which RLS evaluates against both policies depending on the path.
+drop policy if exists "Purchase/admin can update import field mappings" on public.import_field_mappings;
+create policy "Purchase/admin can update import field mappings"
+  on public.import_field_mappings for update
+  to authenticated
+  using (public.is_purchase_or_admin(auth.uid()))
+  with check (public.is_purchase_or_admin(auth.uid()));

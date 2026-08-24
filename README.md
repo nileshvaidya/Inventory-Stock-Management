@@ -36,7 +36,10 @@ src/
   admin.js                        # Users & Roles data layer (fetchAdminUsers/inviteUser/setUserRole/setUserStatus)
   roles.js                          # confirmed role list — app-layer source of truth, mirrors schema.sql's CHECK
   navPermissions.js                   # role -> visible-module matrix (sidebar + route guards read this)
-  validation.js                         # pure form-validation logic
+  pdfParser.js                          # PO PDF text extraction + regex-based line-item/total parsing (Phase 2)
+  docMapping.js                           # manual field-mapping fallback, doc-type-agnostic (Phase 2 addendum)
+  importMappings.js                         # per-vendor saved mapping templates data layer (Phase 2 addendum)
+  validation.js                               # pure form-validation logic
   demoMode.js                             # VITE_DEMO_MODE + ?demoRole= dev bypass
   state.js                                  # small in-memory store + pub-sub
   layout.js                                   # shared app shell (desktop sidebar / mobile top bar+tabs)
@@ -157,10 +160,44 @@ edge case noted below.
    1): still not guarded against — flagging again since it hasn't been
    addressed.
 4. **Production schema**: Phase 2's schema.sql additions (`vendors`,
-   `projects`, `purchase_orders`, `po_line_items`, `is_purchase_or_admin`)
-   were confirmed applied to staging (CI's `integration` job passes against
-   it) — please confirm they've also been run on the **production**
-   Supabase project before Phase 3 adds more tables on top.
+   `projects`, `purchase_orders`, `po_line_items`, `is_purchase_or_admin`,
+   and the field-mapping addendum's `import_field_mappings`) were confirmed
+   applied to staging (CI's `integration` job passes against it) — please
+   confirm they've also been run on the **production** Supabase project
+   before Phase 3 adds more tables on top.
+
+## Phase 2 addendum — Map Fields Manually (visual field-mapping fallback)
+
+When `src/pdfParser.js`'s regex heuristics don't recognize a vendor's PO
+layout (a different column order, an unfamiliar label, etc.), PO Upload now
+offers a manual fallback instead of leaving the user to retype every line
+item from scratch:
+
+- **Raw text panel** ("Map Fields Manually", auto-expanded whenever parsing
+  finds nothing): shows the PDF's extracted lines (or pasted text — a
+  textarea also lets you paste text copied from a PDF viewer, for the rare
+  case extraction itself finds no text layer, e.g. a scanned image PDF).
+- **Click-to-assign mapping**: click a line, then click the word(s) in it
+  that are the Item Name, Qty, and Rate — no retyping numbers by hand.
+  "Add Row" appends the result to the same editable line-items table every
+  other row lives in.
+- **Per-vendor memory**: after mapping one row, "Remember this layout for
+  &lt;Vendor&gt;" saves it (`import_field_mappings`, company-wide read,
+  admin/purchase-only write). The **next** upload from that vendor tries
+  the saved template automatically (as a fallback, only when the built-in
+  regexes find nothing) — so a format only needs to be mapped once per
+  vendor, not once per document.
+- Deliberately scoped to **line items only** for this pass — PO Number and
+  Order Date were already plain editable text/date inputs, so a dedicated
+  mapping UI for two single values wasn't worth the added complexity here.
+
+Built to generalize beyond POs: `src/docMapping.js` (tokenizing a line,
+deriving/applying a column template) is document-type-agnostic — it takes
+raw lines and token positions, nothing PO-specific — so Invoices, Delivery
+Challans, and Payment Receipts can reuse it directly once those phases
+exist, wiring up their own field labels and UI, not new parsing logic.
+`import_field_mappings.doc_type` is already free text for exactly this
+reason (see `supabase/schema.sql`).
 
 ## Phase 0 — resolved
 

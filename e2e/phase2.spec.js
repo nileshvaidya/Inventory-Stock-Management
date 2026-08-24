@@ -55,6 +55,74 @@ test.describe('Phase 2 — PO Upload', () => {
     expect(insertCalled).toBe(false);
   });
 
+  test('Map Fields Manually: pasted text can be built into a line item by clicking words (P2 field-mapping fallback)', async ({ page }) => {
+    await mockEmptyLookups(page);
+    await page.goto('/?demoRole=admin#/po-upload');
+
+    await page.click('[data-action="toggle-mapping"]');
+    // "Base Angle 1500 45 Nos" is deliberately a shape pdfParser.js's
+    // built-in regexes don't recognize (qty/rate adjacent with no marker,
+    // then a trailing unit-of-measure word) — so the only way this becomes
+    // a line item here is via manual field mapping, not the auto-parser.
+    await page.fill('[data-action="paste-text"]', 'Base Angle 1500 45 Nos');
+    await page.click('[data-action="use-pasted-text"]');
+
+    await expect(page.locator('[data-role="raw-line"]')).toContainText('Base Angle 1500 45 Nos');
+    await expect(page.locator('[data-line-item-row]')).toHaveCount(0);
+    await page.click('[data-action="select-map-line"][data-index="0"]');
+
+    // Item Name is the active slot by default after picking a line.
+    await page.click('[data-action="map-token"][data-token-index="0"]'); // "Base"
+    await page.click('[data-action="map-token"][data-token-index="1"]'); // "Angle"
+    await page.click('[data-action="set-active-slot"][data-slot="qty"]');
+    await page.click('[data-action="map-token"][data-token-index="2"]'); // "1500"
+    await page.click('[data-action="set-active-slot"][data-slot="rate"]');
+    await page.click('[data-action="map-token"][data-token-index="3"]'); // "45"
+
+    await page.click('[data-action="add-mapped-row"]');
+
+    const row = page.locator('[data-line-item-row="0"]');
+    await expect(row.locator('[data-action="item-name"]')).toHaveValue('Base Angle');
+    await expect(row).toContainText('67500.00');
+  });
+
+  test('Map Fields Manually: "Remember this layout" saves a per-vendor template', async ({ page }) => {
+    await page.route('**/rest/v1/projects**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
+    await page.route('**/rest/v1/vendors**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([{ id: 'v1', name: 'Acme Supplies', gstin: null, contact: null, default_payment_terms_days: null }]),
+      })
+    );
+    let mappingSaveCalled = false;
+    await page.route('**/rest/v1/import_field_mappings**', (route) => {
+      mappingSaveCalled = true;
+      route.fulfill({ status: 201, contentType: 'application/json', body: '{}' });
+    });
+
+    await page.goto('/?demoRole=admin#/po-upload');
+    await page.selectOption('[data-action="vendor-select"]', 'v1');
+
+    await page.click('[data-action="toggle-mapping"]');
+    await page.fill('[data-action="paste-text"]', 'Base Angle 1500 45 Nos');
+    await page.click('[data-action="use-pasted-text"]');
+    await page.click('[data-action="select-map-line"][data-index="0"]');
+    await page.click('[data-action="map-token"][data-token-index="0"]');
+    await page.click('[data-action="map-token"][data-token-index="1"]');
+    await page.click('[data-action="set-active-slot"][data-slot="qty"]');
+    await page.click('[data-action="map-token"][data-token-index="2"]');
+    await page.click('[data-action="set-active-slot"][data-slot="rate"]');
+    await page.click('[data-action="map-token"][data-token-index="3"]');
+    await page.click('[data-action="add-mapped-row"]');
+
+    await expect(page.locator('[data-action="remember-layout"]')).toContainText('Acme Supplies');
+    await page.click('[data-action="remember-layout"]');
+
+    await expect(page.getByText('Layout remembered')).toBeVisible();
+    expect(mappingSaveCalled).toBe(true);
+  });
+
   test('"+ New" creates and selects a project inline (P2-3)', async ({ page }) => {
     await mockEmptyLookups(page);
     await page.route('**/rest/v1/projects**', (route) => {
