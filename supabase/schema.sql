@@ -361,3 +361,304 @@ create policy "Purchase/admin can update import field mappings"
   to authenticated
   using (public.is_purchase_or_admin(auth.uid()))
   with check (public.is_purchase_or_admin(auth.uid()));
+
+-- Phase 3: Material Inward & Inspection, plus the Master Material Status
+-- report. A PO can be received across multiple partial deliveries (each a
+-- material_inward row); each delivery's line items are inspected once
+-- (inspection_results, one row per material_inward_line_items row) into
+-- accepted/rejected quantities. purchase_orders.status is no longer set
+-- directly by the app for these transitions — recompute_po_status() and
+-- its triggers below keep it in sync automatically from the underlying
+-- receipt/inspection quantities, so it can never drift from reality
+-- regardless of which screen touched the data.
+--
+-- Confirmed with the user: a PO's status only becomes 'rejected' if EVERY
+-- unit ordered was received and inspected and NONE of it was accepted —
+-- a partial rejection still shows 'received_inspected' (Master Material
+-- Status is where the exact accepted/rejected/pending split per item
+-- lives, not the one-word PO status).
+create or replace function public.is_store_or_admin(uid uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.users
+    where id = uid and role in ('admin', 'store') and status = 'active'
+  );
+$$;
+
+grant execute on function public.is_store_or_admin(uuid) to authenticated;
+
+create or replace function public.is_inspector_or_admin(uid uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.users
+    where id = uid and role in ('admin', 'inspector') and status = 'active'
+  );
+$$;
+
+grant execute on function public.is_inspector_or_admin(uuid) to authenticated;
+
+create table if not exists public.material_inward (
+  id uuid primary key default gen_random_uuid(),
+  po_id uuid not null references public.purchase_orders (id),
+  received_date date not null default current_date,
+  received_by uuid not null references public.users (id),
+  notes text null,
+  created_at timestamptz not null default now(),
+  deleted_at timestamptz null
+);
+
+create index if not exists material_inward_po_id_idx on public.material_inward (po_id);
+
+alter table public.material_inward enable row level security;
+
+drop policy if exists "Authenticated users can view material inward" on public.material_inward;
+create policy "Authenticated users can view material inward"
+  on public.material_inward for select
+  to authenticated
+  using (true);
+
+drop policy if exists "Store/admin can create material inward" on public.material_inward;
+create policy "Store/admin can create material inward"
+  on public.material_inward for insert
+  to authenticated
+  with check (public.is_store_or_admin(auth.uid()) and received_by = auth.uid());
+
+drop policy if exists "Store/admin can update material inward" on public.material_inward;
+create policy "Store/admin can update material inward"
+  on public.material_inward for update
+  to authenticated
+  using (public.is_store_or_admin(auth.uid()))
+  with check (public.is_store_or_admin(auth.uid()));
+
+create table if not exists public.material_inward_line_items (
+  id uuid primary key default gen_random_uuid(),
+  inward_id uuid not null references public.material_inward (id) on delete cascade,
+  po_line_item_id uuid not null references public.po_line_items (id),
+  received_qty numeric not null check (received_qty > 0),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists material_inward_line_items_inward_id_idx on public.material_inward_line_items (inward_id);
+create index if not exists material_inward_line_items_po_line_item_id_idx on public.material_inward_line_items (po_line_item_id);
+
+alter table public.material_inward_line_items enable row level security;
+
+drop policy if exists "Authenticated users can view material inward line items" on public.material_inward_line_items;
+create policy "Authenticated users can view material inward line items"
+  on public.material_inward_line_items for select
+  to authenticated
+  using (true);
+
+drop policy if exists "Store/admin can create material inward line items" on public.material_inward_line_items;
+create policy "Store/admin can create material inward line items"
+  on public.material_inward_line_items for insert
+  to authenticated
+  with check (public.is_store_or_admin(auth.uid()));
+
+-- One inspection record per received line (P3: inspecting a receipt line
+-- disposes all of its received_qty into accepted+rejected in one pass —
+-- simpler than modeling incremental re-inspection, and matches the
+-- inward/inspection split being two distinct one-time actions by two
+-- different roles). rejection_reason is required whenever any quantity is
+-- rejected, enforced at the DB layer, not just the form.
+create table if not exists public.inspection_results (
+  id uuid primary key default gen_random_uuid(),
+  inward_line_item_id uuid not null unique references public.material_inward_line_items (id) on delete cascade,
+  accepted_qty numeric not null default 0 check (accepted_qty >= 0),
+  rejected_qty numeric not null default 0 check (rejected_qty >= 0),
+  rejection_reason text null check (rejected_qty = 0 or rejection_reason is not null),
+  inspected_by uuid not null references public.users (id),
+  inspected_at timestamptz not null default now(),
+  constraint inspection_results_disposes_something check (accepted_qty + rejected_qty > 0)
+);
+
+alter table public.inspection_results enable row level security;
+
+drop policy if exists "Authenticated users can view inspection results" on public.inspection_results;
+create policy "Authenticated users can view inspection results"
+  on public.inspection_results for select
+  to authenticated
+  using (true);
+
+drop policy if exists "Inspector/admin can create inspection results" on public.inspection_results;
+create policy "Inspector/admin can create inspection results"
+  on public.inspection_results for insert
+  to authenticated
+  with check (public.is_inspector_or_admin(auth.uid()) and inspected_by = auth.uid());
+
+drop policy if exists "Inspector/admin can update inspection results" on public.inspection_results;
+create policy "Inspector/admin can update inspection results"
+  on public.inspection_results for update
+  to authenticated
+  using (public.is_inspector_or_admin(auth.uid()))
+  with check (public.is_inspector_or_admin(auth.uid()));
+
+-- Rolls up ordered/received/accepted/rejected quantities for one PO and
+-- writes the resulting status. security definer: an inspector recomputing
+-- status as a side effect of their own inspection needs to write
+-- purchase_orders.status, which their role has no direct UPDATE grant for
+-- (and shouldn't — this is the one narrow, automatic exception).
+create or replace function public.recompute_po_status(target_po_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  total_ordered numeric;
+  total_received numeric;
+  total_accepted numeric;
+  total_rejected numeric;
+  new_status text;
+begin
+  select coalesce(sum(quantity), 0) into total_ordered
+  from public.po_line_items
+  where po_id = target_po_id;
+
+  select coalesce(sum(mil.received_qty), 0) into total_received
+  from public.material_inward_line_items mil
+  join public.material_inward mi on mi.id = mil.inward_id
+  where mi.po_id = target_po_id and mi.deleted_at is null;
+
+  select coalesce(sum(ir.accepted_qty), 0), coalesce(sum(ir.rejected_qty), 0)
+  into total_accepted, total_rejected
+  from public.inspection_results ir
+  join public.material_inward_line_items mil on mil.id = ir.inward_line_item_id
+  join public.material_inward mi on mi.id = mil.inward_id
+  where mi.po_id = target_po_id and mi.deleted_at is null;
+
+  if total_received = 0 then
+    new_status := 'to_be_received';
+  elsif total_received < total_ordered then
+    new_status := 'partially_received';
+  elsif (total_accepted + total_rejected) < total_received then
+    new_status := 'material_received';
+  elsif total_accepted = 0 then
+    new_status := 'rejected';
+  else
+    new_status := 'received_inspected';
+  end if;
+
+  update public.purchase_orders set status = new_status where id = target_po_id;
+end;
+$$;
+
+create or replace function public.trg_recompute_po_status_from_inward_header()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  perform public.recompute_po_status(coalesce(new.po_id, old.po_id));
+  return coalesce(new, old);
+end;
+$$;
+
+drop trigger if exists recompute_po_status_after_inward_header on public.material_inward;
+create trigger recompute_po_status_after_inward_header
+after insert or update or delete on public.material_inward
+for each row execute function public.trg_recompute_po_status_from_inward_header();
+
+create or replace function public.trg_recompute_po_status_from_inward_line_item()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  target_po_id uuid;
+begin
+  select po_id into target_po_id from public.material_inward where id = coalesce(new.inward_id, old.inward_id);
+  if target_po_id is not null then
+    perform public.recompute_po_status(target_po_id);
+  end if;
+  return coalesce(new, old);
+end;
+$$;
+
+drop trigger if exists recompute_po_status_after_inward_line_item on public.material_inward_line_items;
+create trigger recompute_po_status_after_inward_line_item
+after insert or update or delete on public.material_inward_line_items
+for each row execute function public.trg_recompute_po_status_from_inward_line_item();
+
+create or replace function public.trg_recompute_po_status_from_inspection()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  target_po_id uuid;
+begin
+  select mi.po_id into target_po_id
+  from public.material_inward_line_items mil
+  join public.material_inward mi on mi.id = mil.inward_id
+  where mil.id = coalesce(new.inward_line_item_id, old.inward_line_item_id);
+  if target_po_id is not null then
+    perform public.recompute_po_status(target_po_id);
+  end if;
+  return coalesce(new, old);
+end;
+$$;
+
+drop trigger if exists recompute_po_status_after_inspection on public.inspection_results;
+create trigger recompute_po_status_after_inspection
+after insert or update or delete on public.inspection_results
+for each row execute function public.trg_recompute_po_status_from_inspection();
+
+-- Master Material Status (P3): one row per PO line item with its running
+-- Ordered/Received/Accepted/Rejected/Pending quantities — a plain view
+-- (security invoker by default), so it inherits the exact same
+-- company-wide read RLS already on the tables it joins, with no separate
+-- policy of its own. Also reused by the Material Inward screen to show
+-- "already received" per line item when logging a new delivery.
+create or replace view public.master_material_status as
+select
+  pli.id as po_line_item_id,
+  po.id as po_id,
+  po.po_number,
+  po.order_date,
+  proj.id as project_id,
+  proj.name as project_name,
+  v.id as vendor_id,
+  v.name as vendor_name,
+  pli.item_name,
+  pli.quantity as ordered_qty,
+  coalesce(recv.received_qty, 0) as received_qty,
+  coalesce(insp.accepted_qty, 0) as accepted_qty,
+  coalesce(insp.rejected_qty, 0) as rejected_qty,
+  greatest(pli.quantity - coalesce(recv.received_qty, 0), 0) as pending_qty,
+  po.status as po_status
+from public.po_line_items pli
+join public.purchase_orders po on po.id = pli.po_id
+join public.projects proj on proj.id = po.project_id
+left join public.vendors v on v.id = po.vendor_id
+left join (
+  select mil.po_line_item_id, sum(mil.received_qty) as received_qty
+  from public.material_inward_line_items mil
+  join public.material_inward mi on mi.id = mil.inward_id
+  where mi.deleted_at is null
+  group by mil.po_line_item_id
+) recv on recv.po_line_item_id = pli.id
+left join (
+  select mil.po_line_item_id, sum(ir.accepted_qty) as accepted_qty, sum(ir.rejected_qty) as rejected_qty
+  from public.inspection_results ir
+  join public.material_inward_line_items mil on mil.id = ir.inward_line_item_id
+  join public.material_inward mi on mi.id = mil.inward_id
+  where mi.deleted_at is null
+  group by mil.po_line_item_id
+) insp on insp.po_line_item_id = pli.id
+where po.deleted_at is null;
+
+grant select on public.master_material_status to authenticated;

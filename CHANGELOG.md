@@ -203,3 +203,56 @@ to PO Upload, built to generalize to other document types later:
 - `scripts/test-rls-purchase-orders.mjs`: RLS coverage for
   `import_field_mappings` — purchase/admin can create, read, and update a
   mapping; store role can read but not create or update.
+
+## Phase 3: Material Inward, Inspection, Master Material Status
+
+Confirmed two design decisions before building (no mockup, and these
+shape the data model): a PO's status only shows `rejected` when the
+**entire** order was rejected — a partial rejection stays
+`received_inspected` — and Master Material Status shows one row per PO
+line item, not a per-PO rollup.
+
+- `supabase/schema.sql`: `material_inward` (one row per delivery — a PO can
+  be received across multiple partial deliveries) and
+  `material_inward_line_items` (received qty per PO line item per
+  delivery); `inspection_results` (one row per received line item,
+  Accepted/Rejected qty, `rejection_reason` required whenever any quantity
+  is rejected — a DB check constraint, not just form validation);
+  `is_store_or_admin`/`is_inspector_or_admin` security-definer helpers
+  mirroring `is_purchase_or_admin`.
+- `recompute_po_status()` + triggers on all three new tables:
+  `purchase_orders.status` is no longer written directly by the app for
+  these transitions — it's recalculated automatically from the underlying
+  received/accepted/rejected quantities on every relevant write, so it
+  can't drift from reality regardless of which screen touched the data.
+- `master_material_status`: a Postgres view (not a table), one row per PO
+  line item with Ordered/Received/Accepted/Rejected/Pending quantities —
+  a plain view inherits the same company-wide read RLS already on the
+  tables it joins, no separate policy needed. Reused by the Material
+  Inward screen itself to show "already received" per line item, so the
+  two screens can never disagree about the running total.
+- `src/screens/materialInward.js` (Store/Admin): select a PO still pending
+  receipt, log a "Receiving Now" quantity per line item (capped to what's
+  actually pending), Received Date + Notes, and an inward history table
+  per PO.
+- `src/screens/inspection.js` (Inspector/Admin): lists received line items
+  with no inspection yet; inspecting one requires Accepted + Rejected to
+  exactly account for the received quantity, with a reason mandatory for
+  any rejection.
+- `src/screens/masterMaterialStatus.js` (Admin/Purchase/Store/Inspector,
+  read-only): Project/Status filters, CSV export.
+- `src/validation.js`: `validateInwardLineItem`/`validateInwardForm`
+  (received qty must be positive and can't exceed what's pending) and
+  `validateInspectionForm` (accepted+rejected must equal received qty; a
+  rejection reason is required whenever anything is rejected).
+- `scripts/test-rls-material-inward.mjs` (new, added to
+  `npm run test:integration`): store/inspector write permissions on the
+  new tables; the full `recompute_po_status` lifecycle end to end —
+  partial receipt → complete receipt → mixed accept/reject inspection
+  (stays `received_inspected`) → a second PO fully rejected (`rejected`);
+  the DB-level "no reason, no rejection" check constraint; and
+  `master_material_status`'s numbers matching what was actually entered.
+- `e2e/phase3.spec.js`: route guards for all three screens, a full
+  Material Inward save + a validation-blocks-save case, a full Inspection
+  save (partial accept/reject with a reason) + a validation-blocks-save
+  case, and Master Material Status rendering + CSV export + empty state.

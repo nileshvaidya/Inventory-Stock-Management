@@ -22,7 +22,7 @@ and the auth/layout patterns are ported directly from the
 app, per the build brief. See `design-reference/README.md` for what's
 pending from the real Claude Design mockup.
 
-**Current status: Phase 2 (Purchase Orders: upload, parse, Order Status) — see Phase 2 below.**
+**Current status: Phase 3 (Material Inward, Inspection, Master Material Status) — see Phase 3 below.**
 
 ## Project layout
 
@@ -39,7 +39,12 @@ src/
   pdfParser.js                          # PO PDF text extraction + regex-based line-item/total parsing (Phase 2)
   docMapping.js                           # manual field-mapping fallback, doc-type-agnostic (Phase 2 addendum)
   importMappings.js                         # per-vendor saved mapping templates data layer (Phase 2 addendum)
-  validation.js                               # pure form-validation logic
+  materialInward.js                           # Material Inward data layer (Phase 3)
+  inspection.js                                 # Inspection data layer (Phase 3)
+  masterMaterialStatus.js                         # reads the master_material_status view (Phase 3)
+  poStatus.js                                       # shared PO status labels/tags — purchase_orders.status is now
+                                                       # auto-computed server-side (see schema.sql's Phase 3 triggers)
+  validation.js                                       # pure form-validation logic
   demoMode.js                             # VITE_DEMO_MODE + ?demoRole= dev bypass
   state.js                                  # small in-memory store + pub-sub
   layout.js                                   # shared app shell (desktop sidebar / mobile top bar+tabs)
@@ -57,8 +62,12 @@ src/
 e2e/
   phase0.spec.js            # Playwright — auth guard, sign-up validation, inactive-user block, sign-out
   phase1.spec.js              # Playwright — nav permission matrix, route guards, Users & Roles screen
+  phase2.spec.js                # Playwright — PO Upload (incl. Map Fields Manually), Order Status
+  phase3.spec.js                  # Playwright — Material Inward, Inspection, Master Material Status
 scripts/
   test-rls-users.mjs          # RLS/RPC integration tests against a REAL Supabase project (CI's `integration` job)
+  test-rls-purchase-orders.mjs  # ...for vendors/projects/purchase_orders/po_line_items/import_field_mappings
+  test-rls-material-inward.mjs    # ...for material_inward/inspection_results + recompute_po_status + the view
 supabase/
   schema.sql               # running source of truth for the DB schema + RLS
   README.md                  # Supabase project setup steps
@@ -139,7 +148,7 @@ Nav permission matrix confirmed as proposed (`src/navPermissions.js`).
 Still open, not blocking: the Claude Design mockup, and the "last admin"
 edge case noted below.
 
-## Phase 2 — open items (need your input before Phase 3)
+## Phase 2 — open items
 
 1. **Design mockup**: still not available — PO Upload/Order Status layout
    is built without it.
@@ -161,10 +170,10 @@ edge case noted below.
    addressed.
 4. **Production schema**: Phase 2's schema.sql additions (`vendors`,
    `projects`, `purchase_orders`, `po_line_items`, `is_purchase_or_admin`,
-   and the field-mapping addendum's `import_field_mappings`) were confirmed
-   applied to staging (CI's `integration` job passes against it) — please
-   confirm they've also been run on the **production** Supabase project
-   before Phase 3 adds more tables on top.
+   and the field-mapping addendum's `import_field_mappings`) are confirmed
+   live on both staging and **production** (verified: all 6 tables, 5
+   functions, and 15 policies present as of the field-mapping addendum).
+   Phase 3 adds more tables on top — see its own open item below.
 
 ## Phase 2 addendum — Map Fields Manually (visual field-mapping fallback)
 
@@ -198,6 +207,62 @@ Challans, and Payment Receipts can reuse it directly once those phases
 exist, wiring up their own field labels and UI, not new parsing logic.
 `import_field_mappings.doc_type` is already free text for exactly this
 reason (see `supabase/schema.sql`).
+
+## Phase 3 — Material Inward, Inspection, Master Material Status
+
+A PO can be received across multiple partial deliveries (`material_inward`,
+one row per delivery, with `material_inward_line_items` recording how much
+of each PO line item arrived in that delivery). Each received line is
+inspected once (`inspection_results`, unique per inward line item) into
+Accepted/Rejected quantities, with a rejection reason required whenever any
+quantity is rejected — enforced both in the form and as a DB check
+constraint, not just client-side.
+
+`purchase_orders.status` is no longer written directly by the app for these
+transitions. `recompute_po_status()` and a set of triggers on
+`material_inward`/`material_inward_line_items`/`inspection_results`
+recalculate it automatically from the underlying quantities on every
+relevant insert/update/delete, so it can never drift from what was actually
+received/inspected regardless of which screen touched the data:
+
+- `to_be_received` → nothing received yet.
+- `partially_received` → some, but not all, ordered quantity received.
+- `material_received` → fully received, not yet fully inspected.
+- `received_inspected` → fully received and inspected, with **at least
+  some** quantity accepted.
+- `rejected` → fully received and inspected, with **nothing** accepted —
+  confirmed with you: a partial rejection still shows `received_inspected`;
+  Master Material Status is where the exact accepted/rejected/pending split
+  per item lives, not the one-word PO status.
+
+**Master Material Status** (`master_material_status`, a Postgres view, not
+a table) shows one row per PO line item — confirmed with you over the
+rollup-per-PO alternative — with Ordered/Received/Accepted/Rejected/Pending
+quantities and the PO's status, filterable by Project/Status with CSV
+export. It's also reused by the Material Inward screen to show "already
+received" per line item when logging a new delivery, so the two screens can
+never disagree about the running total.
+
+New role-gated screens (`src/navPermissions.js`, unchanged from Phase 1's
+proposed matrix): Material Inward (Store/Admin), Inspection
+(Inspector/Admin), Master Material Status (Admin/Purchase/Store/Inspector,
+read-only).
+
+### Phase 3 — open items
+
+1. **Production/staging schema**: `supabase/schema.sql`'s Phase 3 section
+   (`material_inward`, `material_inward_line_items`, `inspection_results`,
+   `is_store_or_admin`, `is_inspector_or_admin`, `recompute_po_status` +
+   its triggers, and the `master_material_status` view) needs to be run on
+   both staging and production — same "paste the missing section, verify
+   with an introspection query" process as Phase 2's addendum. CI's
+   `integration` job (`scripts/test-rls-material-inward.mjs`) will fail
+   until staging has it; production isn't gated by CI at all, so please
+   confirm separately once you've run it there.
+2. **Design mockup**: still not available — these three screens are built
+   without it, same as Phase 2.
+3. **Deactivating your own last admin account** (carried over from Phase
+   1): still not guarded against.
 
 ## Phase 0 — resolved
 

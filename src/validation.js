@@ -88,6 +88,84 @@ export function validateLineItem(row) {
 }
 
 /**
+ * A single Material Inward "receiving now" row (Phase 3) — receivedQty
+ * must be positive and can't exceed what's actually still pending on that
+ * line item (client-side guardrail; the DB only guarantees > 0, not this
+ * cross-row comparison).
+ * @param {{ receivedQty?: string|number, pendingQty?: number }} row
+ */
+export function validateInwardLineItem(row) {
+  /** @type {Record<string, string>} */
+  const errors = {};
+  const { receivedQty = '', pendingQty = Infinity } = row || {};
+  const qtyNum = Number(receivedQty);
+
+  if (receivedQty === '' || !Number.isFinite(qtyNum) || qtyNum <= 0) {
+    errors.receivedQty = 'Enter a positive quantity.';
+  } else if (qtyNum > pendingQty) {
+    errors.receivedQty = `Can't receive more than the pending quantity (${pendingQty}).`;
+  }
+
+  return { valid: Object.keys(errors).length === 0, errors };
+}
+
+/**
+ * The Material Inward form as a whole (Phase 3): a PO, a received date,
+ * and at least one line item actually being received this time.
+ * @param {{ poId?: string, receivedDate?: string, lineItems?: { receivedQty?: string|number, pendingQty?: number }[] }} form
+ */
+export function validateInwardForm(form) {
+  /** @type {Record<string, string>} */
+  const errors = {};
+  const { poId = '', receivedDate = '', lineItems = [] } = form || {};
+
+  if (!poId) errors.poId = 'Select a purchase order.';
+  if (!receivedDate) errors.receivedDate = 'Received date is required.';
+
+  const enteredRows = lineItems.filter((row) => String(row.receivedQty ?? '').trim() !== '');
+  if (enteredRows.length === 0) {
+    errors.lineItems = 'Enter a received quantity for at least one item.';
+  } else if (enteredRows.some((row) => !validateInwardLineItem(row).valid)) {
+    errors.lineItems = 'Fix the highlighted quantity/quantities before saving.';
+  }
+
+  return { valid: Object.keys(errors).length === 0, errors };
+}
+
+/**
+ * An Inspection entry (Phase 3): accepted + rejected must exactly account
+ * for the received quantity being inspected — no partial "still pending"
+ * remainder in this pass (see src/inspection.js) — and a rejection needs a
+ * reason whenever any quantity is rejected (also enforced at the DB layer,
+ * this is just so the form catches it before a round trip).
+ * @param {{ acceptedQty?: string|number, rejectedQty?: string|number, rejectionReason?: string,
+ *   receivedQty?: number }} form
+ */
+export function validateInspectionForm(form) {
+  /** @type {Record<string, string>} */
+  const errors = {};
+  const { acceptedQty = '', rejectedQty = '', rejectionReason = '', receivedQty = 0 } = form || {};
+  const acceptedNum = Number(acceptedQty);
+  const rejectedNum = Number(rejectedQty);
+
+  if (acceptedQty === '' || !Number.isFinite(acceptedNum) || acceptedNum < 0) {
+    errors.acceptedQty = 'Accepted quantity must be zero or positive.';
+  }
+  if (rejectedQty === '' || !Number.isFinite(rejectedNum) || rejectedNum < 0) {
+    errors.rejectedQty = 'Rejected quantity must be zero or positive.';
+  }
+  if (!errors.acceptedQty && !errors.rejectedQty) {
+    if (acceptedNum + rejectedNum !== Number(receivedQty)) {
+      errors.rejectedQty = `Accepted + Rejected must equal the received quantity (${receivedQty}).`;
+    } else if (rejectedNum > 0 && !rejectionReason.trim()) {
+      errors.rejectionReason = 'A rejection reason is required when any quantity is rejected.';
+    }
+  }
+
+  return { valid: Object.keys(errors).length === 0, errors };
+}
+
+/**
  * The PO Upload form as a whole (Phase 2). At least one valid line item
  * is required — an empty PO isn't useful, and the review table already
  * lets the user add rows by hand when parsing found nothing (P2-6).
