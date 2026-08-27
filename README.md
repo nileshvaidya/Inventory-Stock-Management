@@ -22,7 +22,7 @@ and the auth/layout patterns are ported directly from the
 app, per the build brief. See `design-reference/README.md` for what's
 pending from the real Claude Design mockup.
 
-**Current status: Phase 4 (Inventory: Item Master + stock movement ledger) — see Phase 4 below.**
+**Current status: Phase 5 (Invoices: multi-PO linking, payment terms/due dates, overdue status) — see Phase 5 below.**
 
 ## Project layout
 
@@ -46,7 +46,9 @@ src/
                                                        # auto-computed server-side (see schema.sql's Phase 3 triggers)
   items.js                                            # Item Master data layer (Phase 4)
   inventory.js                                          # current_stock view + stock_movements ledger (Phase 4)
-  validation.js                                           # pure form-validation logic
+  invoices.js                                             # Invoices data layer (Phase 5) — the first table whose own
+                                                             # RLS read is admin/authorized-only, not company-wide
+  validation.js                                               # pure form-validation logic
   demoMode.js                             # VITE_DEMO_MODE + ?demoRole= dev bypass
   state.js                                  # small in-memory store + pub-sub
   layout.js                                   # shared app shell (desktop sidebar / mobile top bar+tabs)
@@ -67,11 +69,13 @@ e2e/
   phase2.spec.js                # Playwright — PO Upload (incl. Map Fields Manually), Order Status
   phase3.spec.js                  # Playwright — Material Inward, Inspection, Master Material Status
   phase4.spec.js                    # Playwright — Inventory (Item Master, ledger, below-reorder)
+  phase5.spec.js                      # Playwright — Invoices (multi-PO link, due-date auto-fill, overdue, Mark Paid)
 scripts/
   test-rls-users.mjs          # RLS/RPC integration tests against a REAL Supabase project (CI's `integration` job)
   test-rls-purchase-orders.mjs  # ...for vendors/projects/purchase_orders/po_line_items/import_field_mappings
   test-rls-material-inward.mjs    # ...for material_inward/inspection_results + recompute_po_status + the view
   test-rls-inventory.mjs            # ...for items/stock_movements + the auto-stock-in trigger + current_stock
+  test-rls-invoices.mjs               # ...for invoices/invoice_purchase_orders — the narrow-read RLS case
 supabase/
   schema.sql               # running source of truth for the DB schema + RLS
   README.md                  # Supabase project setup steps
@@ -298,12 +302,53 @@ into `qty_in`/`qty_out`/`current_qty`, joined with the Item Master's
 
 ### Phase 4 — open items
 
-1. **Production/staging schema**: `supabase/schema.sql`'s Phase 4 section
-   (`items`, `stock_movements`, `can_manage_items`, the
-   `trg_stock_in_from_inspection` trigger, `po_line_items.item_id`, and the
-   `current_stock` view) needs to be run on both staging and production —
-   same process as every phase's addendum so far. CI's `integration` job
-   (`scripts/test-rls-inventory.mjs`) will fail until staging has it.
+1. **Production schema**: confirmed applied to staging (CI's `integration`
+   job passes). Please confirm you've also run `supabase/schema.sql`'s
+   Phase 4 section on **production**.
+2. **Design mockup**: still not available.
+3. **Deactivating your own last admin account** (carried over from Phase
+   1): still not guarded against.
+
+## Phase 5 — Invoices (multi-PO linking, payment terms/due dates, overdue)
+
+The first module in this schema whose own RLS restricts **read**, not just
+write, to a narrow pair: Invoices is Admin/Authorized only end to end — no
+other role has a stated need to see invoice or payment-term data, unlike
+Phase 2-4's tables which stayed company-wide readable even when writes were
+role-restricted. `is_authorized_or_admin()` mirrors the existing
+`is_purchase_or_admin()`/`is_store_or_admin()` helpers.
+
+- `invoices` (`invoice_number`, `vendor_id`, `invoice_date`,
+  `payment_terms_days`, `due_date`, `amount`, `paid_at`, `notes`,
+  soft-deletable) and `invoice_purchase_orders`, a many-to-many junction —
+  one invoice can cover several POs (a consolidated vendor bill), and in
+  principle a PO could be split across more than one invoice.
+- **Overdue is computed, not stored**: `paid_at is null and due_date <
+  today`. Using a nullable timestamp (`paid_at`) rather than a boolean
+  means an invoice paid after its due date correctly stops showing as
+  overdue the moment it's marked paid, instead of staying flagged forever.
+- `src/screens/invoices.js` (Admin/Authorized): list with Vendor/Status
+  filters (Pending/Overdue/Paid) and CSV export; "+ New Invoice" auto-fills
+  Payment Terms from the selected vendor's `default_payment_terms_days`
+  (Phase 2's Vendor Master field) and auto-computes Due Date from Invoice
+  Date + Payment Terms — both still directly overridable — plus a
+  checklist to link one or more of that vendor's POs; "Mark Paid" and
+  archive (soft delete) actions per row.
+- Confirmed as an explicit, self-contained assumption (not a retrofit of
+  an existing screen, so no separate confirmation round): marking an
+  invoice paid lives here in Phase 5, not deferred entirely to Phase 10's
+  Bill Payments. Bill Payments' own brief ("upload/scan bills, link to a
+  PO/Invoice, **mark received on payment**") suggests it may supersede or
+  extend this when that phase lands — Phase 5 gives Invoices a complete,
+  usable paid/overdue lifecycle in the meantime rather than leaving
+  "overdue" permanently unresolvable for anything already paid.
+
+### Phase 5 — open items
+
+1. **Production/staging schema**: `supabase/schema.sql`'s Phase 5 section
+   (`is_authorized_or_admin`, `invoices`, `invoice_purchase_orders`) needs
+   to be run on both staging and production. CI's `integration` job
+   (`scripts/test-rls-invoices.mjs`) will fail until staging has it.
 2. **Design mockup**: still not available.
 3. **Deactivating your own last admin account** (carried over from Phase
    1): still not guarded against.

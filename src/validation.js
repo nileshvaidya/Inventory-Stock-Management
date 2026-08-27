@@ -208,6 +208,27 @@ export function validateStockMovementForm(form) {
 }
 
 /**
+ * The Invoices "New Invoice" form (Phase 5): a vendor, an invoice date, and
+ * a non-negative amount are required. Linked POs are optional at the form
+ * layer — an invoice not yet tied to any PO can still be recorded.
+ * @param {{ vendorId?: string, invoiceDate?: string, amount?: string|number }} form
+ */
+export function validateInvoiceForm(form) {
+  /** @type {Record<string, string>} */
+  const errors = {};
+  const { vendorId = '', invoiceDate = '', amount = '' } = form || {};
+
+  if (!vendorId) errors.vendorId = 'Select a vendor.';
+  if (!invoiceDate) errors.invoiceDate = 'Invoice date is required.';
+  const amountNum = Number(amount);
+  if (amount === '' || !Number.isFinite(amountNum) || amountNum < 0) {
+    errors.amount = 'Amount must be zero or a positive number.';
+  }
+
+  return { valid: Object.keys(errors).length === 0, errors };
+}
+
+/**
  * The PO Upload form as a whole (Phase 2). At least one valid line item
  * is required — an empty PO isn't useful, and the review table already
  * lets the user add rows by hand when parsing found nothing (P2-6).

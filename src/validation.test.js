@@ -10,6 +10,7 @@ import {
   validateInspectionForm,
   validateItemForm,
   validateStockMovementForm,
+  validateInvoiceForm,
 } from './validation.js';
 
 describe('validateSignupForm', () => {
@@ -263,5 +264,26 @@ describe('validateStockMovementForm', () => {
     expect(validateStockMovementForm({ itemId: 'item-1', movementType: 'in', quantity: 0 }).valid).toBe(false);
     expect(validateStockMovementForm({ itemId: 'item-1', movementType: 'in', quantity: -5 }).valid).toBe(false);
     expect(validateStockMovementForm({ itemId: 'item-1', movementType: 'in', quantity: 'abc' }).valid).toBe(false);
+  });
+});
+
+describe('validateInvoiceForm', () => {
+  it('accepts a valid form', () => {
+    expect(validateInvoiceForm({ vendorId: 'v1', invoiceDate: '2026-01-01', amount: 1000 }).valid).toBe(true);
+  });
+
+  it('accepts a zero amount', () => {
+    expect(validateInvoiceForm({ vendorId: 'v1', invoiceDate: '2026-01-01', amount: 0 }).valid).toBe(true);
+  });
+
+  it('rejects a missing vendor or invoice date', () => {
+    expect(validateInvoiceForm({ invoiceDate: '2026-01-01', amount: 100 }).valid).toBe(false);
+    expect(validateInvoiceForm({ vendorId: 'v1', amount: 100 }).valid).toBe(false);
+  });
+
+  it('rejects a negative or non-numeric amount', () => {
+    expect(validateInvoiceForm({ vendorId: 'v1', invoiceDate: '2026-01-01', amount: -5 }).valid).toBe(false);
+    expect(validateInvoiceForm({ vendorId: 'v1', invoiceDate: '2026-01-01', amount: 'abc' }).valid).toBe(false);
+    expect(validateInvoiceForm({ vendorId: 'v1', invoiceDate: '2026-01-01', amount: '' }).valid).toBe(false);
   });
 });

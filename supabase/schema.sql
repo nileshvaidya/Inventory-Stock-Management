@@ -806,3 +806,109 @@ where i.deleted_at is null
 group by i.id;
 
 grant select on public.current_stock to authenticated;
+
+-- Phase 5: Invoices — link to one or more POs, track payment terms/due
+-- dates, and overdue status. Unlike Phase 2-4's tables, this module's own
+-- audience is narrow (Admin/Accounts-Authorized only, per
+-- src/navPermissions.js) with no other role needing visibility, so RLS
+-- here is scoped to that same pair rather than company-wide read — the
+-- first module in this schema where that's the case.
+create or replace function public.is_authorized_or_admin(uid uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.users
+    where id = uid and role in ('admin', 'authorized') and status = 'active'
+  );
+$$;
+
+grant execute on function public.is_authorized_or_admin(uuid) to authenticated;
+
+-- paid_at (nullable timestamp) rather than a boolean: also records *when*
+-- an invoice was marked paid, and "overdue" is computed as
+-- `paid_at is null and due_date < today` — an invoice paid after its due
+-- date correctly stops showing as overdue once paid_at is set, matching
+-- real accounts-payable behavior. due_date is always a concrete stored
+-- date (either typed directly or computed client-side from invoice_date +
+-- payment_terms_days at save time) — no recomputation trigger needed
+-- since it never needs to change after the fact.
+create table if not exists public.invoices (
+  id uuid primary key default gen_random_uuid(),
+  invoice_number text null,
+  vendor_id uuid not null references public.vendors (id),
+  invoice_date date not null default current_date,
+  payment_terms_days integer null,
+  due_date date null,
+  amount numeric not null check (amount >= 0),
+  paid_at timestamptz null,
+  notes text null,
+  created_by uuid not null references public.users (id),
+  created_at timestamptz not null default now(),
+  deleted_at timestamptz null
+);
+
+create index if not exists invoices_vendor_id_idx on public.invoices (vendor_id);
+create index if not exists invoices_due_date_idx on public.invoices (due_date);
+
+alter table public.invoices enable row level security;
+
+drop policy if exists "Authorized/admin can view invoices" on public.invoices;
+create policy "Authorized/admin can view invoices"
+  on public.invoices for select
+  to authenticated
+  using (public.is_authorized_or_admin(auth.uid()));
+
+drop policy if exists "Authorized/admin can create invoices" on public.invoices;
+create policy "Authorized/admin can create invoices"
+  on public.invoices for insert
+  to authenticated
+  with check (public.is_authorized_or_admin(auth.uid()) and created_by = auth.uid());
+
+-- Update policy covers both marking paid (paid_at) and the soft-delete/
+-- archive action, same "one permission, two write paths" pattern as
+-- purchase_orders' update policy in Phase 2.
+drop policy if exists "Authorized/admin can update invoices" on public.invoices;
+create policy "Authorized/admin can update invoices"
+  on public.invoices for update
+  to authenticated
+  using (public.is_authorized_or_admin(auth.uid()))
+  with check (public.is_authorized_or_admin(auth.uid()));
+
+-- Many-to-many: one invoice can cover multiple POs (a consolidated vendor
+-- invoice), and in principle a PO could later be referenced by more than
+-- one invoice (a split/partial billing) — a junction table rather than a
+-- single nullable FK on either side.
+create table if not exists public.invoice_purchase_orders (
+  id uuid primary key default gen_random_uuid(),
+  invoice_id uuid not null references public.invoices (id) on delete cascade,
+  po_id uuid not null references public.purchase_orders (id),
+  created_at timestamptz not null default now(),
+  unique (invoice_id, po_id)
+);
+
+create index if not exists invoice_purchase_orders_invoice_id_idx on public.invoice_purchase_orders (invoice_id);
+create index if not exists invoice_purchase_orders_po_id_idx on public.invoice_purchase_orders (po_id);
+
+alter table public.invoice_purchase_orders enable row level security;
+
+drop policy if exists "Authorized/admin can view invoice PO links" on public.invoice_purchase_orders;
+create policy "Authorized/admin can view invoice PO links"
+  on public.invoice_purchase_orders for select
+  to authenticated
+  using (public.is_authorized_or_admin(auth.uid()));
+
+drop policy if exists "Authorized/admin can create invoice PO links" on public.invoice_purchase_orders;
+create policy "Authorized/admin can create invoice PO links"
+  on public.invoice_purchase_orders for insert
+  to authenticated
+  with check (public.is_authorized_or_admin(auth.uid()));
+
+drop policy if exists "Authorized/admin can delete invoice PO links" on public.invoice_purchase_orders;
+create policy "Authorized/admin can delete invoice PO links"
+  on public.invoice_purchase_orders for delete
+  to authenticated
+  using (public.is_authorized_or_admin(auth.uid()));

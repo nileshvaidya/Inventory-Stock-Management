@@ -312,3 +312,43 @@ real receiving activity without a separate re-entry step.
   had its `items` lookup mocked into `mockEmptyLookups` and one
   custom-route test, since PO Upload's `loadLookups` now also fetches
   Items.
+
+## Phase 5: Invoices (multi-PO linking, payment terms/due dates, overdue)
+
+The first module in this schema whose RLS restricts read, not just write,
+to a narrow pair — Invoices is Admin/Authorized end to end, since no other
+role has a stated need to see invoice/payment-term data (unlike Phase
+2-4's tables, which stayed company-wide readable even where writes were
+role-restricted).
+
+- `supabase/schema.sql`: `is_authorized_or_admin` (mirrors
+  `is_purchase_or_admin`/`is_store_or_admin`); `invoices` (invoice number,
+  vendor, invoice date, payment terms days, due date, amount, `paid_at`,
+  notes, soft-deletable) and `invoice_purchase_orders` (a many-to-many
+  junction — one invoice can cover several POs, and a PO could in
+  principle be split across more than one invoice). "Overdue" is computed
+  (`paid_at is null and due_date < today`), not stored — using a nullable
+  `paid_at` timestamp rather than a boolean means an invoice paid after
+  its due date correctly stops showing as overdue as soon as it's marked
+  paid, instead of staying flagged forever.
+- `src/screens/invoices.js` (Admin/Authorized): Vendor/Status
+  (Pending/Overdue/Paid) filters, CSV export, "+ New Invoice" (Payment
+  Terms auto-fills from the selected vendor's `default_payment_terms_days`
+  and Due Date auto-computes from Invoice Date + Payment Terms — both
+  still directly overridable — plus a checklist to link one or more of
+  that vendor's POs), "Mark Paid" and archive per row.
+- Confirmed as a self-contained assumption, not a retrofit needing a
+  separate confirmation round: marking an invoice paid lives in Phase 5
+  itself rather than being deferred entirely to Phase 10's Bill Payments,
+  since "overdue" needs a real paid/unpaid lifecycle to mean anything —
+  Phase 10 may supersede or extend this once it lands.
+- `src/validation.js`: `validateInvoiceForm` (vendor + invoice date +
+  non-negative amount required; linked POs optional).
+- `scripts/test-rls-invoices.mjs` (new, added to `npm run
+  test:integration`): create/read/mark-paid/archive permissions per role,
+  plus confirming the narrow-read RLS actually filters (not errors) for
+  an excluded role — the first table in this schema where read itself is
+  restricted, not company-wide.
+- `e2e/phase5.spec.js`: route guard, creating a linked invoice with
+  due-date auto-fill, a validation-blocks-save case, status
+  rendering (paid/overdue) + Mark Paid, and an empty state.
