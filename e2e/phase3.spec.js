@@ -68,8 +68,15 @@ test.describe('Phase 3 — Material Inward', () => {
 
     let inwardLineItemsInsertBody = null;
     await page.route('**/rest/v1/material_inward*', (route) => {
-      const url = route.request().url();
-      if (url.includes('material_inward_line_items')) {
+      // Checking the whole URL (as opposed to just its path) is wrong here:
+      // fetchInwardHistory's GET against the plain material_inward table
+      // embeds "line_items:material_inward_line_items(...)" in its own
+      // ?select= query param, so a substring check on the full URL matches
+      // that GET too — intermittently clobbering the captured POST body
+      // with null (postDataJSON() on a GET) depending on exactly when that
+      // background refresh's request lands relative to this assertion.
+      const path = new URL(route.request().url()).pathname;
+      if (path.endsWith('/material_inward_line_items')) {
         inwardLineItemsInsertBody = route.request().postDataJSON();
         return route.fulfill({ status: 201, contentType: 'application/json', body: '[]' });
       }
