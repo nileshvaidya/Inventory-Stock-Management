@@ -22,7 +22,7 @@ and the auth/layout patterns are ported directly from the
 app, per the build brief. See `design-reference/README.md` for what's
 pending from the real Claude Design mockup.
 
-**Current status: Phase 7 (Work Orders: nested BoM explosion + stock reservation) — see Phase 7 below.**
+**Current status: Phase 8 (Reports: Stock & Reservations, Shortages, Below Reorder) — see Phase 8 below.**
 
 ## Project layout
 
@@ -53,6 +53,8 @@ src/
                                                                # production runs)
   workOrders.js                                               # Work Orders data layer (Phase 7) — explosion preview
                                                                  # + create_work_order()/reserve_work_order() RPCs
+  reports.js                                                    # Reports data layer (Phase 8) — no new schema, reads
+                                                                   # tables/views already covered by earlier phases
   validation.js                                               # pure form-validation logic
   demoMode.js                             # VITE_DEMO_MODE + ?demoRole= dev bypass
   state.js                                  # small in-memory store + pub-sub
@@ -77,6 +79,7 @@ e2e/
   phase5.spec.js                      # Playwright — Invoices (multi-PO link, due-date auto-fill, overdue, Mark Paid)
   phase6.spec.js                        # Playwright — BoM Builder (recipe create/edit/archive, record production)
   phase7.spec.js                          # Playwright — Work Orders (explosion preview, create, reserve, cancel)
+  phase8.spec.js                            # Playwright — Reports (Stock & Reservations, Shortages, Below Reorder)
 scripts/
   test-rls-users.mjs          # RLS/RPC integration tests against a REAL Supabase project (CI's `integration` job)
   test-rls-purchase-orders.mjs  # ...for vendors/projects/purchase_orders/po_line_items/import_field_mappings
@@ -467,6 +470,41 @@ Confirmed three design decisions before building (no mockup):
 
 1. **Production/staging schema**: confirmed applied to both staging (CI's
    `integration` job passes) and production.
+2. **Design mockup**: still not available.
+3. **Deactivating your own last admin account** (carried over from Phase
+   1): still not guarded against.
+
+## Phase 8 — Reports (Stock & Reservations, Shortages, Below Reorder)
+
+No new schema this phase — every report reads tables/views that already
+exist and are already company-wide readable (`available_stock` from
+Phase 4/7, `stock_reservations`/`work_orders`/`work_order_requirements`
+from Phase 7). No new `scripts/test-rls-*.mjs` either, for the same
+reason: there's nothing new for it to verify.
+
+- `src/screens/reports.js` (Admin/Authorized/Production — per
+  `navPermissions.js`; Store is deliberately excluded here even though it
+  can manage Work Orders/Inventory, matching the existing matrix rather
+  than a decision made for this phase). Three tabs, entirely read-only:
+  - **Stock & Reservations**: every item with an active hold
+    (`reserved_qty > 0`), each row expandable into which work order(s)
+    are holding it and how much.
+  - **Shortages**: every component still short somewhere in an open or
+    reserved work order's exploded requirements (`work_order_requirements.shortfall_qty > 0`)
+    — items needing procurement or production outside what's already
+    planned.
+  - **Below Reorder**: items whose *available* quantity (not just
+    on-hand) has dropped under its reorder level — the same figure
+    Inventory (Phase 4) flags, as a focused, exportable list.
+  - CSV export follows whichever tab is active.
+- `src/reports.js`: `fetchActiveReservations()` and `fetchShortages()`,
+  both using PostgREST's `!inner` embed-filter syntax to filter on the
+  embedded `work_orders.status` column server-side.
+
+### Phase 8 — open items
+
+1. **Schema**: none — nothing to run on staging or production for this
+   phase.
 2. **Design mockup**: still not available.
 3. **Deactivating your own last admin account** (carried over from Phase
    1): still not guarded against.

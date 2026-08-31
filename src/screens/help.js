@@ -21,7 +21,7 @@ const SECTIONS = [
   { title: 'BoM Builder', body: 'Define recipes (a produced item and its components) and record production, which consumes the recipe’s components from current stock. Admin/Production only. (Phase 6)' },
   { title: 'Work Orders', body: 'Explode a nested BoM to see what producing a quantity would take (netted against what’s already on hand), then optionally reserve that stock. Admin/Production/Store. (Phase 7)' },
   { title: 'Invoices', body: 'Link invoices to POs and track payment status and due dates. (Phase 5)' },
-  { title: 'Reports', body: 'Available/reserved stock, shortfalls, and below-reorder reporting. (Phase 8)' },
+  { title: 'Reports', body: 'Three tabs: Stock & Reservations (which work orders hold what), Shortages (open/reserved work orders still short a component), and Below Reorder. Admin/Authorized/Production. (Phase 8)' },
   { title: 'Users & Roles', body: 'Admins manage user accounts and role assignments. (Phase 1)' },
   { title: 'Action Log', body: 'A filterable audit trail of every action across the app. (Phase 9)' },
 ];

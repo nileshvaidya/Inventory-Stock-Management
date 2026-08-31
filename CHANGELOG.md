@@ -479,3 +479,41 @@ reserve, leaving actual production recording to Phase 6's BoM Builder.
   the server-side shortfall message surfacing on a blocked reserve,
   cancelling, and an empty state. `e2e/phase4.spec.js` updated to mock
   `available_stock` instead of `current_stock`.
+
+## Fix: RLS test asserted the wrong thing for a zero-row work order cancel
+
+Same class of bug as the earlier `purchase_orders` soft-delete test: an
+UPDATE whose USING clause excludes the caller's row (purchase, since
+`can_manage_work_orders()` is false for it) matches zero rows under RLS
+— PostgREST reports that as a quiet 200/no-op, not an error. The test
+asserted "an error occurred" instead of "the row didn't actually
+change", so it failed even though the security boundary itself was
+holding correctly (32/33 other assertions in the script already passed
+against real staging data, including store's real cancel succeeding
+right after). Fixed to assert against the row's persisted state via the
+service-role client instead.
+
+## Phase 8: Reports (Stock & Reservations, Shortages, Below Reorder)
+
+No new schema this phase — every report reads tables/views that already
+exist and are already company-wide readable (`available_stock` from
+Phase 4/7, `stock_reservations`/`work_orders`/`work_order_requirements`
+from Phase 7), so there's no new `scripts/test-rls-*.mjs` either.
+
+- `src/reports.js`: `fetchActiveReservations()` and `fetchShortages()`,
+  both using PostgREST's `!inner` embed-filter syntax to filter on the
+  embedded `work_orders.status` column server-side (`.eq('work_order.status', 'reserved')` /
+  `.in('work_order.status', ['open', 'reserved'])`).
+- `src/screens/reports.js` (Admin/Authorized/Production, per the existing
+  `navPermissions.js` matrix — Store is excluded here even though it can
+  manage Work Orders/Inventory): three tabs, all read-only. Stock &
+  Reservations lists every item with an active hold, each row expandable
+  into which work order(s) hold it and how much. Shortages lists every
+  component still short somewhere in an open or reserved work order's
+  exploded requirements. Below Reorder lists items whose *available*
+  quantity (not just on-hand) has dropped under its reorder level — the
+  same figure Inventory (Phase 4) flags. CSV export follows whichever tab
+  is active.
+- `e2e/phase8.spec.js`: route guard, each tab's listing (including the
+  Stock & Reservations tab's expandable "held by" detail), CSV export,
+  and empty states for all three tabs.
