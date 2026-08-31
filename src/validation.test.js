@@ -14,6 +14,7 @@ import {
   validateBomComponentRow,
   validateBomForm,
   validateProductionForm,
+  validateWorkOrderForm,
 } from './validation.js';
 
 describe('validateSignupForm', () => {
@@ -358,5 +359,22 @@ describe('validateProductionForm', () => {
     expect(validateProductionForm({ quantityProduced: -1 }).valid).toBe(false);
     expect(validateProductionForm({ quantityProduced: 'abc' }).valid).toBe(false);
     expect(validateProductionForm({ quantityProduced: '' }).valid).toBe(false);
+  });
+});
+
+describe('validateWorkOrderForm', () => {
+  it('accepts a valid form', () => {
+    expect(validateWorkOrderForm({ outputItemId: 'item-1', quantity: 10 }).valid).toBe(true);
+  });
+
+  it('rejects a missing output item', () => {
+    expect(validateWorkOrderForm({ quantity: 10 }).valid).toBe(false);
+  });
+
+  it('rejects a zero, negative, non-numeric, or empty quantity', () => {
+    expect(validateWorkOrderForm({ outputItemId: 'item-1', quantity: 0 }).valid).toBe(false);
+    expect(validateWorkOrderForm({ outputItemId: 'item-1', quantity: -1 }).valid).toBe(false);
+    expect(validateWorkOrderForm({ outputItemId: 'item-1', quantity: 'abc' }).valid).toBe(false);
+    expect(validateWorkOrderForm({ outputItemId: 'item-1', quantity: '' }).valid).toBe(false);
   });
 });

@@ -417,3 +417,65 @@ discipline as Phase 3's over-receiving guard.
   viewing a recipe's details and recording production (verifying the RPC
   call body and the refreshed history), the server-side shortfall message
   surfacing in the UI, archiving a recipe, and an empty state.
+
+## Phase 7: Work Orders (nested BoM explosion + stock reservation)
+
+Confirmed three design decisions before building: explosion nets against
+available stock at every level (not just the leaves — if there's already
+enough of a sub-assembly on hand, its own recipe never gets exploded
+further); reservation is a hard hold that reduces "available" everywhere,
+not a soft note scoped to the work order; and this phase stops at plan +
+reserve, leaving actual production recording to Phase 6's BoM Builder.
+
+- `supabase/schema.sql`: `can_manage_work_orders` (admin/production/store);
+  `work_orders` (status open/reserved/cancelled), `work_order_requirements`
+  (a snapshot of the exploded/netted requirement per item, taken once at
+  creation time), `stock_reservations` (the actual holds). Both
+  `work_orders` and `work_order_requirements` have no direct insert
+  policy — created only via `create_work_order()` — and `stock_reservations`
+  only via `reserve_work_order()`, same "the RPC is the only way in"
+  pattern as Phase 6's `bom_production_runs`. Cancelling is a plain client
+  update instead, gated by RLS to only ever permit the `cancelled`
+  transition (a trigger stamps `cancelled_at`).
+- `available_stock`: `current_stock` netted against every *active*
+  (`status = 'reserved'`) reservation — cancelling a work order frees its
+  hold automatically since the join drops out, without ever deleting the
+  `stock_reservations` audit rows.
+- `explode_bom_requirements(item, qty)`: a recursive, level-by-level
+  (breadth-first) netting walk, returning per-item `reservable_qty`
+  (on hand right now) and `shortfall_qty` (not covered anywhere in the
+  tree). Documented limitation: the same item reachable at two different
+  depths in a nested BoM can have its stock netted more than once (true
+  low-level-code MRP would defer every item to its single lowest
+  occurrence first) — but this can only ever make the *preview*
+  optimistic, never unsafe, since `reserve_work_order()` re-checks the
+  aggregated total against the item's one true `available_qty` before
+  committing anything.
+- `create_work_order()` inserts the work order plus its requirement
+  snapshot atomically. `reserve_work_order()` re-checks availability
+  against the *current* `available_stock` (not the creation-time
+  snapshot) before committing, and blocks (nothing written) if anything
+  has become unavailable since — same all-or-nothing discipline as
+  Phase 6's `record_bom_production()`.
+- `src/screens/workOrders.js` (Admin/Production/Store): pick an item +
+  quantity, "Check Availability" for a live preview, create the work
+  order, then per-order Reserve/Cancel actions and an expandable
+  requirement snapshot.
+- Inventory (Phase 4) now reads `available_stock` instead of
+  `current_stock`, showing Reserved/Available columns and comparing
+  "below reorder" against `available_qty` — a minimal, necessary
+  extension caused directly by this phase's reservation model.
+- `src/validation.js`: `validateWorkOrderForm`.
+- `scripts/test-rls-work-orders.mjs` (new, added to `npm run
+  test:integration`): the netting explosion's math (including a shortfall
+  case), create/reserve/cancel permissions per role, that a direct insert
+  into any of the three new tables is blocked, the reservation's effect
+  on `available_stock`, reserving an already-reserved work order failing,
+  and a direct client update being unable to forge a `reserved` status
+  transition.
+- `e2e/phase7.spec.js`: route guard, previewing an explosion and creating
+  a work order (verifying both RPC call bodies), a validation-blocks-save
+  case, viewing a work order's requirements and reserving stock for it,
+  the server-side shortfall message surfacing on a blocked reserve,
+  cancelling, and an empty state. `e2e/phase4.spec.js` updated to mock
+  `available_stock` instead of `current_stock`.

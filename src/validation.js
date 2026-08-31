@@ -298,6 +298,25 @@ export function validateProductionForm(form) {
 }
 
 /**
+ * New Work Order form (Phase 7): the item to produce and a positive
+ * quantity.
+ * @param {{ outputItemId?: string, quantity?: string|number }} form
+ */
+export function validateWorkOrderForm(form) {
+  /** @type {Record<string, string>} */
+  const errors = {};
+  const { outputItemId = '', quantity = '' } = form || {};
+
+  if (!outputItemId) errors.outputItemId = 'Select the item this work order is for.';
+  const qtyNum = Number(quantity);
+  if (quantity === '' || !Number.isFinite(qtyNum) || qtyNum <= 0) {
+    errors.quantity = 'Quantity must be a positive number.';
+  }
+
+  return { valid: Object.keys(errors).length === 0, errors };
+}
+
+/**
  * The PO Upload form as a whole (Phase 2). At least one valid line item
  * is required — an empty PO isn't useful, and the review table already
  * lets the user add rows by hand when parsing found nothing (P2-6).

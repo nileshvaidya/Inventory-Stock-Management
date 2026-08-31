@@ -13,7 +13,7 @@ test.describe('Phase 4 — route guards', () => {
 
 test.describe('Phase 4 — Inventory', () => {
   test('lists current stock, flags a below-reorder item, and shows its movement ledger', async ({ page }) => {
-    await page.route('**/rest/v1/current_stock**', (route) =>
+    await page.route('**/rest/v1/available_stock**', (route) =>
       route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -24,9 +24,9 @@ test.describe('Phase 4 — Inventory', () => {
             category: 'Steel',
             unit_of_measure: 'Nos.',
             reorder_level: 500,
-            qty_in: 1500,
-            qty_out: 1100,
             current_qty: 400,
+            reserved_qty: 0,
+            available_qty: 400,
           },
         ]),
       })
@@ -68,7 +68,7 @@ test.describe('Phase 4 — Inventory', () => {
   });
 
   test('store role logs a manual stock movement', async ({ page }) => {
-    await page.route('**/rest/v1/current_stock**', (route) =>
+    await page.route('**/rest/v1/available_stock**', (route) =>
       route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -79,9 +79,9 @@ test.describe('Phase 4 — Inventory', () => {
             category: 'Steel',
             unit_of_measure: 'Nos.',
             reorder_level: null,
-            qty_in: 0,
-            qty_out: 0,
             current_qty: 0,
+            reserved_qty: 0,
+            available_qty: 0,
           },
         ]),
       })
@@ -113,7 +113,7 @@ test.describe('Phase 4 — Inventory', () => {
   });
 
   test('production role can view Inventory but has no write affordances (read-only)', async ({ page }) => {
-    await page.route('**/rest/v1/current_stock**', (route) =>
+    await page.route('**/rest/v1/available_stock**', (route) =>
       route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -124,9 +124,9 @@ test.describe('Phase 4 — Inventory', () => {
             category: 'Steel',
             unit_of_measure: 'Nos.',
             reorder_level: null,
-            qty_in: 0,
-            qty_out: 0,
             current_qty: 0,
+            reserved_qty: 0,
+            available_qty: 0,
           },
         ]),
       })
@@ -154,7 +154,7 @@ test.describe('Phase 4 — Inventory', () => {
       }
       return route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
     });
-    await page.route('**/rest/v1/current_stock**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
+    await page.route('**/rest/v1/available_stock**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
 
     await page.goto('/?demoRole=store#/inventory');
     await page.click('[data-action="new-item"]');
@@ -166,7 +166,7 @@ test.describe('Phase 4 — Inventory', () => {
   });
 
   test('shows an empty state when no items match the filters', async ({ page }) => {
-    await page.route('**/rest/v1/current_stock**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
+    await page.route('**/rest/v1/available_stock**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
 
     await page.goto('/?demoRole=store#/inventory');
     await expect(page.locator('[data-screen="inventory"]')).toContainText('No items match');

@@ -2,12 +2,17 @@
 // below-reorder, with a per-item movement ledger. Admin/Store/Production —
 // Production is read-only in practice (manual movements are store/admin
 // only server-side via RLS; the button is simply not shown to Production).
+//
+// Reads available_stock (Phase 7), not the plain current_stock view — the
+// same rows plus reserved_qty/available_qty netted against active work
+// order reservations, so "below reorder" and the displayed quantity both
+// reflect what's actually free to use, not just what's physically on hand.
 import { getCurrentProfile } from '../auth.js';
 import { renderShell } from '../layout.js';
 import { escapeHtml } from '../components.js';
 import { createStore } from '../state.js';
 import { canViewModule } from '../navPermissions.js';
-import { fetchCurrentStock, fetchMovementsForItem, createStockMovement } from '../inventory.js';
+import { fetchAvailableStock, fetchMovementsForItem, createStockMovement } from '../inventory.js';
 import { createItem } from '../items.js';
 import { validateItemForm, validateStockMovementForm } from '../validation.js';
 
@@ -52,7 +57,7 @@ export async function render(container) {
   async function load() {
     store.setState({ loading: true, error: false });
     try {
-      const stock = await fetchCurrentStock();
+      const stock = await fetchAvailableStock();
       store.setState({ stock, loading: false, error: false });
     } catch {
       store.setState({ loading: false, error: true });
@@ -77,7 +82,7 @@ function filteredStock(state) {
   return state.stock.filter((row) => {
     if (state.nameFilter && !row.name.toLowerCase().includes(state.nameFilter.toLowerCase())) return false;
     if (state.categoryFilter && row.category !== state.categoryFilter) return false;
-    if (state.belowReorderOnly && !(row.reorder_level !== null && Number(row.current_qty) < Number(row.reorder_level))) {
+    if (state.belowReorderOnly && !(row.reorder_level !== null && Number(row.available_qty) < Number(row.reorder_level))) {
       return false;
     }
     return true;
@@ -124,8 +129,8 @@ function renderContent(container, state, canManageStock) {
               </div>`
             : rows.length === 0
               ? `<div style="padding:20px;font-size:13px;color:var(--color-neutral-500)">No items match these filters.</div>`
-              : `<table class="table" style="min-width:680px">
-                  <thead><tr><th>Item</th><th>Category</th><th>UoM</th><th>Current Stock</th><th>Reorder Level</th><th></th></tr></thead>
+              : `<table class="table" style="min-width:820px">
+                  <thead><tr><th>Item</th><th>Category</th><th>UoM</th><th>Current Stock</th><th>Reserved</th><th>Available</th><th>Reorder Level</th><th></th></tr></thead>
                   <tbody>${rows.map((row) => renderRow(row, state, canManageStock)).join('')}</tbody>
                 </table>`
       }
@@ -161,14 +166,16 @@ function renderNewItemCard(state) {
 }
 
 function renderRow(row, state, canManageStock) {
-  const belowReorder = row.reorder_level !== null && Number(row.current_qty) < Number(row.reorder_level);
+  const belowReorder = row.reorder_level !== null && Number(row.available_qty) < Number(row.reorder_level);
   const isOpen = state.openItemId === row.item_id;
   const rows = [
     `<tr data-stock-row="${escapeHtml(row.item_id)}">
       <td>${escapeHtml(row.name)}</td>
       <td>${escapeHtml(row.category || '—')}</td>
       <td>${escapeHtml(row.unit_of_measure || '—')}</td>
-      <td>${row.current_qty}${belowReorder ? ` <span class="tag tag-accent-2" data-role="below-reorder">Below reorder</span>` : ''}</td>
+      <td>${row.current_qty}</td>
+      <td>${row.reserved_qty}</td>
+      <td>${row.available_qty}${belowReorder ? ` <span class="tag tag-accent-2" data-role="below-reorder">Below reorder</span>` : ''}</td>
       <td>${row.reorder_level ?? '—'}</td>
       <td><button type="button" class="btn btn-ghost" data-action="toggle-item" data-id="${escapeHtml(row.item_id)}" style="padding:4px 10px;font-size:12px">${isOpen ? 'Hide' : 'Ledger'}</button></td>
     </tr>`,
@@ -177,7 +184,7 @@ function renderRow(row, state, canManageStock) {
   if (isOpen) {
     rows.push(`
       <tr data-ledger-row="${escapeHtml(row.item_id)}">
-        <td colspan="6" style="padding:12px 14px;border-top:1px solid var(--color-divider)">
+        <td colspan="8" style="padding:12px 14px;border-top:1px solid var(--color-divider)">
           ${renderLedger(row.item_id, state, canManageStock)}
         </td>
       </tr>
@@ -336,7 +343,7 @@ function wireEvents(container, store, user, load, canManageStock) {
           notes: form.notes,
           createdBy: user.id,
         });
-        const [movements, stock] = await Promise.all([fetchMovementsForItem(itemId), fetchCurrentStock()]);
+        const [movements, stock] = await Promise.all([fetchMovementsForItem(itemId), fetchAvailableStock()]);
         store.setState({
           savingMovementItemId: null,
           stock,

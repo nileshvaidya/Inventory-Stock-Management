@@ -19,7 +19,7 @@ const SECTIONS = [
   { title: 'Master Material Status', body: 'Company-wide view of every PO/item’s receipt and inspection status. (Phase 3)' },
   { title: 'Inventory', body: 'Current stock by item, with below-reorder flags and a movement ledger. (Phase 4)' },
   { title: 'BoM Builder', body: 'Define recipes (a produced item and its components) and record production, which consumes the recipe’s components from current stock. Admin/Production only. (Phase 6)' },
-  { title: 'Work Orders', body: 'Reserve component stock against a work order. (Phase 7)' },
+  { title: 'Work Orders', body: 'Explode a nested BoM to see what producing a quantity would take (netted against what’s already on hand), then optionally reserve that stock. Admin/Production/Store. (Phase 7)' },
   { title: 'Invoices', body: 'Link invoices to POs and track payment status and due dates. (Phase 5)' },
   { title: 'Reports', body: 'Available/reserved stock, shortfalls, and below-reorder reporting. (Phase 8)' },
   { title: 'Users & Roles', body: 'Admins manage user accounts and role assignments. (Phase 1)' },

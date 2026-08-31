@@ -14,6 +14,20 @@ export async function fetchCurrentStock(client = supabase) {
 }
 
 /**
+ * current_stock netted against active Phase 7 work-order reservations —
+ * current_qty minus reserved_qty. Inventory shows this instead of plain
+ * current_stock so "available" (what's actually free to use) is visible
+ * alongside on-hand quantity.
+ * @param {any} [client]
+ */
+export async function fetchAvailableStock(client = supabase) {
+  if (!client) return [];
+  const { data, error } = await client.from('available_stock').select('*').order('name');
+  if (error) throw error;
+  return data;
+}
+
+/**
  * @param {string} itemId
  * @param {any} [client]
  */

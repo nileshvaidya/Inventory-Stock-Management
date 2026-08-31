@@ -22,7 +22,7 @@ and the auth/layout patterns are ported directly from the
 app, per the build brief. See `design-reference/README.md` for what's
 pending from the real Claude Design mockup.
 
-**Current status: Phase 6 (BoM Builder: nested bills of materials + recording production) — see Phase 6 below.**
+**Current status: Phase 7 (Work Orders: nested BoM explosion + stock reservation) — see Phase 7 below.**
 
 ## Project layout
 
@@ -51,6 +51,8 @@ src/
   boms.js                                                   # BoM Builder data layer (Phase 6) — recipes + the
                                                                # record_bom_production() RPC (the only write path for
                                                                # production runs)
+  workOrders.js                                               # Work Orders data layer (Phase 7) — explosion preview
+                                                                 # + create_work_order()/reserve_work_order() RPCs
   validation.js                                               # pure form-validation logic
   demoMode.js                             # VITE_DEMO_MODE + ?demoRole= dev bypass
   state.js                                  # small in-memory store + pub-sub
@@ -74,6 +76,7 @@ e2e/
   phase4.spec.js                    # Playwright — Inventory (Item Master, ledger, below-reorder)
   phase5.spec.js                      # Playwright — Invoices (multi-PO link, due-date auto-fill, overdue, Mark Paid)
   phase6.spec.js                        # Playwright — BoM Builder (recipe create/edit/archive, record production)
+  phase7.spec.js                          # Playwright — Work Orders (explosion preview, create, reserve, cancel)
 scripts/
   test-rls-users.mjs          # RLS/RPC integration tests against a REAL Supabase project (CI's `integration` job)
   test-rls-purchase-orders.mjs  # ...for vendors/projects/purchase_orders/po_line_items/import_field_mappings
@@ -82,6 +85,9 @@ scripts/
   test-rls-invoices.mjs               # ...for invoices/invoice_purchase_orders — the narrow-read RLS case
   test-rls-boms.mjs                     # ...for boms/bom_components/bom_production_runs — the cycle guard trigger
                                            # and record_bom_production()'s atomic stock-shortfall check
+  test-rls-work-orders.mjs              # ...for work_orders/work_order_requirements/stock_reservations —
+                                           # the netting explosion's math and reserve_work_order()'s atomic
+                                           # re-availability check
 supabase/
   schema.sql               # running source of truth for the DB schema + RLS
   README.md                  # Supabase project setup steps
@@ -401,6 +407,70 @@ how far "recording production" reaches):
 
 1. **Production/staging schema**: confirmed applied to both staging (CI's
    `integration` job passes) and production.
+2. **Design mockup**: still not available.
+3. **Deactivating your own last admin account** (carried over from Phase
+   1): still not guarded against.
+
+## Phase 7 — Work Orders (nested BoM explosion + stock reservation)
+
+Confirmed three design decisions before building (no mockup):
+
+- **Explosion nets against available stock at every level, not just the
+  leaves** — standard MRP netting. If there's already enough of a
+  sub-assembly on hand, its own recipe is never exploded further; only the
+  shortfall at each level propagates down into that item's components.
+- **Reservation is a hard hold.** Reserved units are subtracted from
+  "available" everywhere — a new `available_stock` view
+  (`current_qty - reserved_qty`) replaces `current_stock` as what
+  Inventory (Phase 4) displays, and it's what both `explode_bom_requirements`
+  and Phase 6's `record_bom_production()` now check against, so a second
+  work order (or a BoM production run) can't also plan against the same
+  units.
+- **This phase stops at plan + reserve.** Completing/fulfilling a work
+  order (cascading it into an actual production run) is out of scope —
+  that still happens one recipe at a time via Phase 6's BoM Builder; a
+  work order here is a plan with stock held against it, not a production
+  run. Cancelling one just releases the hold.
+
+- `explode_bom_requirements(item, qty)`: a recursive, level-by-level
+  (breadth-first) netting walk over `boms`/`bom_components`, returning
+  per-item `reservable_qty` (what's on hand right now) and `shortfall_qty`
+  (what isn't, anywhere in the tree). Known, documented limitation: the
+  *same* item reachable at two different depths in a nested BoM can have
+  its stock netted more than once across those depths (true low-level-code
+  MRP would defer every item to its single lowest occurrence first; this
+  doesn't) — judged out of scope for this app's real recipes. Critically
+  this can only make the *preview* optimistic, never unsafe:
+  `reserve_work_order()` re-checks the aggregated total against the item's
+  one true `available_qty` before committing anything, so an inflated
+  preview gets rejected at reserve time rather than ever over-reserving
+  real stock.
+- `work_orders` (status `open`/`reserved`/`cancelled`) + a
+  `work_order_requirements` snapshot taken once at creation time (not
+  recomputed live) + `stock_reservations` (the actual holds, created only
+  by `reserve_work_order()`). Both `create_work_order()` and
+  `reserve_work_order()` are security-definer RPCs and the only way in —
+  same "the RPC is the only way in" pattern as Phase 6's
+  `bom_production_runs` — while cancelling is a plain client update, gated
+  by RLS to only ever permit the `cancelled` transition.
+- `src/screens/workOrders.js` (Admin/Production/Store): pick an item +
+  quantity, "Check Availability" for a live preview before saving, create
+  the work order, then per-order "Reserve Stock" / "Cancel Work Order" and
+  an expandable detail view of its requirement snapshot.
+- Inventory (Phase 4) now shows Reserved/Available columns alongside
+  Current Stock, and its "below reorder" flag compares against `available_qty`
+  instead of `current_qty` — a natural, minimal extension of that screen
+  caused directly by this phase's reservation model, not a re-scoping of
+  Phase 4.
+
+### Phase 7 — open items
+
+1. **Production/staging schema**: `supabase/schema.sql`'s Phase 7 section
+   (`can_manage_work_orders`, `work_orders`, `work_order_requirements`,
+   `stock_reservations`, `available_stock`, `explode_bom_requirements`,
+   `create_work_order`, `reserve_work_order`) needs to be run on both
+   staging and production. CI's `integration` job
+   (`scripts/test-rls-work-orders.mjs`) will fail until staging has it.
 2. **Design mockup**: still not available.
 3. **Deactivating your own last admin account** (carried over from Phase
    1): still not guarded against.

@@ -1169,3 +1169,358 @@ end;
 $$;
 
 grant execute on function public.record_bom_production(uuid, numeric, text) to authenticated;
+
+-- Phase 7: Work Orders (nested BoM explosion + hard stock reservation).
+-- Confirmed with the user before building, three decisions:
+--  1. Explosion nets against available stock at EVERY level, not just the
+--     leaves — if there's already enough of a sub-assembly on hand, its
+--     own recipe never gets exploded further. Standard MRP netting.
+--  2. Reservation is a hard hold: reserved units are subtracted from
+--     "available" everywhere (see available_stock below), so a second
+--     work order — or Phase 6's Record Production — can't also plan
+--     against the same units.
+--  3. This phase stops at plan + reserve. Completing/fulfilling a work
+--     order (cascading actual production through it) is out of scope —
+--     that still happens one recipe at a time via Phase 6's BoM Builder;
+--     a work order here is a plan with stock held against it, not a
+--     production run.
+create or replace function public.can_manage_work_orders(uid uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.users
+    where id = uid and role in ('admin', 'production', 'store') and status = 'active'
+  );
+$$;
+
+grant execute on function public.can_manage_work_orders(uuid) to authenticated;
+
+create table if not exists public.work_orders (
+  id uuid primary key default gen_random_uuid(),
+  output_item_id uuid not null references public.items (id),
+  quantity numeric not null check (quantity > 0),
+  status text not null default 'open' check (status in ('open', 'reserved', 'cancelled')),
+  notes text null,
+  created_by uuid not null references public.users (id),
+  created_at timestamptz not null default now(),
+  reserved_at timestamptz null,
+  cancelled_at timestamptz null
+);
+
+create index if not exists work_orders_output_item_id_idx on public.work_orders (output_item_id);
+
+alter table public.work_orders enable row level security;
+
+drop policy if exists "Authenticated users can view work orders" on public.work_orders;
+create policy "Authenticated users can view work orders"
+  on public.work_orders for select
+  to authenticated
+  using (true);
+
+-- Deliberately no insert policy: a work order (and its requirement
+-- snapshot below) is only ever created through create_work_order() —
+-- same "the RPC is the only way in" pattern as Phase 6's
+-- bom_production_runs, since the explosion has to happen atomically with
+-- the insert. The update policy only ever permits the cancel transition;
+-- reserving is a separate RPC (reserve_work_order) because it also has
+-- to atomically re-check availability and write stock_reservations.
+drop policy if exists "Admin/production/store can cancel work orders" on public.work_orders;
+create policy "Admin/production/store can cancel work orders"
+  on public.work_orders for update
+  to authenticated
+  using (public.can_manage_work_orders(auth.uid()) and status <> 'cancelled')
+  with check (public.can_manage_work_orders(auth.uid()) and status = 'cancelled');
+
+create or replace function public.trg_work_orders_cancelled_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  if new.status = 'cancelled' and old.status <> 'cancelled' then
+    new.cancelled_at := now();
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists work_orders_cancelled_at on public.work_orders;
+create trigger work_orders_cancelled_at
+before update on public.work_orders
+for each row execute function public.trg_work_orders_cancelled_at();
+
+-- A snapshot of the exploded/netted requirement per item, taken once at
+-- creation time — not recomputed live. reservable_qty is what was
+-- available to hold at creation time (what reserve_work_order() will try
+-- to actually reserve); shortfall_qty is demand the explosion couldn't
+-- satisfy anywhere in the tree (no stock, and either no recipe or the
+-- recipe's own inputs were also short) — informational, needs procurement
+-- or production outside this work order.
+create table if not exists public.work_order_requirements (
+  id uuid primary key default gen_random_uuid(),
+  work_order_id uuid not null references public.work_orders (id) on delete cascade,
+  item_id uuid not null references public.items (id),
+  reservable_qty numeric not null default 0 check (reservable_qty >= 0),
+  shortfall_qty numeric not null default 0 check (shortfall_qty >= 0),
+  unique (work_order_id, item_id)
+);
+
+create index if not exists work_order_requirements_work_order_id_idx on public.work_order_requirements (work_order_id);
+
+alter table public.work_order_requirements enable row level security;
+
+drop policy if exists "Authenticated users can view work order requirements" on public.work_order_requirements;
+create policy "Authenticated users can view work order requirements"
+  on public.work_order_requirements for select
+  to authenticated
+  using (true);
+-- No insert/update/delete policy — written only by create_work_order().
+
+create table if not exists public.stock_reservations (
+  id uuid primary key default gen_random_uuid(),
+  work_order_id uuid not null references public.work_orders (id) on delete cascade,
+  item_id uuid not null references public.items (id),
+  quantity numeric not null check (quantity > 0),
+  created_at timestamptz not null default now(),
+  unique (work_order_id, item_id)
+);
+
+create index if not exists stock_reservations_item_id_idx on public.stock_reservations (item_id);
+
+alter table public.stock_reservations enable row level security;
+
+drop policy if exists "Authenticated users can view stock reservations" on public.stock_reservations;
+create policy "Authenticated users can view stock reservations"
+  on public.stock_reservations for select
+  to authenticated
+  using (true);
+-- No insert/update/delete policy — written only by reserve_work_order().
+
+-- current_stock netted against every ACTIVE reservation (status =
+-- 'reserved' work orders only — cancelling one frees its hold
+-- automatically since the join drops out, without ever deleting the
+-- stock_reservations audit rows). This is the "available" figure that
+-- matters from here on: explode_bom_requirements nets against it, and
+-- Inventory (Phase 4) now shows it alongside current_qty.
+create or replace view public.available_stock as
+select
+  cs.item_id,
+  cs.name,
+  cs.category,
+  cs.unit_of_measure,
+  cs.reorder_level,
+  cs.current_qty,
+  coalesce(r.reserved_qty, 0) as reserved_qty,
+  cs.current_qty - coalesce(r.reserved_qty, 0) as available_qty
+from public.current_stock cs
+left join (
+  select sr.item_id, sum(sr.quantity) as reserved_qty
+  from public.stock_reservations sr
+  join public.work_orders wo on wo.id = sr.work_order_id
+  where wo.status = 'reserved'
+  group by sr.item_id
+) r on r.item_id = cs.item_id;
+
+grant select on public.available_stock to authenticated;
+
+-- Recursive BoM explosion, netting demand against available_stock at
+-- every level (see the phase-level comment above). Processes level by
+-- level (breadth-first): every branch demanding the same item AT THE SAME
+-- LEVEL is summed into one jsonb key before that level nets against
+-- stock once — the case that would otherwise double-count availability.
+-- Known, documented limitation: the SAME item reachable at two DIFFERENT
+-- depths in a nested BoM can still have its availability netted more
+-- than once across those depths (true low-level-code MRP would defer
+-- every item to its single lowest occurrence before netting; this
+-- doesn't). This is judged an acceptable, conservative gap for this
+-- app's real recipes — critically, it can only ever make the *preview*
+-- optimistic, never the actual reservation: reserve_work_order() below
+-- re-checks the aggregated total against the item's one true
+-- available_qty before committing anything, so an inflated preview gets
+-- rejected at reserve time rather than ever over-reserving real stock.
+create or replace function public.explode_bom_requirements(root_item_id uuid, root_qty numeric)
+returns table (item_id uuid, item_name text, reservable_qty numeric, shortfall_qty numeric)
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  current_level jsonb := jsonb_build_object(root_item_id::text, root_qty);
+  next_level jsonb;
+  reserve_map jsonb := '{}'::jsonb;
+  shortfall_map jsonb := '{}'::jsonb;
+  iterations int := 0;
+  lvl_item text;
+  gross numeric;
+  avail numeric;
+  net numeric;
+  bom_row public.boms%rowtype;
+  multiplier numeric;
+  comp record;
+begin
+  if root_qty is null or root_qty <= 0 then
+    raise exception 'Quantity must be greater than zero.';
+  end if;
+  if not exists (select 1 from public.items where id = root_item_id and deleted_at is null) then
+    raise exception 'Item not found.';
+  end if;
+
+  while current_level <> '{}'::jsonb loop
+    iterations := iterations + 1;
+    if iterations > 50 then
+      raise exception 'BoM explosion exceeded maximum depth (50) — check for an unexpectedly deep recipe tree.';
+    end if;
+
+    next_level := '{}'::jsonb;
+
+    for lvl_item, gross in select key, value::numeric from jsonb_each_text(current_level) loop
+      select coalesce(av.available_qty, 0) into avail from public.available_stock av where av.item_id = lvl_item::uuid;
+      if avail is null then
+        avail := 0;
+      end if;
+
+      if least(gross, avail) > 0 then
+        reserve_map := jsonb_set(
+          reserve_map, array[lvl_item],
+          to_jsonb(coalesce((reserve_map ->> lvl_item)::numeric, 0) + least(gross, avail))
+        );
+      end if;
+
+      net := greatest(gross - avail, 0);
+      if net > 0 then
+        select * into bom_row from public.boms where output_item_id = lvl_item::uuid and deleted_at is null;
+        if found then
+          multiplier := net / bom_row.output_qty;
+          for comp in select component_item_id, quantity from public.bom_components where bom_id = bom_row.id loop
+            next_level := jsonb_set(
+              next_level, array[comp.component_item_id::text],
+              to_jsonb(coalesce((next_level ->> comp.component_item_id::text)::numeric, 0) + comp.quantity * multiplier)
+            );
+          end loop;
+        else
+          shortfall_map := jsonb_set(
+            shortfall_map, array[lvl_item],
+            to_jsonb(coalesce((shortfall_map ->> lvl_item)::numeric, 0) + net)
+          );
+        end if;
+      end if;
+    end loop;
+
+    current_level := next_level;
+  end loop;
+
+  return query
+    select
+      k::uuid,
+      i.name,
+      coalesce((reserve_map ->> k)::numeric, 0),
+      coalesce((shortfall_map ->> k)::numeric, 0)
+    from (
+      select jsonb_object_keys(reserve_map) as k
+      union
+      select jsonb_object_keys(shortfall_map) as k
+    ) keys
+    join public.items i on i.id = k::uuid;
+end;
+$$;
+
+grant execute on function public.explode_bom_requirements(uuid, numeric) to authenticated;
+
+create or replace function public.create_work_order(target_output_item_id uuid, target_qty numeric, notes_in text default null)
+returns public.work_orders
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  wo_row public.work_orders%rowtype;
+  req record;
+begin
+  if not public.can_manage_work_orders(auth.uid()) then
+    raise exception 'Not authorized to create work orders.';
+  end if;
+  if target_qty is null or target_qty <= 0 then
+    raise exception 'Quantity must be greater than zero.';
+  end if;
+
+  insert into public.work_orders (output_item_id, quantity, notes, created_by)
+  values (target_output_item_id, target_qty, notes_in, auth.uid())
+  returning * into wo_row;
+
+  for req in select * from public.explode_bom_requirements(target_output_item_id, target_qty) loop
+    insert into public.work_order_requirements (work_order_id, item_id, reservable_qty, shortfall_qty)
+    values (wo_row.id, req.item_id, req.reservable_qty, req.shortfall_qty);
+  end loop;
+
+  return wo_row;
+end;
+$$;
+
+grant execute on function public.create_work_order(uuid, numeric, text) to authenticated;
+
+-- Re-checks availability against the CURRENT available_stock (not the
+-- creation-time snapshot — stock may have moved since) before committing
+-- anything, and blocks (nothing written) if any item in the snapshot is
+-- no longer available in full, same all-or-nothing discipline as
+-- record_bom_production.
+create or replace function public.reserve_work_order(target_work_order_id uuid)
+returns public.work_orders
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  wo_row public.work_orders%rowtype;
+  req record;
+  available numeric;
+  shortfall_msg text := '';
+  updated_row public.work_orders%rowtype;
+begin
+  if not public.can_manage_work_orders(auth.uid()) then
+    raise exception 'Not authorized to reserve stock for work orders.';
+  end if;
+
+  select * into wo_row from public.work_orders where id = target_work_order_id;
+  if not found then
+    raise exception 'Work order not found.';
+  end if;
+  if wo_row.status <> 'open' then
+    raise exception 'Only an open work order can be reserved.';
+  end if;
+
+  for req in
+    select wor.item_id, wor.reservable_qty, i.name
+    from public.work_order_requirements wor
+    join public.items i on i.id = wor.item_id
+    where wor.work_order_id = target_work_order_id and wor.reservable_qty > 0
+  loop
+    select coalesce(av.available_qty, 0) into available from public.available_stock av where av.item_id = req.item_id;
+    if available is null then
+      available := 0;
+    end if;
+    if available < req.reservable_qty then
+      shortfall_msg := shortfall_msg || format('%s (need %s, have %s available); ', req.name, req.reservable_qty, available);
+    end if;
+  end loop;
+
+  if shortfall_msg <> '' then
+    raise exception 'Cannot reserve — stock has changed since this work order was created: %', shortfall_msg;
+  end if;
+
+  insert into public.stock_reservations (work_order_id, item_id, quantity)
+  select work_order_id, item_id, reservable_qty
+  from public.work_order_requirements
+  where work_order_id = target_work_order_id and reservable_qty > 0;
+
+  update public.work_orders set status = 'reserved', reserved_at = now() where id = target_work_order_id
+  returning * into updated_row;
+
+  return updated_row;
+end;
+$$;
+
+grant execute on function public.reserve_work_order(uuid) to authenticated;
