@@ -350,10 +350,8 @@ role-restricted. `is_authorized_or_admin()` mirrors the existing
 
 ### Phase 5 — open items
 
-1. **Production schema**: confirmed applied to staging (CI's `integration`
-   job passes). Please confirm you've also run `supabase/schema.sql`'s
-   Phase 5 section (`is_authorized_or_admin`, `invoices`,
-   `invoice_purchase_orders`) on **production**.
+1. **Production/staging schema**: confirmed applied to both staging (CI's
+   `integration` job passes) and production.
 2. **Design mockup**: still not available.
 3. **Deactivating your own last admin account** (carried over from Phase
    1): still not guarded against.
@@ -401,11 +399,8 @@ how far "recording production" reaches):
 
 ### Phase 6 — open items
 
-1. **Production/staging schema**: `supabase/schema.sql`'s Phase 6 section
-   (`can_manage_boms`, `boms`, `bom_components`, `bom_cycle_would_exist`,
-   `bom_production_runs`, `record_bom_production`) needs to be run on both
-   staging and production. CI's `integration` job
-   (`scripts/test-rls-boms.mjs`) will fail until staging has it.
+1. **Production/staging schema**: confirmed applied to both staging (CI's
+   `integration` job passes) and production.
 2. **Design mockup**: still not available.
 3. **Deactivating your own last admin account** (carried over from Phase
    1): still not guarded against.
