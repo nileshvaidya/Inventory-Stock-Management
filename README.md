@@ -465,12 +465,8 @@ Confirmed three design decisions before building (no mockup):
 
 ### Phase 7 — open items
 
-1. **Production/staging schema**: `supabase/schema.sql`'s Phase 7 section
-   (`can_manage_work_orders`, `work_orders`, `work_order_requirements`,
-   `stock_reservations`, `available_stock`, `explode_bom_requirements`,
-   `create_work_order`, `reserve_work_order`) needs to be run on both
-   staging and production. CI's `integration` job
-   (`scripts/test-rls-work-orders.mjs`) will fail until staging has it.
+1. **Production/staging schema**: confirmed applied to both staging (CI's
+   `integration` job passes) and production.
 2. **Design mockup**: still not available.
 3. **Deactivating your own last admin account** (carried over from Phase
    1): still not guarded against.
