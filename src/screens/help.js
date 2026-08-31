@@ -18,7 +18,7 @@ const SECTIONS = [
   { title: 'Inspection', body: 'Accept or reject received material, in full or in part. (Phase 3)' },
   { title: 'Master Material Status', body: 'Company-wide view of every PO/item’s receipt and inspection status. (Phase 3)' },
   { title: 'Inventory', body: 'Current stock by item, with below-reorder flags and a movement ledger. (Phase 4)' },
-  { title: 'BoM Builder', body: 'Build nested bills of materials and record production. (Phase 6)' },
+  { title: 'BoM Builder', body: 'Define recipes (a produced item and its components) and record production, which consumes the recipe’s components from current stock. Admin/Production only. (Phase 6)' },
   { title: 'Work Orders', body: 'Reserve component stock against a work order. (Phase 7)' },
   { title: 'Invoices', body: 'Link invoices to POs and track payment status and due dates. (Phase 5)' },
   { title: 'Reports', body: 'Available/reserved stock, shortfalls, and below-reorder reporting. (Phase 8)' },

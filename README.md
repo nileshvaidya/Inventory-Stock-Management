@@ -22,7 +22,7 @@ and the auth/layout patterns are ported directly from the
 app, per the build brief. See `design-reference/README.md` for what's
 pending from the real Claude Design mockup.
 
-**Current status: Phase 5 (Invoices: multi-PO linking, payment terms/due dates, overdue status) — see Phase 5 below.**
+**Current status: Phase 6 (BoM Builder: nested bills of materials + recording production) — see Phase 6 below.**
 
 ## Project layout
 
@@ -48,6 +48,9 @@ src/
   inventory.js                                          # current_stock view + stock_movements ledger (Phase 4)
   invoices.js                                             # Invoices data layer (Phase 5) — the first table whose own
                                                              # RLS read is admin/authorized-only, not company-wide
+  boms.js                                                   # BoM Builder data layer (Phase 6) — recipes + the
+                                                               # record_bom_production() RPC (the only write path for
+                                                               # production runs)
   validation.js                                               # pure form-validation logic
   demoMode.js                             # VITE_DEMO_MODE + ?demoRole= dev bypass
   state.js                                  # small in-memory store + pub-sub
@@ -70,12 +73,15 @@ e2e/
   phase3.spec.js                  # Playwright — Material Inward, Inspection, Master Material Status
   phase4.spec.js                    # Playwright — Inventory (Item Master, ledger, below-reorder)
   phase5.spec.js                      # Playwright — Invoices (multi-PO link, due-date auto-fill, overdue, Mark Paid)
+  phase6.spec.js                        # Playwright — BoM Builder (recipe create/edit/archive, record production)
 scripts/
   test-rls-users.mjs          # RLS/RPC integration tests against a REAL Supabase project (CI's `integration` job)
   test-rls-purchase-orders.mjs  # ...for vendors/projects/purchase_orders/po_line_items/import_field_mappings
   test-rls-material-inward.mjs    # ...for material_inward/inspection_results + recompute_po_status + the view
   test-rls-inventory.mjs            # ...for items/stock_movements + the auto-stock-in trigger + current_stock
   test-rls-invoices.mjs               # ...for invoices/invoice_purchase_orders — the narrow-read RLS case
+  test-rls-boms.mjs                     # ...for boms/bom_components/bom_production_runs — the cycle guard trigger
+                                           # and record_bom_production()'s atomic stock-shortfall check
 supabase/
   schema.sql               # running source of truth for the DB schema + RLS
   README.md                  # Supabase project setup steps
@@ -348,6 +354,58 @@ role-restricted. `is_authorized_or_admin()` mirrors the existing
    job passes). Please confirm you've also run `supabase/schema.sql`'s
    Phase 5 section (`is_authorized_or_admin`, `invoices`,
    `invoice_purchase_orders`) on **production**.
+2. **Design mockup**: still not available.
+3. **Deactivating your own last admin account** (carried over from Phase
+   1): still not guarded against.
+
+## Phase 6 — BoM Builder (nested bills of materials + recording production)
+
+Confirmed two design decisions before building (no mockup, and both shape
+how far "recording production" reaches):
+
+- **Recording production consumes only a recipe's own direct components,
+  one level.** Phase 7 (Work Orders) is described as the layer that
+  explodes a multi-level BoM tree to check/reserve availability further
+  down — Phase 6 doesn't duplicate that here. A BoM's own *structure* is
+  still nested (a component can itself be an item with its own recipe), so
+  there's something for Phase 7 to explode; a database trigger blocks both
+  direct self-reference and any deeper circular reference at write time
+  (`bom_cycle_would_exist()`, a recursive CTE), not just at explosion time.
+- **A stock shortfall on any component blocks the whole production record**
+  — nothing is written — rather than letting stock go negative. Same
+  discipline as Phase 3 blocking over-receiving.
+
+- `boms` (one active recipe per output item — a partial unique index, not a
+  version history; editing replaces its component set wholesale rather
+  than diffing rows) + `bom_components` (item + quantity, scaled per
+  `boms.output_qty` — a "batch size" the recipe is written against, not
+  necessarily 1).
+- `record_bom_production()`, a security-definer RPC and the *only* way
+  `bom_production_runs` rows are ever created (deliberately no direct
+  insert policy on that table) — atomically checks every component against
+  `current_stock`, and either writes the production run plus a matching
+  "out" `stock_movements` row per component and an "in" row for the output
+  item, or writes nothing and raises an exception naming exactly which
+  components are short. Known, documented limitation: two concurrent
+  production runs racing on the same shared component could both pass the
+  check before either writes (no per-item locking) — judged an acceptable
+  gap for this app's scale rather than worth advisory-lock complexity.
+- `src/screens/bomBuilder.js` (Admin/Production — the only two roles with
+  access to this screen at all, per `navPermissions.js`, so every visitor
+  already has manage rights; action buttons are still gated on that
+  role check locally too, matching this app's usual double-enforcement):
+  a recipe list, each row expandable into its component table, a "Record
+  Production" mini-form, and its production history; "+ New Recipe"/Edit/
+  Archive, plus a quick "+ New Item" for when the item a recipe needs
+  doesn't exist yet in the Item Master.
+
+### Phase 6 — open items
+
+1. **Production/staging schema**: `supabase/schema.sql`'s Phase 6 section
+   (`can_manage_boms`, `boms`, `bom_components`, `bom_cycle_would_exist`,
+   `bom_production_runs`, `record_bom_production`) needs to be run on both
+   staging and production. CI's `integration` job
+   (`scripts/test-rls-boms.mjs`) will fail until staging has it.
 2. **Design mockup**: still not available.
 3. **Deactivating your own last admin account** (carried over from Phase
    1): still not guarded against.

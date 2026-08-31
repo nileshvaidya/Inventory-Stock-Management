@@ -229,6 +229,75 @@ export function validateInvoiceForm(form) {
 }
 
 /**
+ * A single BoM component row (Phase 6): an item and a positive quantity.
+ * @param {{ componentItemId?: string, quantity?: string|number }} row
+ */
+export function validateBomComponentRow(row) {
+  /** @type {Record<string, string>} */
+  const errors = {};
+  const { componentItemId = '', quantity = '' } = row || {};
+
+  if (!componentItemId) errors.componentItemId = 'Select a component item.';
+  const qtyNum = Number(quantity);
+  if (quantity === '' || !Number.isFinite(qtyNum) || qtyNum <= 0) {
+    errors.quantity = 'Quantity must be a positive number.';
+  }
+
+  return { valid: Object.keys(errors).length === 0, errors };
+}
+
+/**
+ * A BoM/recipe form as a whole (Phase 6): the item it produces, a positive
+ * output quantity, and at least one valid, non-duplicate component that
+ * isn't the output item itself — the same self-reference rule the DB
+ * trigger enforces, checked here first so the form catches it before a
+ * round trip.
+ * @param {{ outputItemId?: string, outputQty?: string|number,
+ *   components?: { componentItemId?: string, quantity?: string|number }[] }} form
+ */
+export function validateBomForm(form) {
+  /** @type {Record<string, string>} */
+  const errors = {};
+  const { outputItemId = '', outputQty = '', components = [] } = form || {};
+
+  if (!outputItemId) errors.outputItemId = 'Select the item this recipe produces.';
+  const outputQtyNum = Number(outputQty);
+  if (outputQty === '' || !Number.isFinite(outputQtyNum) || outputQtyNum <= 0) {
+    errors.outputQty = 'Output quantity must be a positive number.';
+  }
+
+  if (components.length === 0) {
+    errors.components = 'Add at least one component.';
+  } else if (components.some((row) => !validateBomComponentRow(row).valid)) {
+    errors.components = 'Fix the highlighted component row(s) before saving.';
+  } else if (outputItemId && components.some((row) => row.componentItemId === outputItemId)) {
+    errors.components = "A component can't be the same item as the recipe's output.";
+  } else {
+    const ids = components.map((row) => row.componentItemId);
+    if (new Set(ids).size !== ids.length) {
+      errors.components = 'Each component can only appear once in a recipe.';
+    }
+  }
+
+  return { valid: Object.keys(errors).length === 0, errors };
+}
+
+/**
+ * Record Production form (Phase 6): a positive quantity produced.
+ * @param {{ quantityProduced?: string|number }} form
+ */
+export function validateProductionForm(form) {
+  /** @type {Record<string, string>} */
+  const errors = {};
+  const { quantityProduced = '' } = form || {};
+  const qtyNum = Number(quantityProduced);
+  if (quantityProduced === '' || !Number.isFinite(qtyNum) || qtyNum <= 0) {
+    errors.quantityProduced = 'Enter a positive quantity to record.';
+  }
+  return { valid: Object.keys(errors).length === 0, errors };
+}
+
+/**
  * The PO Upload form as a whole (Phase 2). At least one valid line item
  * is required — an empty PO isn't useful, and the review table already
  * lets the user add rows by hand when parsing found nothing (P2-6).

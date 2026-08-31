@@ -11,6 +11,9 @@ import {
   validateItemForm,
   validateStockMovementForm,
   validateInvoiceForm,
+  validateBomComponentRow,
+  validateBomForm,
+  validateProductionForm,
 } from './validation.js';
 
 describe('validateSignupForm', () => {
@@ -285,5 +288,75 @@ describe('validateInvoiceForm', () => {
     expect(validateInvoiceForm({ vendorId: 'v1', invoiceDate: '2026-01-01', amount: -5 }).valid).toBe(false);
     expect(validateInvoiceForm({ vendorId: 'v1', invoiceDate: '2026-01-01', amount: 'abc' }).valid).toBe(false);
     expect(validateInvoiceForm({ vendorId: 'v1', invoiceDate: '2026-01-01', amount: '' }).valid).toBe(false);
+  });
+});
+
+describe('validateBomComponentRow', () => {
+  it('accepts a valid row', () => {
+    expect(validateBomComponentRow({ componentItemId: 'i1', quantity: 5 }).valid).toBe(true);
+  });
+
+  it('rejects a missing item or a non-positive quantity', () => {
+    expect(validateBomComponentRow({ quantity: 5 }).valid).toBe(false);
+    expect(validateBomComponentRow({ componentItemId: 'i1', quantity: 0 }).valid).toBe(false);
+    expect(validateBomComponentRow({ componentItemId: 'i1', quantity: -1 }).valid).toBe(false);
+    expect(validateBomComponentRow({ componentItemId: 'i1', quantity: '' }).valid).toBe(false);
+  });
+});
+
+describe('validateBomForm', () => {
+  const validForm = {
+    outputItemId: 'out-1',
+    outputQty: 10,
+    components: [
+      { componentItemId: 'c1', quantity: 2 },
+      { componentItemId: 'c2', quantity: 4 },
+    ],
+  };
+
+  it('accepts a valid form', () => {
+    expect(validateBomForm(validForm).valid).toBe(true);
+  });
+
+  it('rejects a missing output item or a non-positive output quantity', () => {
+    expect(validateBomForm({ ...validForm, outputItemId: '' }).valid).toBe(false);
+    expect(validateBomForm({ ...validForm, outputQty: 0 }).valid).toBe(false);
+    expect(validateBomForm({ ...validForm, outputQty: '' }).valid).toBe(false);
+  });
+
+  it('rejects a form with no components or an invalid component row', () => {
+    expect(validateBomForm({ ...validForm, components: [] }).valid).toBe(false);
+    expect(validateBomForm({ ...validForm, components: [{ componentItemId: 'c1', quantity: '' }] }).valid).toBe(false);
+  });
+
+  it("rejects a component that's the same item as the recipe's output", () => {
+    const { valid, errors } = validateBomForm({ ...validForm, components: [{ componentItemId: 'out-1', quantity: 2 }] });
+    expect(valid).toBe(false);
+    expect(errors.components).toMatch(/same item/);
+  });
+
+  it('rejects duplicate components', () => {
+    const { valid, errors } = validateBomForm({
+      ...validForm,
+      components: [
+        { componentItemId: 'c1', quantity: 2 },
+        { componentItemId: 'c1', quantity: 3 },
+      ],
+    });
+    expect(valid).toBe(false);
+    expect(errors.components).toMatch(/once/);
+  });
+});
+
+describe('validateProductionForm', () => {
+  it('accepts a positive quantity', () => {
+    expect(validateProductionForm({ quantityProduced: 5 }).valid).toBe(true);
+  });
+
+  it('rejects zero, negative, non-numeric, or empty quantity', () => {
+    expect(validateProductionForm({ quantityProduced: 0 }).valid).toBe(false);
+    expect(validateProductionForm({ quantityProduced: -1 }).valid).toBe(false);
+    expect(validateProductionForm({ quantityProduced: 'abc' }).valid).toBe(false);
+    expect(validateProductionForm({ quantityProduced: '' }).valid).toBe(false);
   });
 });

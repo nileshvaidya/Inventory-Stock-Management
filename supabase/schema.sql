@@ -912,3 +912,260 @@ create policy "Authorized/admin can delete invoice PO links"
   on public.invoice_purchase_orders for delete
   to authenticated
   using (public.is_authorized_or_admin(auth.uid()));
+
+-- Phase 6: BoM Builder (nested bills of materials + recording production).
+-- Confirmed with the user before building: recording production consumes
+-- only the recipe's own direct components at current stock (one level) —
+-- Phase 7's Work Orders is described as the layer that explodes a
+-- multi-level BoM tree to check/reserve availability further down, so
+-- Phase 6 doesn't duplicate that here — and a shortfall on any component
+-- blocks the whole production record rather than letting stock go
+-- negative (same discipline as Phase 3 blocking over-receiving).
+--
+-- A BoM's own structure IS still nested (a component can itself be an item
+-- with its own BoM) so Phase 7 has something to explode; a trigger below
+-- blocks both direct self-reference and any deeper circular reference at
+-- write time, not just at explosion time.
+create or replace function public.can_manage_boms(uid uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.users
+    where id = uid and role in ('admin', 'production') and status = 'active'
+  );
+$$;
+
+grant execute on function public.can_manage_boms(uuid) to authenticated;
+
+-- One active recipe per output item — edited in place (its components
+-- replaced wholesale on save) rather than versioned. The partial unique
+-- index (deleted_at is null) means archiving a recipe frees up its output
+-- item for a fresh one.
+create table if not exists public.boms (
+  id uuid primary key default gen_random_uuid(),
+  output_item_id uuid not null references public.items (id),
+  output_qty numeric not null default 1 check (output_qty > 0),
+  name text null,
+  notes text null,
+  created_by uuid not null references public.users (id),
+  created_at timestamptz not null default now(),
+  deleted_at timestamptz null
+);
+
+create unique index if not exists boms_one_active_per_output_item
+  on public.boms (output_item_id)
+  where deleted_at is null;
+
+alter table public.boms enable row level security;
+
+drop policy if exists "Authenticated users can view BoMs" on public.boms;
+create policy "Authenticated users can view BoMs"
+  on public.boms for select
+  to authenticated
+  using (true);
+
+drop policy if exists "Admin/production can create BoMs" on public.boms;
+create policy "Admin/production can create BoMs"
+  on public.boms for insert
+  to authenticated
+  with check (public.can_manage_boms(auth.uid()) and created_by = auth.uid());
+
+drop policy if exists "Admin/production can update BoMs" on public.boms;
+create policy "Admin/production can update BoMs"
+  on public.boms for update
+  to authenticated
+  using (public.can_manage_boms(auth.uid()))
+  with check (public.can_manage_boms(auth.uid()));
+
+create table if not exists public.bom_components (
+  id uuid primary key default gen_random_uuid(),
+  bom_id uuid not null references public.boms (id) on delete cascade,
+  component_item_id uuid not null references public.items (id),
+  quantity numeric not null check (quantity > 0),
+  unique (bom_id, component_item_id)
+);
+
+create index if not exists bom_components_bom_id_idx on public.bom_components (bom_id);
+create index if not exists bom_components_component_item_id_idx on public.bom_components (component_item_id);
+
+alter table public.bom_components enable row level security;
+
+drop policy if exists "Authenticated users can view BoM components" on public.bom_components;
+create policy "Authenticated users can view BoM components"
+  on public.bom_components for select
+  to authenticated
+  using (true);
+
+drop policy if exists "Admin/production can create BoM components" on public.bom_components;
+create policy "Admin/production can create BoM components"
+  on public.bom_components for insert
+  to authenticated
+  with check (public.can_manage_boms(auth.uid()));
+
+drop policy if exists "Admin/production can delete BoM components" on public.bom_components;
+create policy "Admin/production can delete BoM components"
+  on public.bom_components for delete
+  to authenticated
+  using (public.can_manage_boms(auth.uid()));
+
+-- Cycle guard: a component can't be its own recipe's output (direct), and
+-- can't already — possibly several BoMs deep — produce something that
+-- includes this recipe's own output (indirect). Either would make
+-- Phase 7's explosion infinite-loop.
+create or replace function public.bom_cycle_would_exist(root_item_id uuid, candidate_component_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  with recursive reachable(item_id) as (
+    select candidate_component_id
+    union
+    select bc.component_item_id
+    from public.bom_components bc
+    join public.boms b on b.id = bc.bom_id
+    join reachable r on b.output_item_id = r.item_id
+    where b.deleted_at is null
+  )
+  select exists (select 1 from reachable where item_id = root_item_id);
+$$;
+
+grant execute on function public.bom_cycle_would_exist(uuid, uuid) to authenticated;
+
+create or replace function public.trg_bom_components_no_cycle()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  root_item_id uuid;
+begin
+  select output_item_id into root_item_id from public.boms where id = new.bom_id;
+  if new.component_item_id = root_item_id then
+    raise exception 'A component cannot be the same item as this recipe''s own output.';
+  end if;
+  if public.bom_cycle_would_exist(root_item_id, new.component_item_id) then
+    raise exception 'This component would create a circular BoM reference.';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists bom_components_no_cycle on public.bom_components;
+create trigger bom_components_no_cycle
+before insert or update on public.bom_components
+for each row execute function public.trg_bom_components_no_cycle();
+
+-- Production runs are only ever created through record_bom_production()
+-- below (security definer) — deliberately no direct insert policy on this
+-- table, so a client can't bypass the stock-shortfall check by inserting
+-- straight into bom_production_runs.
+create table if not exists public.bom_production_runs (
+  id uuid primary key default gen_random_uuid(),
+  bom_id uuid not null references public.boms (id),
+  output_item_id uuid not null references public.items (id),
+  quantity_produced numeric not null check (quantity_produced > 0),
+  notes text null,
+  produced_by uuid not null references public.users (id),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists bom_production_runs_bom_id_idx on public.bom_production_runs (bom_id);
+
+alter table public.bom_production_runs enable row level security;
+
+drop policy if exists "Authenticated users can view BoM production runs" on public.bom_production_runs;
+create policy "Authenticated users can view BoM production runs"
+  on public.bom_production_runs for select
+  to authenticated
+  using (true);
+
+-- Records production against a BoM: consumes the recipe's direct
+-- components (scaled by quantity_produced / boms.output_qty) as "out"
+-- stock movements and logs a matching "in" movement for the output item,
+-- inside one transaction — either all of it happens or none of it does.
+-- Blocks the whole thing (nothing written) if any component is short,
+-- rather than letting stock go negative, same as Phase 3's over-receiving
+-- guard. Known limitation, documented rather than silently accepted: two
+-- concurrent production runs racing on the same shared component could
+-- both pass the check before either writes (no per-item locking) — judged
+-- an acceptable gap for this app's scale rather than worth the added
+-- complexity of advisory locks.
+create or replace function public.record_bom_production(target_bom_id uuid, qty_produced numeric, notes_in text default null)
+returns public.bom_production_runs
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  bom_row public.boms%rowtype;
+  multiplier numeric;
+  shortfall_msg text := '';
+  comp record;
+  needed numeric;
+  available numeric;
+  run_row public.bom_production_runs%rowtype;
+begin
+  if not public.can_manage_boms(auth.uid()) then
+    raise exception 'Not authorized to record BoM production.';
+  end if;
+
+  if qty_produced is null or qty_produced <= 0 then
+    raise exception 'Quantity produced must be greater than zero.';
+  end if;
+
+  select * into bom_row from public.boms where id = target_bom_id and deleted_at is null;
+  if not found then
+    raise exception 'BoM not found.';
+  end if;
+
+  multiplier := qty_produced / bom_row.output_qty;
+
+  for comp in
+    select bc.component_item_id, bc.quantity, i.name
+    from public.bom_components bc
+    join public.items i on i.id = bc.component_item_id
+    where bc.bom_id = target_bom_id
+  loop
+    needed := comp.quantity * multiplier;
+    select coalesce(cs.current_qty, 0) into available from public.current_stock cs where cs.item_id = comp.component_item_id;
+    if not found then
+      available := 0;
+    end if;
+    if available < needed then
+      shortfall_msg := shortfall_msg || format('%s (need %s, have %s); ', comp.name, needed, available);
+    end if;
+  end loop;
+
+  if shortfall_msg <> '' then
+    raise exception 'Insufficient stock to record production: %', shortfall_msg;
+  end if;
+
+  insert into public.bom_production_runs (bom_id, output_item_id, quantity_produced, notes, produced_by)
+  values (target_bom_id, bom_row.output_item_id, qty_produced, notes_in, auth.uid())
+  returning * into run_row;
+
+  for comp in
+    select bc.component_item_id, bc.quantity
+    from public.bom_components bc
+    where bc.bom_id = target_bom_id
+  loop
+    needed := comp.quantity * multiplier;
+    insert into public.stock_movements (item_id, movement_type, quantity, reference_type, reference_id, created_by)
+    values (comp.component_item_id, 'out', needed, 'bom_production', run_row.id, auth.uid());
+  end loop;
+
+  insert into public.stock_movements (item_id, movement_type, quantity, reference_type, reference_id, created_by)
+  values (bom_row.output_item_id, 'in', qty_produced, 'bom_production', run_row.id, auth.uid());
+
+  return run_row;
+end;
+$$;
+
+grant execute on function public.record_bom_production(uuid, numeric, text) to authenticated;

@@ -352,3 +352,68 @@ role-restricted).
 - `e2e/phase5.spec.js`: route guard, creating a linked invoice with
   due-date auto-fill, a validation-blocks-save case, status
   rendering (paid/overdue) + Mark Paid, and an empty state.
+
+## Fix: flaky e2e test — route mock matched on URL substring, not path
+
+`e2e/phase3.spec.js`'s "logs a receipt..." test intermittently failed: its
+mock for `material_inward` checked `url.includes('material_inward_line_items')`
+against the *full* request URL, but `fetchInwardHistory()`'s own GET
+against the plain `material_inward` table embeds
+`line_items:material_inward_line_items(...)` in its `?select=` query
+param — so that unrelated background-refresh GET matched the same branch
+as the real POST, intermittently overwriting the captured POST body with
+`null` depending on request timing. Fixed to match on the URL's *path*
+(`new URL(url).pathname.endsWith(...)`) instead of a full-URL substring
+check. Verified with 10 repeated runs of the affected test, plus two full
+local suite runs.
+
+## Phase 6: BoM Builder (nested bills of materials + recording production)
+
+Confirmed two design decisions before building: recording production
+consumes only a recipe's own direct components, one level — Phase 7 (Work
+Orders) is described as the layer that explodes a multi-level BoM tree to
+check/reserve availability further down, so Phase 6 doesn't duplicate that
+— and a stock shortfall on any component blocks the whole production
+record (nothing written) rather than letting stock go negative, same
+discipline as Phase 3's over-receiving guard.
+
+- `supabase/schema.sql`: `can_manage_boms` (admin/production); `boms`
+  (one active recipe per output item via a partial unique index — editing
+  replaces its component set wholesale rather than versioning) and
+  `bom_components` (item + quantity, scaled per `boms.output_qty`, a
+  "batch size" the recipe is written against). A BoM's structure is
+  itself nested (a component can be an item with its own recipe), so a
+  trigger (`bom_cycle_would_exist`, a recursive CTE) blocks both direct
+  self-reference and any deeper circular reference at write time — not
+  just at explosion time, which is Phase 7's job.
+- `record_bom_production()`: a security-definer RPC and the *only* way
+  `bom_production_runs` rows are created (deliberately no direct insert
+  policy on that table). Atomically checks every component against
+  `current_stock` and either writes the production run plus a matching
+  "out" `stock_movements` row per component and an "in" row for the
+  output item, or writes nothing and raises an exception naming exactly
+  which components are short. Documented limitation: two concurrent
+  production runs racing on the same shared component could both pass the
+  check before either writes (no per-item locking) — an accepted gap for
+  this app's scale rather than added advisory-lock complexity.
+- `src/screens/bomBuilder.js` (Admin/Production — the only two roles with
+  access to this screen at all): recipe list, each row expandable into its
+  component table, a Record Production mini-form, and production history;
+  create/edit/archive a recipe, plus a quick "+ New Item" for a component
+  that doesn't exist in the Item Master yet.
+- `src/validation.js`: `validateBomForm` (output item + positive output
+  quantity + at least one valid, non-duplicate component that isn't the
+  output item itself — the same rule the DB trigger enforces, checked
+  here first), `validateBomComponentRow`, `validateProductionForm`.
+- `scripts/test-rls-boms.mjs` (new, added to `npm run test:integration`):
+  create/read/archive permissions per role, the self-reference and
+  circular-reference trigger rejections, `record_bom_production()`'s
+  shortfall rejection (and that nothing is written when it's rejected),
+  its success path (component consumed, output credited, exactly one run
+  recorded), role rejection on the RPC, and that a direct insert into
+  `bom_production_runs` is blocked.
+- `e2e/phase6.spec.js`: route guard, creating a recipe with two
+  components, a validation-blocks-save case (component = output item),
+  viewing a recipe's details and recording production (verifying the RPC
+  call body and the refreshed history), the server-side shortfall message
+  surfacing in the UI, archiving a recipe, and an empty state.
