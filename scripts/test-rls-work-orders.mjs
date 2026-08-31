@@ -182,8 +182,15 @@ async function run() {
         );
 
         console.log('\nCancel: purchase cannot, store can — and available_stock frees up again...');
-        const { error: purchaseCancelErr } = await clientPurchase.from('work_orders').update({ status: 'cancelled' }).eq('id', wo.id);
-        assert(!!purchaseCancelErr, 'purchase role cannot cancel a work order');
+        // An UPDATE whose USING clause excludes the caller's row (purchase
+        // here, since can_manage_work_orders() is false for it) matches
+        // zero rows under RLS — PostgREST reports that as a quiet 200/
+        // no-op, not an error. Assert against the row's persisted state
+        // via the service-role client instead, same pattern as the boms
+        // archive check above.
+        await clientPurchase.from('work_orders').update({ status: 'cancelled' }).eq('id', wo.id);
+        const { data: woAfterPurchaseAttempt } = await admin.from('work_orders').select('status').eq('id', wo.id).single();
+        assert(woAfterPurchaseAttempt.status === 'reserved', "purchase role's cancel attempt did not persist (RLS silently filtered it)");
 
         const { error: cancelErr } = await clientStore.from('work_orders').update({ status: 'cancelled' }).eq('id', wo.id);
         assert(!cancelErr, `store role can cancel a work order${cancelErr ? ` (${cancelErr.message})` : ''}`);
