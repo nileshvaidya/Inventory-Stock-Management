@@ -93,16 +93,20 @@ async function run() {
     // Everything below needs the item created above — if that insert
     // failed (e.g. this Supabase project hasn't had the Phase 9
     // migration applied yet), skip it as an explicit failure instead of
-    // dereferencing null data and crashing before cleanup runs.
-    if (item) {
-      const { data: insertLog } = await admin
+    // dereferencing null data and crashing before cleanup runs. Same for
+    // action_log itself — probe it once up front so a missing-table gap
+    // (schema not applied yet) produces one clear failure message instead
+    // of a dozen confusing ones further down.
+    const { error: actionLogProbeErr } = await admin.from('action_log').select('id').limit(1);
+    if (item && !actionLogProbeErr) {
+      const { data: insertLog, error: insertLogErr } = await admin
         .from('action_log')
         .select('*')
         .eq('table_name', 'items')
         .eq('operation', 'INSERT')
         .eq('row_id', item.id)
         .maybeSingle();
-      assert(!!insertLog, 'an action_log row exists for the item INSERT');
+      assert(!!insertLog, `an action_log row exists for the item INSERT${insertLogErr ? ` (${insertLogErr.message})` : ''}`);
       assert(insertLog?.user_id === storeUser.id, "the log row's user_id is the store user who created it");
       assert(insertLog?.new_data?.name === `RLS Test Item Log ${stamp}`, "new_data captures the inserted row's data");
       assert(insertLog?.old_data === null, 'old_data is null for an INSERT');
@@ -110,14 +114,14 @@ async function run() {
       console.log('\nA plain authenticated UPDATE is logged with both old and new data...');
       const { error: updateErr } = await clientStore.from('items').update({ reorder_level: 25 }).eq('id', item.id);
       assert(!updateErr, `store role can update the item${updateErr ? ` (${updateErr.message})` : ''}`);
-      const { data: updateLog } = await admin
+      const { data: updateLog, error: updateLogErr } = await admin
         .from('action_log')
         .select('*')
         .eq('table_name', 'items')
         .eq('operation', 'UPDATE')
         .eq('row_id', item.id)
         .maybeSingle();
-      assert(!!updateLog, 'an action_log row exists for the item UPDATE');
+      assert(!!updateLog, `an action_log row exists for the item UPDATE${updateLogErr ? ` (${updateLogErr.message})` : ''}`);
       assert(Number(updateLog?.old_data?.reorder_level) === 10, "old_data captures the item's prior reorder_level (10)");
       assert(Number(updateLog?.new_data?.reorder_level) === 25, "new_data captures the item's new reorder_level (25)");
 
@@ -126,14 +130,14 @@ async function run() {
       assert(!woErr, `store role can create a work order${woErr ? ` (${woErr.message})` : ''}`);
       if (wo) {
         workOrderIds.push(wo.id);
-        const { data: woLog } = await admin
+        const { data: woLog, error: woLogErr } = await admin
           .from('action_log')
           .select('*')
           .eq('table_name', 'work_orders')
           .eq('operation', 'INSERT')
           .eq('row_id', wo.id)
           .maybeSingle();
-        assert(!!woLog, 'an action_log row exists for the work order INSERT made inside create_work_order()');
+        assert(!!woLog, `an action_log row exists for the work order INSERT made inside create_work_order()${woLogErr ? ` (${woLogErr.message})` : ''}`);
         assert(woLog?.user_id === storeUser.id, "the log row's user_id is the store user, not the RPC's elevated owner");
       } else {
         assert(false, 'skipped the RPC-attribution check — create_work_order failed, see its message');
@@ -150,13 +154,15 @@ async function run() {
       assert(!!directInsertErr, 'a direct insert into action_log is rejected (no insert policy — the trigger is the only way in)');
 
       console.log('\nReading the log: admin can, store cannot...');
-      const { data: logForAdmin } = await clientAdmin.from('action_log').select('id').eq('row_id', item.id);
-      assert((logForAdmin ?? []).length > 0, 'admin role can read action_log entries');
+      const { data: logForAdmin, error: logForAdminErr } = await clientAdmin.from('action_log').select('id').eq('row_id', item.id);
+      assert((logForAdmin ?? []).length > 0, `admin role can read action_log entries${logForAdminErr ? ` (${logForAdminErr.message})` : ''}`);
 
       const { data: logForStore } = await clientStore.from('action_log').select('id').eq('row_id', item.id);
       assert((logForStore ?? []).length === 0, "store role's read of action_log comes back empty (RLS silently filters it, not an error)");
-    } else {
+    } else if (!item) {
       assert(false, 'skipped all downstream action_log checks — the item create above failed, see its message');
+    } else {
+      assert(false, `skipped all action_log checks — the action_log table isn't reachable yet, likely the Phase 9 migration hasn't been applied to this project (${actionLogProbeErr.message})`);
     }
   } finally {
     console.log('\nCleaning up test data...');
