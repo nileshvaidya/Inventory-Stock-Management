@@ -599,3 +599,33 @@ never persists the source file).
   — admin is deliberately excluded from this nav item, unlike every
   other restricted module), attach-a-file upload, Mark Received, a
   received row's display, and an empty state.
+
+## Docs: close out the two long-carried-over open items
+
+With all ten phases built, revisited the two open items every phase's
+README section had been carrying forward since Phase 1:
+
+- **"Deactivating your own last admin account"**: re-checked the actual
+  code rather than continuing to flag it — `set_user_role`/
+  `set_user_status`'s Phase 1 self-targeting guard
+  (`if target_id = auth.uid() then raise exception ...`) already blocks
+  an admin from changing their own role or status at all, admin count
+  aside, so this scenario was covered from the start. It had simply
+  never been re-verified against the code before being carried forward
+  again each phase. Confirmed with the user before closing it as docs-only
+  (a broader "no admin can ever be left at zero, system-wide" guard was
+  considered and deliberately not built — it would need testing against
+  real admin rows on a shared staging project to verify safely).
+- **Design mockup**: the original Claude Design mockup the build brief
+  pointed at never became available over the whole build. With a
+  pre-build spec no longer applicable now that the app is fully built,
+  generated a retroactive one instead, at the user's request:
+  `design-reference/screens/` (8 Design Components artboards + a
+  canvas.json — Login, Dashboard, Invoices, Work Orders, Action Log,
+  Bill Payments, Users & Roles, and a mobile view), built by reading the
+  real Nocturne tokens and markup straight out of
+  `src/styles/nocturne.css` and `src/layout.js`/`src/screens/*.js`
+  rather than inventing a new look, published for interactive viewing.
+  `README.md`'s and `design-reference/README.md`'s open items updated
+  across every phase to point at this instead of repeating "still not
+  available."

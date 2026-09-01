@@ -1,23 +1,30 @@
-# Design reference — pending
+# Design reference
 
-The build brief points at a Claude Design mockup covering all 14 modules
-(Dashboard, PO Upload, Order Status, Material Inward, Inspection, Master
-Material Status, Inventory, BoM Builder, Work Orders, Invoices, Reports,
-Users & Roles, Action Log, and the restricted Bill Payments module) as the
-visual and layout source of truth for this app.
-
-That mockup was not accessible when Phase 0 was built (the shared
+The build brief originally pointed at a Claude Design mockup covering all
+14 modules as the visual and layout source of truth to build against. That
+mockup was never accessible over the course of the build (the shared
 claude.ai/design link isn't reachable from this environment, and no
-exported screens were attached yet) — see the open items in the top-level
-`README.md`. Phase 0's sidebar labels, spacing, and component styling
-instead reuse the Task_Management (WorkSync) app's own "Nocturne" design
-system verbatim (`src/styles/nocturne.css`, ported unchanged), as a
-placeholder.
+exported screens were ever attached) — every phase built instead against
+the Task_Management (WorkSync) app's own "Nocturne" design system, ported
+verbatim (`src/styles/nocturne.css`), as a placeholder. That pre-build
+mockup is not coming at this point; all 10 phases are already built.
 
-**Once the mockup is available**, drop its exported screens (or a `.dc.html`
-export, same convention as `Task_Management/design-reference/Task
-Tracker.dc.html`) in this folder, and the sidebar, per-module layouts,
-table/filter patterns, and status color-coding should be reconciled against
-it — likely requiring changes to `src/layout.js`'s `NAV_ITEMS` (icons are
-currently missing entirely) and every placeholder screen as its phase
-builds out the real UI.
+**`screens/`** is a retroactive substitute instead: a design reference
+generated *after* the fact, documenting the app's real, already-built UI —
+not a pre-build spec, and not the original Claude Design export. It's a
+multi-artboard Design Components canvas (`.dc.html` per screen +
+`canvas.json`, same format as `Task_Management/design-reference/Task
+Tracker.dc.html`) covering Login, Dashboard, Invoices, Work Orders, Action
+Log, the restricted Bill Payments screen, Users & Roles, and a mobile
+view — built by reading the real tokens and markup directly out of
+`src/styles/nocturne.css` and `src/layout.js`/`src/screens/*.js`, not
+invented. Published for interactive viewing (pan/zoom, per-artboard PNG/PDF
+export) at:
+
+https://claude.ai/code/artifact/7bb4b753-b1dc-4400-ad18-639e1905b851
+
+If this app is ever redesigned against a real mockup later, treat these
+files the same way the original placeholder note did: reconcile
+`src/layout.js`'s `NAV_ITEMS` (icons are still missing entirely) and each
+screen's layout/table/filter/status-color patterns against the new source
+of truth.

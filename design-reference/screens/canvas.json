@@ -1,0 +1,17 @@
+{
+  "artboards": [
+    { "file": "Login.dc.html", "x": 0, "y": 0, "w": 1440, "h": 900 },
+    { "file": "Main.dc.html", "x": 1540, "y": 0, "w": 1440, "h": 900 },
+    { "file": "Invoices.dc.html", "x": 3080, "y": 0, "w": 1440, "h": 1080 },
+    { "file": "WorkOrders.dc.html", "x": 4620, "y": 0, "w": 1440, "h": 1040 },
+    { "file": "ActionLog.dc.html", "x": 0, "y": 1230, "w": 1440, "h": 1040 },
+    { "file": "BillPayments.dc.html", "x": 1540, "y": 1230, "w": 1440, "h": 1000 },
+    { "file": "UsersRoles.dc.html", "x": 3080, "y": 1230, "w": 1440, "h": 920 },
+    { "file": "Mobile.dc.html", "x": 4620, "y": 1230, "w": 390, "h": 844 }
+  ],
+  "annotations": [
+    { "id": "overview", "x": 0, "y": -160, "w": 640, "text": "Inventory & Stock Management — ASK Info-Solutions LLP\nRetroactive design reference, generated after all 10 build-brief phases shipped. Matches the real Nocturne tokens and component classes in src/styles/nocturne.css and src/layout.js — not a pre-build spec." },
+    { "id": "restricted-note", "x": 1540, "y": 2270, "w": 420, "text": "Bill Payments (Phase 10): visible only to the 'authorized' role — note the narrower sidebar and the missing Users & Roles / Action Log items admin normally sees." }
+  ],
+  "launch": { "view": "canvas" }
+}

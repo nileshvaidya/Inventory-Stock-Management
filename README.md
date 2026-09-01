@@ -19,8 +19,10 @@ invoice/bill-payment management for ASK Info-Solutions LLP.
 This scaffold, its folder conventions, the Nocturne design-token system,
 and the auth/layout patterns are ported directly from the
 [Task_Management (WorkSync)](https://github.com/nileshvaidya/Task_Management)
-app, per the build brief. See `design-reference/README.md` for what's
-pending from the real Claude Design mockup.
+app, per the build brief. The original Claude Design mockup never became
+available over the build; see `design-reference/README.md` for the
+retroactive design reference generated in its place, once all ten phases
+were built.
 
 **Current status: Phase 10 (Bill Payments: scanned bill files attached to invoices, authorized-role workflow) — see Phase 10 below. All ten build-brief phases are now built.**
 
@@ -174,14 +176,18 @@ from day one (see `src/layout.js`, `src/screens/billPayments.js`,
 
 ## Phase 1 — resolved
 
-Nav permission matrix confirmed as proposed (`src/navPermissions.js`).
-Still open, not blocking: the Claude Design mockup, and the "last admin"
-edge case noted below.
+Nav permission matrix confirmed as proposed (`src/navPermissions.js`). The
+Claude Design mockup never became available (see `design-reference/`
+for the retroactive reference generated instead, once all ten phases
+were built). The "last admin" edge case flagged below is already
+handled by `set_user_role`/
+`set_user_status`'s self-targeting guard (see Phase 10's open items) —
+confirmed and closed out as of Phase 10.
 
 ## Phase 2 — open items
 
-1. **Design mockup**: still not available — PO Upload/Order Status layout
-   is built without it.
+1. **Design mockup**: the original never became available; see Phase 10's
+   open items for the retroactive reference generated in its place.
 2. **PDF parsing accuracy**: fixed and calibrated against a real PO
    (`PO/AISL/2026-27/0032`) — see "PDF parsing fix" below.
    `src/pdfParser.js` reconstructs real text lines from pdf.js's
@@ -195,9 +201,9 @@ edge case noted below.
    partial parse never blocks creating a PO — but this is calibrated
    against one real vendor template, not a guarantee across every possible
    PO layout.
-3. **Deactivating your own last admin account** (carried over from Phase
-   1): still not guarded against — flagging again since it hasn't been
-   addressed.
+3. **Deactivating your own last admin account**: resolved — see Phase
+   10's open items for the full note (`set_user_role`/`set_user_status`'s
+   Phase 1 self-targeting guard already covered this).
 4. **Production schema**: Phase 2's schema.sql additions (`vendors`,
    `projects`, `purchase_orders`, `po_line_items`, `is_purchase_or_admin`,
    and the field-mapping addendum's `import_field_mappings`) are confirmed
@@ -282,10 +288,11 @@ read-only).
 
 1. **Production/staging schema**: confirmed applied to both staging (CI's
    `integration` job passes) and production.
-2. **Design mockup**: still not available — these three screens are built
-   without it, same as Phase 2.
-3. **Deactivating your own last admin account** (carried over from Phase
-   1): still not guarded against.
+2. **Design mockup**: the original never became available; see Phase 10's
+   open items for the retroactive reference generated in its place.
+3. **Deactivating your own last admin account**: resolved — see Phase
+   10's open items for the full note (`set_user_role`/`set_user_status`'s
+   Phase 1 self-targeting guard already covered this).
 
 ## Phase 4 — Inventory (Item Master + stock movement ledger)
 
@@ -326,9 +333,11 @@ into `qty_in`/`qty_out`/`current_qty`, joined with the Item Master's
 
 1. **Production/staging schema**: confirmed applied to both staging (CI's
    `integration` job passes) and production.
-2. **Design mockup**: still not available.
-3. **Deactivating your own last admin account** (carried over from Phase
-   1): still not guarded against.
+2. **Design mockup**: the original never became available; see Phase 10's
+   open items for the retroactive reference generated in its place.
+3. **Deactivating your own last admin account**: resolved — see Phase
+   10's open items for the full note (`set_user_role`/`set_user_status`'s
+   Phase 1 self-targeting guard already covered this).
 
 ## Phase 5 — Invoices (multi-PO linking, payment terms/due dates, overdue)
 
@@ -368,9 +377,11 @@ role-restricted. `is_authorized_or_admin()` mirrors the existing
 
 1. **Production/staging schema**: confirmed applied to both staging (CI's
    `integration` job passes) and production.
-2. **Design mockup**: still not available.
-3. **Deactivating your own last admin account** (carried over from Phase
-   1): still not guarded against.
+2. **Design mockup**: the original never became available; see Phase 10's
+   open items for the retroactive reference generated in its place.
+3. **Deactivating your own last admin account**: resolved — see Phase
+   10's open items for the full note (`set_user_role`/`set_user_status`'s
+   Phase 1 self-targeting guard already covered this).
 
 ## Phase 6 — BoM Builder (nested bills of materials + recording production)
 
@@ -417,9 +428,11 @@ how far "recording production" reaches):
 
 1. **Production/staging schema**: confirmed applied to both staging (CI's
    `integration` job passes) and production.
-2. **Design mockup**: still not available.
-3. **Deactivating your own last admin account** (carried over from Phase
-   1): still not guarded against.
+2. **Design mockup**: the original never became available; see Phase 10's
+   open items for the retroactive reference generated in its place.
+3. **Deactivating your own last admin account**: resolved — see Phase
+   10's open items for the full note (`set_user_role`/`set_user_status`'s
+   Phase 1 self-targeting guard already covered this).
 
 ## Phase 7 — Work Orders (nested BoM explosion + stock reservation)
 
@@ -477,9 +490,11 @@ Confirmed three design decisions before building (no mockup):
 
 1. **Production/staging schema**: confirmed applied to both staging (CI's
    `integration` job passes) and production.
-2. **Design mockup**: still not available.
-3. **Deactivating your own last admin account** (carried over from Phase
-   1): still not guarded against.
+2. **Design mockup**: the original never became available; see Phase 10's
+   open items for the retroactive reference generated in its place.
+3. **Deactivating your own last admin account**: resolved — see Phase
+   10's open items for the full note (`set_user_role`/`set_user_status`'s
+   Phase 1 self-targeting guard already covered this).
 
 ## Phase 8 — Reports (Stock & Reservations, Shortages, Below Reorder)
 
@@ -512,9 +527,11 @@ reason: there's nothing new for it to verify.
 
 1. **Schema**: none — nothing to run on staging or production for this
    phase.
-2. **Design mockup**: still not available.
-3. **Deactivating your own last admin account** (carried over from Phase
-   1): still not guarded against.
+2. **Design mockup**: the original never became available; see Phase 10's
+   open items for the retroactive reference generated in its place.
+3. **Deactivating your own last admin account**: resolved — see Phase
+   10's open items for the full note (`set_user_role`/`set_user_status`'s
+   Phase 1 self-targeting guard already covered this).
 
 ## Phase 9 — Action Log (automatic, filterable audit trail)
 
@@ -553,9 +570,11 @@ the function owner's elevated privileges.
 
 1. **Production/staging schema**: confirmed applied to both staging (CI's
    `integration` job passes) and production.
-2. **Design mockup**: still not available.
-3. **Deactivating your own last admin account** (carried over from Phase
-   1): still not guarded against.
+2. **Design mockup**: the original never became available; see Phase 10's
+   open items for the retroactive reference generated in its place.
+3. **Deactivating your own last admin account**: resolved — see Phase
+   10's open items for the full note (`set_user_role`/`set_user_status`'s
+   Phase 1 self-targeting guard already covered this).
 
 ## Phase 10 — Bill Payments (scanned bill files, mark received)
 
@@ -606,13 +625,30 @@ parse-only pattern, which never persists the source file).
 
 1. **Production/staging schema**: confirmed applied to both staging (CI's
    `integration` job passes) and production.
-2. **Design mockup**: still not available.
-3. **Deactivating your own last admin account** (carried over from Phase
-   1): still not guarded against.
+2. **Design mockup**: the original Claude Design mockup the build brief
+   pointed at never became available over the whole build — every phase
+   instead built against the ported Nocturne token system as a
+   placeholder. Since a pre-build spec no longer applies with all ten
+   phases already shipped, generated a retroactive reference instead:
+   `design-reference/screens/` (8 `.dc.html` artboards + `canvas.json`,
+   built by reading the real tokens/markup straight out of
+   `src/styles/nocturne.css` and `src/layout.js`/`src/screens/*.js`),
+   published for interactive viewing at
+   https://claude.ai/code/artifact/7bb4b753-b1dc-4400-ad18-639e1905b851.
+3. **Deactivating your own last admin account**: resolved — re-checked
+   the code, and `set_user_role`/`set_user_status`'s self-targeting guard
+   (Phase 1: `if target_id = auth.uid() then raise exception ...`) already
+   blocks an admin from changing their own role or status at all, admin
+   count aside, so this scenario was covered from the start. It had
+   simply been carried forward as an open item on every phase since
+   without being re-verified — closing it out here.
 
 ## Phase 0 — resolved
 
-Design mockup and Vercel/Supabase creation are still open per above; the
-rest of Phase 0's open items (role list, new-account role) were resolved —
-role list confirmed as proposed, and a role-less account intentionally sees
-almost nothing until an admin assigns a role (see item 2 above).
+Vercel/Supabase creation is resolved (both are live — see Deployment
+above and CHANGELOG.md's Phase 0 fix entry); the design mockup is
+resolved too (see Phase 10's open items for the retroactive reference).
+The rest of Phase 0's open items (role list, new-account role) were also
+resolved — role list confirmed as proposed, and a role-less account
+intentionally sees almost nothing until an admin assigns a role (see item
+2 above).

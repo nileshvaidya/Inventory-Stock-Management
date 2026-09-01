@@ -1,0 +1,96 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    :root {
+      --color-bg: #161826; --color-surface: #232532; --color-text: #e9e9ed;
+      --color-accent: #9184d9; --color-accent-2: #a7a1db;
+      --color-divider: color-mix(in srgb, #e9e9ed 16%, transparent);
+      --color-accent-100: #f5f4ff; --color-accent-800: #423a6a;
+      --color-neutral-300: #cfd3e5; --color-neutral-400: #b2b6ca; --color-neutral-500: #9397ab;
+      --font-heading: "Inter", system-ui, sans-serif; --font-heading-weight: 500; --font-body: "Inter", system-ui, sans-serif;
+      --space-2: 5.6px; --space-3: 8.4px; --space-4: 11.2px;
+      --radius-sm: 4px; --radius-md: 8px;
+      --shadow-sm: 0 0 0 1px #3f424d;
+    }
+    * , *::before, *::after { box-sizing: border-box; }
+    body { margin: 0; background: var(--color-bg); color: var(--color-text); font-family: var(--font-body); font-size: 15px; line-height: 1.55; }
+    a { color: var(--color-accent); text-decoration: none; text-underline-offset: 3px; }
+    a:hover { color: var(--color-accent-2); }
+    h1, h2 { font-family: var(--font-heading); font-weight: var(--font-heading-weight); line-height: 1.12; letter-spacing: -0.015em; margin: 0 0 var(--space-2); }
+    h1 { font-size: 28px; }
+    h2 { font-size: 18px; }
+    .text-muted { color: color-mix(in srgb, var(--color-text) 55%, transparent); }
+    .card { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3); border-radius: var(--radius-md); background: var(--color-surface); }
+    .card-kicker { font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--color-accent); }
+    .card-title { font-size: 17px; font-family: var(--font-heading); font-weight: var(--font-heading-weight); }
+    .card-body { margin: 0; font-size: 13px; opacity: 0.8; }
+    .elev-sm { box-shadow: var(--shadow-sm); }
+    .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer; text-decoration: none; font-family: var(--font-heading); font-weight: var(--font-heading-weight); font-size: 14px; color: var(--color-text); background: transparent; border: 1px solid transparent; padding: var(--space-2) calc(var(--space-3) * 1.2); border-radius: var(--radius-md); }
+    .btn-ghost { color: var(--color-accent); padding-inline: var(--space-2); }
+    .navitem { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: var(--radius-sm); font-size: 13px; color: var(--color-neutral-300); border-left: 2px solid transparent; text-decoration: none; }
+    .navitem.active { background: var(--color-accent-800); color: var(--color-accent-100); border-left-color: var(--color-accent); }
+    .avatar { border-radius: 50%; background: var(--color-accent-800); color: var(--color-accent-100); display: flex; align-items: center; justify-content: center; font-weight: 600; flex: none; }
+  </style>
+</helmet>
+<div style="width:1440px;height:900px;display:flex;background:var(--color-bg)">
+  <aside style="width:256px;flex:none;display:flex;flex-direction:column;padding:16px;background:var(--color-surface);border-right:1px solid var(--color-divider)">
+    <div style="display:flex;align-items:center;gap:8px;padding:0 6px 4px">
+      <svg width="20" height="20" viewBox="0 0 256 256" fill="none">
+        <rect x="28" y="28" width="200" height="200" rx="28" fill="none" stroke="#9184d9" stroke-width="16"/>
+        <path d="M76 128 L112 164 L180 92" stroke="#9184d9" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      </svg>
+      <span style="font-family:var(--font-heading);font-weight:600;font-size:16px">Inventory &amp; Stock</span>
+    </div>
+    <div style="padding:0 6px 16px;font-size:11px;color:var(--color-neutral-500)">ASK Info-Solutions LLP</div>
+    <nav style="display:flex;flex-direction:column;gap:4px">
+      <div class="navitem active">Dashboard</div>
+      <div class="navitem">PO Upload</div>
+      <div class="navitem">Order Status</div>
+      <div class="navitem">Material Inward</div>
+      <div class="navitem">Inspection</div>
+      <div class="navitem">Master Material Status</div>
+      <div class="navitem">Inventory</div>
+      <div class="navitem">BoM Builder</div>
+      <div class="navitem">Work Orders</div>
+      <div class="navitem">Invoices</div>
+      <div class="navitem">Reports</div>
+      <div class="navitem">Users &amp; Roles</div>
+      <div class="navitem">Action Log</div>
+    </nav>
+    <div style="flex:1"></div>
+    <div class="btn btn-ghost" style="text-align:center;margin-bottom:8px">Help</div>
+    <div style="display:flex;align-items:center;gap:10px;padding:8px;margin-top:12px;border-top:1px solid var(--color-divider)">
+      <div class="avatar" style="width:32px;height:32px;font-size:12px">RM</div>
+      <div style="min-width:0">
+        <div style="font-size:13px;font-weight:500">Rakesh Mehta</div>
+        <div style="font-size:11px;color:var(--color-neutral-500)">rakesh@askinfosolutions.example</div>
+      </div>
+    </div>
+    <div class="btn btn-ghost" style="margin-top:8px">Sign out</div>
+  </aside>
+
+  <main style="flex:1;min-width:0;padding:32px">
+    <h1 style="margin-bottom:4px">Welcome, Rakesh Mehta</h1>
+    <p class="text-muted" style="margin-bottom:24px">Role: admin</p>
+    <div class="card elev-sm" style="max-width:640px">
+      <div class="card-kicker">Phase 0</div>
+      <h2 class="card-title">Scaffold, auth, and base shell</h2>
+      <p class="card-body">
+        This is the Phase 0 landing page. KPI cards and a recent-activity feed
+        (reusing the Action Log) were considered for a later phase; Reports
+        (Phase 8) and Action Log (Phase 9) shipped as their own screens instead.
+      </p>
+    </div>
+  </main>
+</div>
+</x-dc>
+</body>
+</html>

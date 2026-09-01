@@ -1,0 +1,133 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    :root {
+      --color-bg: #161826; --color-surface: #232532; --color-text: #e9e9ed;
+      --color-accent: #9184d9; --color-accent-2: #a7a1db;
+      --color-divider: color-mix(in srgb, #e9e9ed 16%, transparent);
+      --color-accent-100: #f5f4ff; --color-accent-800: #423a6a;
+      --color-accent-2-100: #f5f4ff; --color-accent-2-800: #423e5d;
+      --color-neutral-100: #f3f5fe; --color-neutral-300: #cfd3e5; --color-neutral-500: #9397ab; --color-neutral-800: #3f424d;
+      --font-heading: "Inter", system-ui, sans-serif; --font-heading-weight: 500; --font-body: "Inter", system-ui, sans-serif;
+      --radius-sm: 4px; --radius-md: 8px;
+      --shadow-sm: 0 0 0 1px #3f424d;
+    }
+    * , *::before, *::after { box-sizing: border-box; }
+    body { margin: 0; background: var(--color-bg); color: var(--color-text); font-family: var(--font-body); font-size: 15px; line-height: 1.55; }
+    h1 { font-family: var(--font-heading); font-weight: var(--font-heading-weight); font-size: 26px; margin: 0; }
+    h3 { font-family: var(--font-heading); font-weight: var(--font-heading-weight); font-size: 16px; margin: 0 0 6px; }
+    .card { display: flex; flex-direction: column; gap: 6px; padding: 16px; border-radius: var(--radius-md); background: var(--color-surface); }
+    .elev-sm { box-shadow: var(--shadow-sm); }
+    .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer; font-family: var(--font-heading); font-weight: var(--font-heading-weight); font-size: 13px; color: var(--color-text); background: transparent; border: 1px solid transparent; padding: 6px 12px; border-radius: var(--radius-md); }
+    .btn-primary { color: var(--color-accent); border-color: var(--color-accent); }
+    .btn-secondary { border-color: var(--color-divider); }
+    .btn-ghost { color: var(--color-accent); padding-inline: 6px; }
+    .field label { display: block; font-size: 12px; margin-bottom: 5px; color: color-mix(in srgb, var(--color-text) 70%, transparent); }
+    .input, select.input { width: 100%; min-height: 34px; padding: 6px 10px; font: inherit; font-size: 13px; color: var(--color-text); background: var(--color-bg); border: 1px solid var(--color-divider); border-radius: var(--radius-md); }
+    .tag { display: inline-flex; align-items: center; font-size: 11px; padding: 3px 10px; border-radius: 6px; }
+    .tag-accent { background: var(--color-accent-800); color: var(--color-accent-100); }
+    .tag-accent-2 { background: var(--color-accent-2-800); color: var(--color-accent-2-100); }
+    .tag-neutral { background: var(--color-neutral-800); color: var(--color-neutral-100); }
+    .table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .table th { text-align: left; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: color-mix(in srgb, var(--color-text) 60%, transparent); padding: 8px; }
+    .table td { padding: 9px 8px; border-top: 1px solid var(--color-divider); }
+    .navitem { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: var(--radius-sm); font-size: 13px; color: var(--color-neutral-300); border-left: 2px solid transparent; }
+    .navitem.active { background: var(--color-accent-800); color: var(--color-accent-100); border-left-color: var(--color-accent); }
+    .avatar { border-radius: 50%; background: var(--color-accent-800); color: var(--color-accent-100); display: flex; align-items: center; justify-content: center; font-weight: 600; flex: none; }
+  </style>
+</helmet>
+<div style="width:1440px;height:1040px;display:flex;background:var(--color-bg)">
+  <aside style="width:256px;flex:none;display:flex;flex-direction:column;padding:16px;background:var(--color-surface);border-right:1px solid var(--color-divider)">
+    <div style="display:flex;align-items:center;gap:8px;padding:0 6px 4px">
+      <svg width="20" height="20" viewBox="0 0 256 256" fill="none">
+        <rect x="28" y="28" width="200" height="200" rx="28" fill="none" stroke="#9184d9" stroke-width="16"/>
+        <path d="M76 128 L112 164 L180 92" stroke="#9184d9" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      </svg>
+      <span style="font-family:var(--font-heading);font-weight:600;font-size:16px">Inventory &amp; Stock</span>
+    </div>
+    <div style="padding:0 6px 16px;font-size:11px;color:var(--color-neutral-500)">ASK Info-Solutions LLP</div>
+    <nav style="display:flex;flex-direction:column;gap:4px;font-size:13px">
+      <div class="navitem">Dashboard</div>
+      <div class="navitem">PO Upload</div>
+      <div class="navitem">Order Status</div>
+      <div class="navitem">Material Inward</div>
+      <div class="navitem">Inspection</div>
+      <div class="navitem">Master Material Status</div>
+      <div class="navitem">Inventory</div>
+      <div class="navitem">BoM Builder</div>
+      <div class="navitem active">Work Orders</div>
+      <div class="navitem">Invoices</div>
+      <div class="navitem">Reports</div>
+    </nav>
+    <div style="flex:1"></div>
+    <div class="btn btn-ghost" style="text-align:center;margin-bottom:8px">Help</div>
+    <div style="display:flex;align-items:center;gap:10px;padding:8px;margin-top:12px;border-top:1px solid var(--color-divider)">
+      <div class="avatar" style="width:32px;height:32px;font-size:12px">SP</div>
+      <div style="min-width:0">
+        <div style="font-size:13px;font-weight:500">Sunita Patil</div>
+        <div style="font-size:11px;color:var(--color-neutral-500)">sunita@askinfosolutions.example</div>
+      </div>
+    </div>
+    <div class="btn btn-ghost" style="margin-top:8px">Sign out</div>
+  </aside>
+
+  <main style="flex:1;min-width:0;padding:32px;display:flex;flex-direction:column;gap:16px">
+    <div style="display:flex;align-items:center;justify-content:space-between">
+      <h1>Work Orders</h1>
+      <div class="btn btn-primary">+ New Work Order</div>
+    </div>
+
+    <div class="card elev-sm">
+      <h3>Preview: Produce 40 &times; Control Panel Assembly</h3>
+      <table class="table">
+        <thead><tr><th>Item</th><th>Reservable</th><th>Shortfall</th></tr></thead>
+        <tbody>
+          <tr><td>M6 Hex Bolt</td><td>320</td><td>0</td></tr>
+          <tr><td>Terminal Block 12-way</td><td>40</td><td>0</td></tr>
+          <tr><td>Enclosure Panel 300x200</td><td>34</td><td>6</td></tr>
+        </tbody>
+      </table>
+      <div style="display:flex;gap:8px;margin-top:4px">
+        <div class="btn btn-primary">Create Work Order</div>
+        <div class="btn btn-ghost">Cancel</div>
+      </div>
+    </div>
+
+    <div class="card elev-sm" style="padding:0">
+      <table class="table">
+        <thead><tr><th>Output Item</th><th>Qty</th><th>Status</th><th>Created</th><th></th></tr></thead>
+        <tbody>
+          <tr>
+            <td>Control Panel Assembly</td><td>40</td>
+            <td><span class="tag tag-neutral">Open</span></td><td>2026-08-30</td>
+            <td style="display:flex;gap:6px">
+              <div class="btn btn-secondary" style="padding:4px 10px;font-size:11px">Reserve Stock</div>
+              <div class="btn btn-ghost" style="padding:4px 10px;font-size:11px">Cancel Work Order</div>
+            </td>
+          </tr>
+          <tr>
+            <td>Motor Bracket Sub-assembly</td><td>120</td>
+            <td><span class="tag tag-accent">Reserved</span></td><td>2026-08-27</td>
+            <td><div class="btn btn-ghost" style="padding:4px 10px;font-size:11px">Cancel Work Order</div></td>
+          </tr>
+          <tr>
+            <td>Cable Harness Type-B</td><td>75</td>
+            <td><span class="tag tag-accent-2">Cancelled</span></td><td>2026-08-19</td>
+            <td></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </main>
+</div>
+</x-dc>
+</body>
+</html>
