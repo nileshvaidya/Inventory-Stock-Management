@@ -1524,3 +1524,108 @@ end;
 $$;
 
 grant execute on function public.reserve_work_order(uuid) to authenticated;
+
+-- Phase 9: Action Log. Confirmed with the user before building: capture
+-- writes automatically via a single reusable trigger attached to every
+-- mutable table, rather than adding an explicit "log this" call to each
+-- write path across ~15 existing files — a trigger can't be forgotten by
+-- a future write path the way an app-layer call could, and it also
+-- correctly captures writes made through a security-definer RPC (e.g.
+-- record_bom_production, create_work_order), since auth.uid() reflects
+-- the original calling user's JWT throughout, not the function owner's
+-- elevated privileges.
+create table if not exists public.action_log (
+  id uuid primary key default gen_random_uuid(),
+  table_name text not null,
+  operation text not null check (operation in ('INSERT', 'UPDATE', 'DELETE')),
+  row_id uuid null,
+  -- on delete set null: an audit trail shouldn't block deleting the user
+  -- it references, and shouldn't disappear with them either — the log
+  -- entry (what happened, to what, when) still stands on its own once
+  -- attribution is nulled out.
+  user_id uuid null references public.users (id) on delete set null,
+  old_data jsonb null,
+  new_data jsonb null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists action_log_created_at_idx on public.action_log (created_at desc);
+create index if not exists action_log_user_id_idx on public.action_log (user_id);
+create index if not exists action_log_table_name_idx on public.action_log (table_name);
+
+alter table public.action_log enable row level security;
+
+drop policy if exists "Admin can view the action log" on public.action_log;
+create policy "Admin can view the action log"
+  on public.action_log for select
+  to authenticated
+  using (public.is_admin(auth.uid()));
+-- Deliberately no insert/update/delete policy for direct clients — only
+-- ever written by trg_log_action() below, a security-definer trigger.
+
+-- Skips logging when there's no authenticated user (auth.uid() is null)
+-- — service-role writes (migrations, the RLS integration test scripts'
+-- admin client, Supabase Auth's own user-creation step) are
+-- infrastructure noise, not an app user's action.
+create or replace function public.trg_log_action()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  acting_user uuid := auth.uid();
+  target_row_id uuid;
+begin
+  if acting_user is null then
+    if tg_op = 'DELETE' then
+      return old;
+    end if;
+    return new;
+  end if;
+
+  if tg_op = 'DELETE' then
+    target_row_id := old.id;
+  else
+    target_row_id := new.id;
+  end if;
+
+  insert into public.action_log (table_name, operation, row_id, user_id, old_data, new_data)
+  values (
+    tg_table_name,
+    tg_op,
+    target_row_id,
+    acting_user,
+    case when tg_op in ('UPDATE', 'DELETE') then to_jsonb(old) else null end,
+    case when tg_op in ('INSERT', 'UPDATE') then to_jsonb(new) else null end
+  );
+
+  if tg_op = 'DELETE' then
+    return old;
+  end if;
+  return new;
+end;
+$$;
+
+-- Attached to every table with real mutations across every phase so far
+-- (action_log itself excluded — no self-logging). Adding a table here is
+-- the only step a future phase needs for its writes to show up in the
+-- log; every table in this schema uses `id` as its primary key, which
+-- to_jsonb(old/new).id relies on implicitly via old.id/new.id below.
+do $$
+declare
+  t text;
+begin
+  foreach t in array array[
+    'users', 'vendors', 'projects', 'purchase_orders', 'po_line_items', 'import_field_mappings',
+    'material_inward', 'material_inward_line_items', 'inspection_results',
+    'items', 'stock_movements',
+    'invoices', 'invoice_purchase_orders',
+    'boms', 'bom_components', 'bom_production_runs',
+    'work_orders', 'work_order_requirements', 'stock_reservations'
+  ]
+  loop
+    execute format('drop trigger if exists log_action on public.%I', t);
+    execute format('create trigger log_action after insert or update or delete on public.%I for each row execute function public.trg_log_action()', t);
+  end loop;
+end $$;

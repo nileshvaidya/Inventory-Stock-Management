@@ -23,7 +23,7 @@ const SECTIONS = [
   { title: 'Invoices', body: 'Link invoices to POs and track payment status and due dates. (Phase 5)' },
   { title: 'Reports', body: 'Three tabs: Stock & Reservations (which work orders hold what), Shortages (open/reserved work orders still short a component), and Below Reorder. Admin/Authorized/Production. (Phase 8)' },
   { title: 'Users & Roles', body: 'Admins manage user accounts and role assignments. (Phase 1)' },
-  { title: 'Action Log', body: 'A filterable audit trail of every action across the app. (Phase 9)' },
+  { title: 'Action Log', body: 'A filterable audit trail (user, date range, record type/action) of every create/update/delete across the app, captured automatically — nothing needs to opt in. Admin only. (Phase 9)' },
 ];
 
 // Never merged into SECTIONS above — this only ever renders when the

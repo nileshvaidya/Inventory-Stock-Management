@@ -517,3 +517,42 @@ from Phase 7), so there's no new `scripts/test-rls-*.mjs` either.
 - `e2e/phase8.spec.js`: route guard, each tab's listing (including the
   Stock & Reservations tab's expandable "held by" detail), CSV export,
   and empty states for all three tabs.
+
+## Phase 9: Action Log (automatic, filterable audit trail)
+
+Confirmed one design decision before building: actions are captured
+automatically via a single reusable trigger attached to every mutable
+table, rather than an explicit "log this" call added after each write in
+~15 existing data-layer files. A trigger can't be silently missed by a
+future write path, and it correctly attributes writes made through a
+security-definer RPC (record_bom_production, create_work_order,
+reserve_work_order) to the real calling user — auth.uid() reflects the
+original request's JWT throughout a security-definer call, not the
+function owner's elevated privileges.
+
+- `action_log` (table_name, operation, row_id, user_id, old_data/
+  new_data as jsonb, created_at) + trg_log_action(), attached via a `do`
+  block to all 19 tables with real mutations across every phase so far.
+  No insert/update/delete policy for direct clients — the trigger is the
+  only way in. Skips logging when there's no authenticated caller
+  (auth.uid() is null) — service-role writes are infrastructure noise,
+  not an app user's action. user_id is `on delete set null` so the log
+  outlives a deleted user account.
+- Admin-only read — the first table since Phase 5's Invoices where
+  SELECT itself is role-restricted, not company-wide.
+- `src/screens/actionLog.js`: filters by user, record type, action
+  (Created/Updated/Deleted), and date range; each row expandable into its
+  raw before/after JSON; CSV export. The date "To" filter uses an
+  exclusive next-day boundary against created_at (a timestamptz) rather
+  than a naive `lte` on the typed date, which would silently exclude
+  everything later that day.
+- `scripts/test-rls-action-log.mjs` (new, added to `npm run
+  test:integration`): a plain INSERT/UPDATE is logged and attributed to
+  the acting user with correct old/new data; a write made through
+  create_work_order()'s security-definer RPC is still attributed to the
+  real caller, not the function owner; a service-role-only write isn't
+  logged at all; a direct insert into action_log is blocked; admin can
+  read the log and store cannot (RLS silently filters it, not an error).
+- `e2e/phase9.spec.js`: route guard, listing with before/after detail,
+  each filter (user/record type/action/date range) producing the
+  expected PostgREST query params, CSV export, and an empty state.

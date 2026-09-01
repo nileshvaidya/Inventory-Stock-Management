@@ -13,7 +13,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "e2e": "playwright test",
-    "test:integration": "node scripts/test-rls-users.mjs && node scripts/test-rls-purchase-orders.mjs && node scripts/test-rls-material-inward.mjs && node scripts/test-rls-inventory.mjs && node scripts/test-rls-invoices.mjs && node scripts/test-rls-boms.mjs && node scripts/test-rls-work-orders.mjs"
+    "test:integration": "node scripts/test-rls-users.mjs && node scripts/test-rls-purchase-orders.mjs && node scripts/test-rls-material-inward.mjs && node scripts/test-rls-inventory.mjs && node scripts/test-rls-invoices.mjs && node scripts/test-rls-boms.mjs && node scripts/test-rls-work-orders.mjs && node scripts/test-rls-action-log.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.11.0",

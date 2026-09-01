@@ -22,7 +22,7 @@ and the auth/layout patterns are ported directly from the
 app, per the build brief. See `design-reference/README.md` for what's
 pending from the real Claude Design mockup.
 
-**Current status: Phase 8 (Reports: Stock & Reservations, Shortages, Below Reorder) — see Phase 8 below.**
+**Current status: Phase 9 (Action Log: automatic, filterable audit trail) — see Phase 9 below.**
 
 ## Project layout
 
@@ -55,6 +55,8 @@ src/
                                                                  # + create_work_order()/reserve_work_order() RPCs
   reports.js                                                    # Reports data layer (Phase 8) — no new schema, reads
                                                                    # tables/views already covered by earlier phases
+  actionLog.js                                                    # Action Log data layer (Phase 9) — reads
+                                                                     # action_log, populated by a DB trigger, never writes
   validation.js                                               # pure form-validation logic
   demoMode.js                             # VITE_DEMO_MODE + ?demoRole= dev bypass
   state.js                                  # small in-memory store + pub-sub
@@ -80,6 +82,7 @@ e2e/
   phase6.spec.js                        # Playwright — BoM Builder (recipe create/edit/archive, record production)
   phase7.spec.js                          # Playwright — Work Orders (explosion preview, create, reserve, cancel)
   phase8.spec.js                            # Playwright — Reports (Stock & Reservations, Shortages, Below Reorder)
+  phase9.spec.js                              # Playwright — Action Log (list, filters, CSV export, empty state)
 scripts/
   test-rls-users.mjs          # RLS/RPC integration tests against a REAL Supabase project (CI's `integration` job)
   test-rls-purchase-orders.mjs  # ...for vendors/projects/purchase_orders/po_line_items/import_field_mappings
@@ -91,6 +94,9 @@ scripts/
   test-rls-work-orders.mjs              # ...for work_orders/work_order_requirements/stock_reservations —
                                            # the netting explosion's math and reserve_work_order()'s atomic
                                            # re-availability check
+  test-rls-action-log.mjs                 # ...for action_log — trg_log_action() firing on plain writes and on
+                                             # writes made through a security-definer RPC, admin-only read, and
+                                             # that service-role-only writes aren't logged
 supabase/
   schema.sql               # running source of truth for the DB schema + RLS
   README.md                  # Supabase project setup steps
@@ -505,6 +511,50 @@ reason: there's nothing new for it to verify.
 
 1. **Schema**: none — nothing to run on staging or production for this
    phase.
+2. **Design mockup**: still not available.
+3. **Deactivating your own last admin account** (carried over from Phase
+   1): still not guarded against.
+
+## Phase 9 — Action Log (automatic, filterable audit trail)
+
+Confirmed one design decision before building: actions are captured
+automatically via a single reusable trigger attached to every mutable
+table, rather than an explicit "log this" call added to each write path
+across ~15 existing files. A trigger can't be silently forgotten by a
+future write path the way an app-layer call could — and it correctly
+attributes writes made through a security-definer RPC (e.g.
+`record_bom_production`, `create_work_order`) to the real calling user,
+since `auth.uid()` reflects the original request's JWT throughout, not
+the function owner's elevated privileges.
+
+- `action_log` (table_name, operation, row_id, user_id, old_data/new_data
+  as jsonb, created_at) + `trg_log_action()`, attached via a `do` block to
+  every table with real mutations across every phase so far (19 tables).
+  Deliberately no insert/update/delete policy for direct clients — the
+  trigger (security definer) is the only way in. Skips logging entirely
+  when there's no authenticated caller (`auth.uid()` is null) — service-
+  role writes (migrations, the RLS integration scripts' admin client) are
+  infrastructure noise, not an app user's action. `user_id` is `on delete
+  set null`, not a hard reference, so the log survives a user's account
+  being removed later (only the attribution is lost, not the record of
+  what happened).
+- **Admin-only read** — the first table since Phase 5's Invoices where
+  SELECT itself is role-restricted rather than company-wide, appropriate
+  for an audit trail of what everyone else did.
+- `src/screens/actionLog.js`: filters by user, record type, action
+  (Created/Updated/Deleted), and date range (the "To" filter uses an
+  exclusive next-day boundary against `created_at`, a timestamptz — a
+  naive `lte` on a typed date would silently exclude everything later in
+  that day), each row expandable into its raw before/after JSON, CSV
+  export.
+
+### Phase 9 — open items
+
+1. **Production/staging schema**: `supabase/schema.sql`'s Phase 9 section
+   (`action_log`, `trg_log_action`, and the trigger attached to all 19
+   mutable tables) needs to be run on both staging and production. CI's
+   `integration` job (`scripts/test-rls-action-log.mjs`) will fail until
+   staging has it.
 2. **Design mockup**: still not available.
 3. **Deactivating your own last admin account** (carried over from Phase
    1): still not guarded against.
