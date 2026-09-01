@@ -604,8 +604,8 @@ parse-only pattern, which never persists the source file).
 
 ### Phase 10 — open items
 
-1. **Production/staging schema**: confirmed applied to staging (CI's
-   `integration` job passes); production still needs confirmation.
+1. **Production/staging schema**: confirmed applied to both staging (CI's
+   `integration` job passes) and production.
 2. **Design mockup**: still not available.
 3. **Deactivating your own last admin account** (carried over from Phase
    1): still not guarded against.
