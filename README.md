@@ -22,7 +22,7 @@ and the auth/layout patterns are ported directly from the
 app, per the build brief. See `design-reference/README.md` for what's
 pending from the real Claude Design mockup.
 
-**Current status: Phase 9 (Action Log: automatic, filterable audit trail) — see Phase 9 below.**
+**Current status: Phase 10 (Bill Payments: scanned bill files attached to invoices, authorized-role workflow) — see Phase 10 below. All ten build-brief phases are now built.**
 
 ## Project layout
 
@@ -46,8 +46,9 @@ src/
                                                        # auto-computed server-side (see schema.sql's Phase 3 triggers)
   items.js                                            # Item Master data layer (Phase 4)
   inventory.js                                          # current_stock view + stock_movements ledger (Phase 4)
-  invoices.js                                             # Invoices data layer (Phase 5) — the first table whose own
-                                                             # RLS read is admin/authorized-only, not company-wide
+  invoices.js                                             # Invoices data layer (Phase 5, + Phase 10's bill-file
+                                                             # upload/view/remove) — the first table whose own RLS
+                                                             # read is admin/authorized-only, not company-wide
   boms.js                                                   # BoM Builder data layer (Phase 6) — recipes + the
                                                                # record_bom_production() RPC (the only write path for
                                                                # production runs)
@@ -62,10 +63,7 @@ src/
   state.js                                  # small in-memory store + pub-sub
   layout.js                                   # shared app shell (desktop sidebar / mobile top bar+tabs)
   components.js                                 # shared render helpers (escapeHtml, renderIdentityBlock, ...)
-  placeholderScreen.js                            # factory for "coming in Phase N" module screens;
-                                                     applies the navPermissions route guard for every placeholder
-  screens/                                          # one file per sidebar module — login.js, dashboard.js,
-                                                       help.js, users.js are real; the rest are placeholders
+  screens/                                        # one file per sidebar module — all real as of Phase 10
   dialogs/
     addUserDialog.js                                  # "Add User" modal (Phase 1)
   styles/
@@ -83,6 +81,7 @@ e2e/
   phase7.spec.js                          # Playwright — Work Orders (explosion preview, create, reserve, cancel)
   phase8.spec.js                            # Playwright — Reports (Stock & Reservations, Shortages, Below Reorder)
   phase9.spec.js                              # Playwright — Action Log (list, filters, CSV export, empty state)
+  phase10.spec.js                               # Playwright — Bill Payments (route guards, attach/view bill file, Mark Received)
 scripts/
   test-rls-users.mjs          # RLS/RPC integration tests against a REAL Supabase project (CI's `integration` job)
   test-rls-purchase-orders.mjs  # ...for vendors/projects/purchase_orders/po_line_items/import_field_mappings
@@ -97,6 +96,8 @@ scripts/
   test-rls-action-log.mjs                 # ...for action_log — trg_log_action() firing on plain writes and on
                                              # writes made through a security-definer RPC, admin-only read, and
                                              # that service-role-only writes aren't logged
+  test-rls-bill-payments.mjs                # ...for the 'bill-documents' Storage bucket's RLS policies — no new
+                                               # table, "Bill" and "Invoice" are the same record (Phase 10)
 supabase/
   schema.sql               # running source of truth for the DB schema + RLS
   README.md                  # Supabase project setup steps
@@ -552,6 +553,60 @@ the function owner's elevated privileges.
 
 1. **Production/staging schema**: confirmed applied to both staging (CI's
    `integration` job passes) and production.
+2. **Design mockup**: still not available.
+3. **Deactivating your own last admin account** (carried over from Phase
+   1): still not guarded against.
+
+## Phase 10 — Bill Payments (scanned bill files, mark received)
+
+Confirmed with the user before building, resolving the design tension
+flagged back in Phase 5: **"Bill" and "Invoice" are the same record, not
+a separate entity.** So this phase adds no new table — `action_log`
+already covers every write to `invoices` via its existing trigger — and
+invoice creation/PO-linking stays exactly where Phase 5 built it. The one
+capability Phase 5 didn't have is the scanned bill document itself, which
+this phase adds as a real file (this app's first use of Supabase Storage,
+confirmed with the user rather than following Phase 2's PO Upload's
+parse-only pattern, which never persists the source file).
+
+- `invoices` gains two nullable columns, `bill_file_path` and
+  `bill_file_name` — no new RLS needed, the existing Phase 5
+  admin/authorized update policy already covers them.
+- A private Storage bucket, `bill-documents`, with insert/select/delete
+  policies on `storage.objects` scoped to the same
+  `is_authorized_or_admin()` pair as `invoices`' own RLS (not the
+  narrower authorized-only nav gate below — same relationship as every
+  other module's nav matrix vs. its table RLS).
+- `src/invoices.js` gains `uploadBillFile`/`getBillFileUrl`/
+  `removeBillFile`. Viewing uses a signed URL (5-minute expiry), not
+  `getPublicUrl` — the bucket is private, and a bare public URL would
+  bypass RLS entirely once handed out.
+- `src/screens/billPayments.js` is now a real screen (replacing the
+  Phase 0 placeholder, and retiring `src/placeholderScreen.js` — nothing
+  else used it once this was the last phase). Deliberately narrow, not a
+  second copy of the Invoices screen: list invoices with a Status filter
+  (Pending/Overdue/Received), each row shows whether a bill file is
+  attached with Attach/Replace/View/Remove actions, and Mark Received
+  (the same `paid_at` write as Invoices' Mark Paid, relabeled for this
+  screen's audience). No invoice-creation or PO-linking form here — that
+  stays on Invoices.
+- **Restricted to the `authorized` role only, not admin** — per
+  `src/navPermissions.js`, already confirmed in Phase 1 and unchanged
+  here. This is narrower than Invoices' own admin/authorized RLS, same as
+  every other nav-vs-RLS pair in this app: admin can still reach every
+  invoice (and its bill file) via the broader Invoices screen, just not
+  via this purpose-built one. The other three enforcement layers (nav
+  exclusion, route-guard redirect, Help-content exclusion) were already
+  built in Phase 0/1; this phase's Storage RLS is the fourth.
+- `scripts/test-rls-bill-payments.mjs`: authorized role can upload/sign/
+  delete a bill file in the `bill-documents` bucket and record its path
+  on the invoice row; purchase role can do none of it.
+
+### Phase 10 — open items
+
+1. **Production/staging schema**: not yet applied to either — this
+   phase's migration (new `invoices` columns, the `bill-documents`
+   bucket, and its `storage.objects` policies) still needs to be run.
 2. **Design mockup**: still not available.
 3. **Deactivating your own last admin account** (carried over from Phase
    1): still not guarded against.

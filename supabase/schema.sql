@@ -1629,3 +1629,45 @@ begin
     execute format('create trigger log_action after insert or update or delete on public.%I for each row execute function public.trg_log_action()', t);
   end loop;
 end $$;
+
+-- Phase 10: Bill Payments. Confirmed with the user before building: "Bill"
+-- and "Invoice" are the same record, not a separate entity — Phase 5
+-- already gives Invoices a complete paid/overdue lifecycle, so this phase
+-- doesn't add a bill_payments table (nothing to log via trg_log_action
+-- beyond what Phase 5's invoices trigger already captures). The one real
+-- capability this phase adds is the scanned bill document itself: a
+-- private Storage bucket plus two nullable columns on invoices recording
+-- where the file lives. The /bill-payments screen (src/navPermissions.js:
+-- authorized role only, no admin — a narrower audience than Invoices'
+-- own admin/authorized RLS) is a purpose-built, upload-and-mark-received
+-- workflow over this same invoices data; invoice creation itself stays on
+-- the existing Invoices screen.
+alter table public.invoices add column if not exists bill_file_path text null;
+alter table public.invoices add column if not exists bill_file_name text null;
+
+insert into storage.buckets (id, name, public)
+values ('bill-documents', 'bill-documents', false)
+on conflict (id) do nothing;
+
+-- storage.objects already has RLS enabled by Supabase itself; only the
+-- policies need adding here. Scoped to the same is_authorized_or_admin()
+-- pair as invoices' own RLS (not the narrower authorized-only nav gate,
+-- which is a UI-layer restriction on top of this, same relationship as
+-- every other module's nav matrix vs. its table RLS).
+drop policy if exists "Authorized/admin can view bill documents" on storage.objects;
+create policy "Authorized/admin can view bill documents"
+  on storage.objects for select
+  to authenticated
+  using (bucket_id = 'bill-documents' and public.is_authorized_or_admin(auth.uid()));
+
+drop policy if exists "Authorized/admin can upload bill documents" on storage.objects;
+create policy "Authorized/admin can upload bill documents"
+  on storage.objects for insert
+  to authenticated
+  with check (bucket_id = 'bill-documents' and public.is_authorized_or_admin(auth.uid()));
+
+drop policy if exists "Authorized/admin can delete bill documents" on storage.objects;
+create policy "Authorized/admin can delete bill documents"
+  on storage.objects for delete
+  to authenticated
+  using (bucket_id = 'bill-documents' and public.is_authorized_or_admin(auth.uid()));

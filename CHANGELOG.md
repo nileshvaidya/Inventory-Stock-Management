@@ -556,3 +556,46 @@ function owner's elevated privileges.
 - `e2e/phase9.spec.js`: route guard, listing with before/after detail,
   each filter (user/record type/action/date range) producing the
   expected PostgREST query params, CSV export, and an empty state.
+
+## Phase 10: Bill Payments (scanned bill files, mark received)
+
+Confirmed with the user before building, resolving the design tension
+flagged in Phase 5's own docs: "Bill" and "Invoice" are the same record,
+not a separate entity. So no new table — invoice creation and PO-linking
+stay on the existing Invoices screen, and `action_log`'s existing trigger
+on `invoices` already covers every write this phase makes. The one real
+capability this phase adds is the scanned bill document itself, via
+Supabase Storage — this app's first use of it (also confirmed with the
+user, over Phase 2's PO Upload's client-side-parse-only pattern, which
+never persists the source file).
+
+- `invoices` gains `bill_file_path`/`bill_file_name` (nullable, covered
+  by the existing Phase 5 update policy — no new RLS on the table
+  itself) and a private `bill-documents` Storage bucket with
+  insert/select/delete policies on `storage.objects`, scoped to the same
+  `is_authorized_or_admin()` pair as `invoices`' own RLS.
+- `src/invoices.js`: `uploadBillFile`/`getBillFileUrl`/`removeBillFile`.
+  Viewing uses a signed URL (5-minute expiry) rather than
+  `getPublicUrl` — the bucket is private, and a bare public URL would
+  bypass RLS entirely once handed out.
+- `src/screens/billPayments.js` is now real, replacing the Phase 0
+  placeholder (and retiring `src/placeholderScreen.js`, unused once this
+  was the last remaining phase). Deliberately narrower than a second
+  Invoices screen: list with a Status filter (Pending/Overdue/Received),
+  per-row Attach/Replace/View/Remove for the bill file, and Mark
+  Received (the same `paid_at` write as Invoices' Mark Paid). No
+  invoice-creation or PO-linking form here.
+- Restricted to the `authorized` role only, not admin, per the
+  `navPermissions.js` matrix confirmed back in Phase 1 — narrower than
+  Invoices' own admin/authorized RLS, same nav-vs-RLS relationship as
+  every other module. The other three enforcement layers (nav, route
+  guard, Help exclusion) were already built in Phase 0/1; this phase's
+  Storage RLS is the fourth.
+- `scripts/test-rls-bill-payments.mjs` (new, added to `npm run
+  test:integration`): authorized role can upload/sign/delete a bill file
+  in the `bill-documents` bucket and record its path on the invoice row;
+  purchase role can do none of it.
+- `e2e/phase10.spec.js`: route guards (admin *and* store both redirected
+  — admin is deliberately excluded from this nav item, unlike every
+  other restricted module), attach-a-file upload, Mark Received, a
+  received row's display, and an empty state.

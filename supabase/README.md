@@ -47,6 +47,14 @@ in your local `.env`).
 
 ## Storage buckets
 
-Not needed until Phase 2 (PO PDFs) / Phase 5 (invoice files) / Phase 10
-(scanned bills). Buckets and their access policies will be documented here
-as each phase adds them.
+Phase 2 (PO PDFs) and Phase 5 (invoice files) both turned out not to need
+one — Phase 2 parses PDFs client-side via pdf.js without persisting the
+source file, and Phase 5's Invoices never gained a document of its own.
+Phase 10 (Bill Payments) is this app's first real use of Supabase
+Storage: a private `bill-documents` bucket, created by `schema.sql`
+itself (`insert into storage.buckets ...`, same file you already ran) —
+no separate dashboard step needed. Its `storage.objects` RLS policies
+(also in `schema.sql`) restrict insert/select/delete to the
+admin/authorized pair, same as the `invoices` table whose rows the
+uploaded files belong to. Nothing to configure here beyond running
+`schema.sql`.

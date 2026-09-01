@@ -91,3 +91,60 @@ export async function softDeleteInvoice(invoiceId, client = supabase) {
   const { error } = await client.from('invoices').update({ deleted_at: new Date().toISOString() }).eq('id', invoiceId);
   if (error) throw error;
 }
+
+// Phase 10: the scanned bill document itself, stored in the private
+// 'bill-documents' bucket (RLS: authorized/admin, same as invoices — see
+// supabase/schema.sql) rather than on invoices.notes or similar, since a
+// binary file needs Storage, not a text column. Path is namespaced by
+// invoice id so re-uploads for different invoices can never collide.
+const BILL_BUCKET = 'bill-documents';
+
+/**
+ * @param {string} invoiceId
+ * @param {File} file
+ * @param {any} [client]
+ */
+export async function uploadBillFile(invoiceId, file, client = supabase) {
+  if (!client) throw new Error('Supabase is not configured.');
+  const path = `${invoiceId}/${Date.now()}-${file.name}`;
+  const { error: uploadError } = await client.storage.from(BILL_BUCKET).upload(path, file, { upsert: false });
+  if (uploadError) throw uploadError;
+
+  const { error: updateError } = await client
+    .from('invoices')
+    .update({ bill_file_path: path, bill_file_name: file.name })
+    .eq('id', invoiceId);
+  if (updateError) throw updateError;
+}
+
+/**
+ * Signed URL, not getPublicUrl — the bucket is private (RLS-restricted),
+ * so a viewer needs a time-limited signed link rather than a bare public
+ * one that would bypass RLS entirely once handed out.
+ * @param {string} path
+ * @param {any} [client]
+ */
+export async function getBillFileUrl(path, client = supabase) {
+  if (!client || !path) return null;
+  const { data, error } = await client.storage.from(BILL_BUCKET).createSignedUrl(path, 300);
+  if (error) throw error;
+  return data?.signedUrl ?? null;
+}
+
+/**
+ * @param {string} invoiceId
+ * @param {string} path
+ * @param {any} [client]
+ */
+export async function removeBillFile(invoiceId, path, client = supabase) {
+  if (!client) throw new Error('Supabase is not configured.');
+  if (path) {
+    const { error: removeError } = await client.storage.from(BILL_BUCKET).remove([path]);
+    if (removeError) throw removeError;
+  }
+  const { error: updateError } = await client
+    .from('invoices')
+    .update({ bill_file_path: null, bill_file_name: null })
+    .eq('id', invoiceId);
+  if (updateError) throw updateError;
+}
