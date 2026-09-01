@@ -604,9 +604,8 @@ parse-only pattern, which never persists the source file).
 
 ### Phase 10 — open items
 
-1. **Production/staging schema**: not yet applied to either — this
-   phase's migration (new `invoices` columns, the `bill-documents`
-   bucket, and its `storage.objects` policies) still needs to be run.
+1. **Production/staging schema**: confirmed applied to staging (CI's
+   `integration` job passes); production still needs confirmation.
 2. **Design mockup**: still not available.
 3. **Deactivating your own last admin account** (carried over from Phase
    1): still not guarded against.
