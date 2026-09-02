@@ -132,12 +132,18 @@ test.describe('Phase 1 — Help excludes Bill Payments for non-authorized roles'
 });
 
 test.describe('Phase 1 — Help manual: How To and FAQ', () => {
-  test('table of contents jumps to a section, and screenshots load', async ({ page }) => {
+  test('the sidebar swaps the visible topic instead of scrolling a long page', async ({ page }) => {
     await page.goto('/?demoRole=admin#/help');
     await expect(page.locator('[data-screen="help"]')).toBeVisible();
 
-    await page.click('[data-toc-link][href="#help-invoices"]');
-    await expect(page.locator('#help-invoices')).toBeInViewport();
+    // Getting Started is shown by default, and nothing else is in the DOM
+    // yet — only the selected topic is ever rendered.
+    await expect(page.locator('#help-getting-started')).toBeVisible();
+    await expect(page.locator('#help-po-upload')).toHaveCount(0);
+
+    await page.locator('[data-help-sidebar] [data-help-nav="help-po-upload"]').click();
+    await expect(page.locator('#help-po-upload')).toBeVisible();
+    await expect(page.locator('#help-getting-started')).toHaveCount(0);
 
     const shot = page.locator('#help-po-upload img').first();
     await expect(shot).toHaveAttribute('src', /\/help\/screenshots\/.+\.png$/);
@@ -148,10 +154,18 @@ test.describe('Phase 1 — Help manual: How To and FAQ', () => {
       const naturalWidth = await shot.evaluate((img) => /** @type {HTMLImageElement} */ (img).naturalWidth);
       expect(naturalWidth).toBeGreaterThan(0);
     }).toPass();
+
+    // A cross-reference link inside a topic's own body (not just the
+    // sidebar) also jumps straight to that topic.
+    await page.locator('#help-po-upload [data-help-nav="help-order-status"]').click();
+    await expect(page.locator('#help-order-status')).toBeVisible();
+    await expect(page.locator('#help-po-upload')).toHaveCount(0);
   });
 
   test('an FAQ question expands and collapses its answer', async ({ page }) => {
     await page.goto('/?demoRole=admin#/help');
+    await page.locator('[data-help-sidebar] [data-help-nav="help-faq"]').click();
+
     const firstQuestion = page.locator('[data-faq-question]').first();
     const firstAnswer = page.locator('[data-faq-answer]').first();
 

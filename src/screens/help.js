@@ -6,13 +6,22 @@
 // this screen is pure static content, unlike every other authenticated
 // screen, so it has no loading/error/empty states.
 //
+// Topics are rendered one at a time (only the selected topic's HTML is
+// ever in the DOM) behind a sidebar nav, instead of one long page with
+// every topic concatenated — so reading about Invoices no longer means
+// scrolling past PO Upload, BoM Builder, and everything else first. The
+// sidebar and cross-reference links inside a topic's body both use
+// data-help-nav to jump straight to another topic.
+//
 // Build brief §3: "explicitly exclude any mention of the Bill Payments
 // module from the help content shown to non-authorized roles — maintain
 // two help views, or role-conditional help sections." The restricted
-// section below is built into its own HTML string and only spliced into
-// the page when the viewer's role is 'authorized' (checked via
-// canViewModule, same source of truth the sidebar/route guard use) — it's
-// never present in the DOM at all for anyone else, not just hidden by CSS.
+// topic and its FAQ item are built into their own HTML strings and only
+// spliced into the topic list when the viewer's role is 'authorized'
+// (checked via canViewModule, same source of truth the sidebar/route
+// guard use) — the restricted topic's nav entry, and the text itself,
+// are never present in the DOM at all for anyone else, not just hidden
+// by CSS.
 import { getCurrentProfile } from '../auth.js';
 import { renderShell } from '../layout.js';
 import { escapeHtml } from '../components.js';
@@ -29,24 +38,44 @@ export async function render(container) {
 
   const content = renderShell(container, { activeRoute: '/help', user });
   content.setAttribute('data-screen', 'help');
-  content.innerHTML = renderHelp(user);
 
-  content.querySelectorAll('[data-toc-link]').forEach((link) => {
-    link.addEventListener('click', (event) => {
-      event.preventDefault();
-      const target = content.querySelector(link.getAttribute('href'));
-      target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  const canSeeBillPayments = canViewModule('/bill-payments', user.role);
+  const topics = buildTopics(canSeeBillPayments);
+
+  content.innerHTML = renderHelpShell(user, topics);
+
+  const panel = content.querySelector('[data-help-content]');
+  const navButtons = content.querySelectorAll('[data-help-sidebar] [data-help-nav]');
+
+  function showTopic(id) {
+    const topic = topics.find((t) => t.id === id);
+    if (!topic) return;
+    panel.innerHTML = topic.render();
+    navButtons.forEach((btn) => {
+      btn.classList.toggle('helpnav-item-active', btn.getAttribute('data-help-nav') === id);
     });
-  });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
 
-  content.querySelectorAll('[data-faq-question]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const answer = btn.parentElement.querySelector('[data-faq-answer]');
+  content.addEventListener('click', (event) => {
+    const eventTarget = /** @type {Element} */ (event.target);
+    const navEl = eventTarget.closest('[data-help-nav]');
+    if (navEl) {
+      event.preventDefault();
+      showTopic(navEl.getAttribute('data-help-nav'));
+      return;
+    }
+
+    const faqBtn = eventTarget.closest('[data-faq-question]');
+    if (faqBtn) {
+      const answer = faqBtn.parentElement.querySelector('[data-faq-answer]');
       const willOpen = answer.classList.contains('hidden');
       answer.classList.toggle('hidden', !willOpen);
-      btn.querySelector('[data-faq-caret]').textContent = willOpen ? '▾' : '▸';
-    });
+      faqBtn.querySelector('[data-faq-caret]').textContent = willOpen ? '▾' : '▸';
+    }
   });
+
+  showTopic(topics[0].id);
 }
 
 function img(src, alt) {
@@ -55,7 +84,7 @@ function img(src, alt) {
 
 function section(id, title, bodyHtml) {
   return `
-    <section id="${id}" class="card elev-sm" style="padding:20px;margin-bottom:20px;scroll-margin-top:16px">
+    <section id="${id}" class="card elev-sm" style="padding:20px">
       <h2 style="font-size:20px;margin-bottom:12px">${escapeHtml(title)}</h2>
       ${bodyHtml}
     </section>`;
@@ -75,71 +104,73 @@ function note(text) {
   return `<p style="font-size:13px;color:var(--color-neutral-500);margin-top:8px">${text}</p>`;
 }
 
-const TOC = [
-  ['help-getting-started', 'Getting Started'],
-  ['help-dashboard', 'Dashboard'],
-  ['help-po-upload', 'PO Upload'],
-  ['help-order-status', 'Order Status'],
-  ['help-material-inward', 'Material Inward'],
-  ['help-inspection', 'Inspection'],
-  ['help-master-material-status', 'Master Material Status'],
-  ['help-inventory', 'Inventory'],
-  ['help-bom-builder', 'BoM Builder'],
-  ['help-work-orders', 'Work Orders'],
-  ['help-invoices', 'Invoices'],
-  ['help-reports', 'Reports'],
-  ['help-users-roles', 'Users & Roles'],
-  ['help-action-log', 'Action Log'],
-];
+/** A jump-to-another-topic link — handled by the click delegate in render(), same as a sidebar nav button. */
+function jump(id, label) {
+  return `<a href="#" data-help-nav="${id}" style="color:var(--color-accent)">${escapeHtml(label)}</a>`;
+}
 
-const RESTRICTED_TOC_ENTRY = ['help-bill-payments', 'Bill Payments'];
+/** @param {boolean} canSeeBillPayments */
+function buildTopics(canSeeBillPayments) {
+  const topics = [
+    { id: 'help-getting-started', label: 'Getting Started', render: () => renderGettingStarted(canSeeBillPayments) },
+    { id: 'help-dashboard', label: 'Dashboard', render: renderDashboard },
+    { id: 'help-po-upload', label: 'PO Upload', render: renderPoUpload },
+    { id: 'help-order-status', label: 'Order Status', render: renderOrderStatus },
+    { id: 'help-material-inward', label: 'Material Inward', render: renderMaterialInward },
+    { id: 'help-inspection', label: 'Inspection', render: renderInspection },
+    { id: 'help-master-material-status', label: 'Master Material Status', render: renderMasterMaterialStatus },
+    { id: 'help-inventory', label: 'Inventory', render: renderInventory },
+    { id: 'help-bom-builder', label: 'BoM Builder', render: renderBomBuilder },
+    { id: 'help-work-orders', label: 'Work Orders', render: renderWorkOrders },
+    { id: 'help-invoices', label: 'Invoices', render: renderInvoices },
+    { id: 'help-reports', label: 'Reports', render: renderReports },
+    { id: 'help-users-roles', label: 'Users & Roles', render: renderUsersRoles },
+    { id: 'help-action-log', label: 'Action Log', render: renderActionLog },
+  ];
+  if (canSeeBillPayments) {
+    topics.push({ id: 'help-bill-payments', label: 'Bill Payments', render: renderBillPayments });
+  }
+  topics.push(
+    { id: 'help-faq', label: 'Frequently Asked Questions', render: () => renderFaq(canSeeBillPayments) },
+    { id: 'help-troubleshooting', label: 'Troubleshooting', render: renderTroubleshooting }
+  );
+  return topics;
+}
 
-const TAIL_TOC = [
-  ['help-faq', 'Frequently Asked Questions'],
-  ['help-troubleshooting', 'Troubleshooting'],
-];
-
-/** @param {{ name: string, email: string, role: string|null }} user */
-export function renderHelp(user) {
-  const canSeeBillPayments = canViewModule('/bill-payments', user.role);
-  const toc = [...TOC, ...(canSeeBillPayments ? [RESTRICTED_TOC_ENTRY] : []), ...TAIL_TOC];
-
+/**
+ * @param {{ name: string, email: string, role: string|null }} user
+ * @param {{ id: string, label: string, render: () => string }[]} topics
+ */
+function renderHelpShell(user, topics) {
   return `
+    <style>
+      .helpnav-item{display:block;width:100%;text-align:left;padding:8px 10px;border-radius:var(--radius-sm);font-size:13px;font-family:inherit;color:var(--color-neutral-300);border:none;background:none;cursor:pointer}
+      .helpnav-item:hover{background:color-mix(in srgb, var(--color-text) 6%, transparent)}
+      .helpnav-item-active{background:var(--color-accent-800);color:var(--color-accent-100);font-weight:600}
+    </style>
+
     <div style="margin-bottom:20px">
       <h1 style="margin-bottom:4px">Help &amp; User Manual</h1>
-      <p style="font-size:14px;color:var(--color-neutral-400);margin:0">A step-by-step guide to every screen in Inventory &amp; Stock Management, with real screenshots. New to the app? Start at <a href="#help-getting-started" data-toc-link>Getting Started</a>.</p>
+      <p style="font-size:14px;color:var(--color-neutral-400);margin:0">A step-by-step guide to every screen in Inventory &amp; Stock Management, with real screenshots. Pick a topic from the menu — no need to scroll through everything else to find it.</p>
     </div>
 
-    <nav class="card elev-sm" style="padding:14px;margin-bottom:20px" aria-label="Table of contents">
-      <div style="display:flex;flex-wrap:wrap;gap:8px">
-        ${toc
-          .map(
-            ([id, label]) =>
-              `<a href="#${id}" data-toc-link class="tag tag-neutral" style="text-decoration:none;cursor:pointer">${escapeHtml(label)}</a>`
-          )
-          .join('')}
+    <div class="md:flex" style="gap:20px;align-items:flex-start">
+      <nav class="card elev-sm md:w-56 md:flex-none mb-5 md:mb-0" data-help-sidebar aria-label="Help topics" style="padding:10px">
+        <div class="flex flex-col gap-0.5">
+          ${topics
+            .map(
+              (t) =>
+                `<button type="button" class="helpnav-item" data-help-nav="${t.id}">${escapeHtml(t.label)}</button>`
+            )
+            .join('')}
+        </div>
+      </nav>
+
+      <div class="flex-1 min-w-0">
+        <div data-help-content></div>
+        <p style="font-size:13px;color:var(--color-neutral-500);text-align:center;margin-top:16px">Signed in as ${escapeHtml(user.name)} (${escapeHtml(user.role || 'no role assigned')}). For anything not covered here, contact your admin.</p>
       </div>
-    </nav>
-
-    ${renderGettingStarted(canSeeBillPayments)}
-    ${renderDashboard()}
-    ${renderPoUpload()}
-    ${renderOrderStatus()}
-    ${renderMaterialInward()}
-    ${renderInspection()}
-    ${renderMasterMaterialStatus()}
-    ${renderInventory()}
-    ${renderBomBuilder()}
-    ${renderWorkOrders()}
-    ${renderInvoices()}
-    ${renderReports()}
-    ${renderUsersRoles()}
-    ${renderActionLog()}
-    ${canSeeBillPayments ? renderBillPayments() : ''}
-    ${renderFaq(canSeeBillPayments)}
-    ${renderTroubleshooting()}
-
-    <p style="font-size:13px;color:var(--color-neutral-500);text-align:center;margin-top:8px">Signed in as ${escapeHtml(user.name)} (${escapeHtml(user.role || 'no role assigned')}). For anything not covered here, contact your admin.</p>
+    </div>
   `;
 }
 
@@ -158,7 +189,7 @@ function renderGettingStarted(canSeeBillPayments) {
       'Click the <strong>Email</strong> field and type your email address.',
       'Click the <strong>Password</strong> field and type your password.',
       'Click the <strong>Sign In</strong> button.',
-      'You land on the <a href="#help-dashboard" data-toc-link>Dashboard</a>. If your account has been deactivated, you\'ll see "This account is inactive. Contact your admin." instead — see <a href="#help-troubleshooting" data-toc-link>Troubleshooting</a>.',
+      `You land on the ${jump('help-dashboard', 'Dashboard')}. If your account has been deactivated, you'll see "This account is inactive. Contact your admin." instead — see ${jump('help-troubleshooting', 'Troubleshooting')}.`,
     ])}
     ${img('01-login-signin.png', 'The Sign In screen, with the Email and Password fields and the Sign In button')}
 
@@ -169,10 +200,10 @@ function renderGettingStarted(canSeeBillPayments) {
       'Click <strong>Create Account</strong>. You\'re signed in immediately and land on the Dashboard.',
     ])}
     ${img('02-login-signup.png', 'The Sign Up tab, showing Name, Email, and Password fields')}
-    ${note('A brand-new account has no role yet, so almost every screen is hidden until an admin assigns you one from <a href="#help-users-roles" data-toc-link>Users &amp; Roles</a> — see the Dashboard below.')}
+    ${note(`A brand-new account has no role yet, so almost every screen is hidden until an admin assigns you one from ${jump('help-users-roles', 'Users & Roles')} — see the Dashboard below.`)}
 
     ${h3('What you see depends on your role')}
-    <p style="font-size:14px;color:var(--color-neutral-300);margin:0">The sidebar only ever shows the screens your role can use — nobody sees every menu item. The roles are: <strong>Admin</strong> (sees and manages everything), <strong>Purchase</strong> (PO Upload, Order Status), <strong>Store/Warehouse</strong> (Material Inward, Inventory, Work Orders), <strong>Inspector</strong> (Inspection), <strong>Accounts/Authorized</strong> (${authorizedModules}), and <strong>Production</strong> (Inventory, BoM Builder, Work Orders, Reports). If a screen you need is missing, ask an admin to check your role in <a href="#help-users-roles" data-toc-link>Users &amp; Roles</a>.</p>
+    <p style="font-size:14px;color:var(--color-neutral-300);margin:0">The sidebar only ever shows the screens your role can use — nobody sees every menu item. The roles are: <strong>Admin</strong> (sees and manages everything), <strong>Purchase</strong> (PO Upload, Order Status), <strong>Store/Warehouse</strong> (Material Inward, Inventory, Work Orders), <strong>Inspector</strong> (Inspection), <strong>Accounts/Authorized</strong> (${authorizedModules}), and <strong>Production</strong> (Inventory, BoM Builder, Work Orders, Reports). If a screen you need is missing, ask an admin to check your role in ${jump('help-users-roles', 'Users & Roles')}.</p>
     `
   );
 }
@@ -233,7 +264,7 @@ function renderPoUpload() {
     ${ol([
       'Click <strong>Save Purchase Order</strong> at the bottom of the page.',
       'If something required is missing (no Project, no line items, an invalid row), an error message appears and nothing is saved — fix it and click Save again.',
-      'Once saved, the form clears and a confirmation message appears — find it afterwards on <a href="#help-order-status" data-toc-link>Order Status</a>.',
+      `Once saved, the form clears and a confirmation message appears — find it afterwards on ${jump('help-order-status', 'Order Status')}.`,
     ])}
     `
   );
@@ -282,7 +313,7 @@ function renderMaterialInward() {
       'Click <strong>Log Receipt</strong>. The Inward History table below the form fills in with what you just logged.',
     ])}
     ${img('07-material-inward.png', 'Material Inward with a PO selected, one line item fully received and another being entered, plus the Inward History below')}
-    ${note('Once an item is fully received, it moves on to <a href="#help-inspection" data-toc-link>Inspection</a> before it counts as usable stock.')}
+    ${note(`Once an item is fully received, it moves on to ${jump('help-inspection', 'Inspection')} before it counts as usable stock.`)}
     `
   );
 }
@@ -299,7 +330,7 @@ function renderInspection() {
       'Find the row for the item you\'re inspecting and click <strong>Inspect</strong>.',
       'Type how many units to <strong>Accepted Qty</strong> and how many to <strong>Rejected Qty</strong> — together they must add up to exactly the Received Qty shown for that row.',
       'If you\'re rejecting any quantity, fill in <strong>Rejection Reason</strong> — it\'s required whenever Rejected Qty is more than zero.',
-      'Click <strong>Save Inspection</strong>. The row disappears from this list (it\'s done) and the accepted quantity becomes usable stock, visible on <a href="#help-inventory" data-toc-link>Inventory</a>.',
+      `Click <strong>Save Inspection</strong>. The row disappears from this list (it's done) and the accepted quantity becomes usable stock, visible on ${jump('help-inventory', 'Inventory')}.`,
     ])}
     ${img('08-inspection.png', 'A row opened for inspection, with Accepted Qty, Rejected Qty, and Rejection Reason filled in')}
     ${note('Click Cancel (same button, now relabeled) to close the form again without saving.')}
@@ -330,7 +361,7 @@ function renderInventory() {
     <p style="font-size:14px;color:var(--color-neutral-300);margin-bottom:10px">Current stock for every item, including what's on hand, what's on hold for a Work Order, and what's actually free to use.</p>
 
     ${h3('Reading the table')}
-    <p style="font-size:14px;color:var(--color-neutral-300);margin:0 0 8px"><strong>Current Stock</strong> is everything physically in the warehouse. <strong>Reserved</strong> is stock a Work Order is holding (see <a href="#help-work-orders" data-toc-link>Work Orders</a>). <strong>Available</strong> is Current minus Reserved — the amount you can actually use right now. A red <strong>Below reorder</strong> tag appears when Available drops under an item's Reorder Level.</p>
+    <p style="font-size:14px;color:var(--color-neutral-300);margin:0 0 8px"><strong>Current Stock</strong> is everything physically in the warehouse. <strong>Reserved</strong> is stock a Work Order is holding (see ${jump('help-work-orders', 'Work Orders')}). <strong>Available</strong> is Current minus Reserved — the amount you can actually use right now. A red <strong>Below reorder</strong> tag appears when Available drops under an item's Reorder Level.</p>
     ${ol([
       'Type in the <strong>Name</strong> box or pick a <strong>Category</strong> to narrow the list.',
       'Tick <strong>Below reorder level only</strong> to see just the items that need restocking.',
@@ -406,10 +437,10 @@ function renderWorkOrders() {
 
     ${h3('Reserving stock')}
     ${ol([
-      'Click <strong>Reserve Stock</strong> on an Open work order to actually hold the currently-available stock for it — this reduces <strong>Available</strong> everywhere else (see <a href="#help-inventory" data-toc-link>Inventory</a>) until the work order is cancelled.',
+      `Click <strong>Reserve Stock</strong> on an Open work order to actually hold the currently-available stock for it — this reduces <strong>Available</strong> everywhere else (see ${jump('help-inventory', 'Inventory')}) until the work order is cancelled.`,
       'Click <strong>Cancel Work Order</strong> at any time to release the hold and mark it Cancelled.',
     ])}
-    ${note('Reserving only holds stock — it doesn\'t consume it. Actually producing (and consuming components) happens on <a href="#help-bom-builder" data-toc-link>BoM Builder</a>\'s Record Production, one recipe at a time.')}
+    ${note(`Reserving only holds stock — it doesn't consume it. Actually producing (and consuming components) happens on ${jump('help-bom-builder', 'BoM Builder')}'s Record Production, one recipe at a time.`)}
     `
   );
 }
@@ -510,7 +541,7 @@ function renderBillPayments() {
     'help-bill-payments',
     'Bill Payments',
     `
-    <p style="font-size:14px;color:var(--color-neutral-300);margin-bottom:10px">A "bill" and an "invoice" are the same record in this app — this screen is a narrower, focused view of your Invoices for attaching the scanned bill document and marking it received once paid. Visible only to the Accounts/Authorized role (not even Admin sees this menu item, though an admin can still mark any invoice paid from <a href="#help-invoices" data-toc-link>Invoices</a>).</p>
+    <p style="font-size:14px;color:var(--color-neutral-300);margin-bottom:10px">A "bill" and an "invoice" are the same record in this app — this screen is a narrower, focused view of your Invoices for attaching the scanned bill document and marking it received once paid. Visible only to the Accounts/Authorized role (not even Admin sees this menu item, though an admin can still mark any invoice paid from ${jump('help-invoices', 'Invoices')}).</p>
     ${img('25-bill-payments.png', 'Bill Payments listing invoices with Attach/View/Remove file actions and a Mark Received button')}
 
     ${h3('Attaching a scanned bill')}
@@ -525,7 +556,7 @@ function renderBillPayments() {
       'Once payment is confirmed, click <strong>Mark Received</strong> on that row.',
       'This is the exact same action as Invoices\' "Mark Paid" — the status updates everywhere in the app, not just here.',
     ])}
-    ${note('To create a new invoice in the first place, or link it to Purchase Orders, use <a href="#help-invoices" data-toc-link>Invoices</a> — this screen only adds the file-attachment step.')}
+    ${note(`To create a new invoice in the first place, or link it to Purchase Orders, use ${jump('help-invoices', 'Invoices')} — this screen only adds the file-attachment step.`)}
     `
   );
 }
@@ -545,7 +576,7 @@ const FAQ = [
   },
   {
     q: 'The PDF I uploaded didn\'t parse correctly — what do I do?',
-    a: 'Every line item on PO Upload is directly editable, so just correct whatever\'s wrong by hand. For a PDF layout the parser doesn\'t recognize at all, use "Map Fields Manually" to build the rows by clicking words instead of retyping everything — see the PO Upload section above.',
+    a: 'Every line item on PO Upload is directly editable, so just correct whatever\'s wrong by hand. For a PDF layout the parser doesn\'t recognize at all, use "Map Fields Manually" to build the rows by clicking words instead of retyping everything — see the PO Upload topic.',
   },
   {
     q: 'Why did a Purchase Order\'s status change without me touching it?',
@@ -587,8 +618,8 @@ const FAQ = [
 
 // Never merged into FAQ above — even a passing mention of Bill Payments
 // must not appear anywhere in the help content for a non-authorized role
-// (see the note on RESTRICTED_SECTION at the top of this file), so this
-// item is only spliced in when canSeeBillPayments is true.
+// (see the note on the restricted topic at the top of this file), so
+// this item is only spliced in when canSeeBillPayments is true.
 const RESTRICTED_FAQ_ITEM = {
   q: 'What\'s the difference between Invoices and Bill Payments?',
   a: 'They\'re the same underlying record — a "bill" is just this app\'s word for an invoice. Bill Payments is a narrower screen, visible only to the Accounts/Authorized role, focused on attaching the scanned bill document and marking it received; creating an invoice and linking it to Purchase Orders always happens on the Invoices screen.',
@@ -623,7 +654,7 @@ function renderTroubleshooting() {
     'Troubleshooting',
     `
     ${h3('"This account is inactive. Contact your admin."')}
-    <p style="font-size:14px;color:var(--color-neutral-300)">An admin has deactivated your account. Ask an admin to reactivate you from <a href="#help-users-roles" data-toc-link>Users &amp; Roles</a>.</p>
+    <p style="font-size:14px;color:var(--color-neutral-300)">An admin has deactivated your account. Ask an admin to reactivate you from ${jump('help-users-roles', 'Users & Roles')}.</p>
 
     ${h3('A screen shows an error instead of my data')}
     <p style="font-size:14px;color:var(--color-neutral-300)">Click the <strong>Retry</strong> button shown with the error. If it keeps failing, check your internet connection, or contact your admin — the underlying service may be temporarily unavailable.</p>

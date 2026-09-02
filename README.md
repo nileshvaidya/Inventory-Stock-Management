@@ -181,27 +181,32 @@ both exist:
 
 `src/screens/help.js` (linked from every screen's sidebar) is a full,
 click-by-click user manual aimed at a non-technical reader — not the
-short one-line-per-module summary it started as. Two parts:
+short one-line-per-module summary it started as. It's a topic-nav page,
+not one long scroll: a sidebar lists every topic, and only the selected
+topic's content is ever in the DOM — clicking a topic (in the sidebar,
+or an inline cross-reference link inside another topic's body, both
+`data-help-nav`) swaps the content panel instead of scrolling to an
+anchor. Two kinds of topic:
 
-- **How To**: one section per screen, each a numbered step-by-step
+- **How To**: one topic per screen, each a numbered step-by-step
   walkthrough ("Click X", "Type Y into Z") illustrated with a real
   screenshot of that screen, not a description of it. The screenshots
   live in `public/help/screenshots/` and are captured by
   `scripts/capture-help-screenshots.mjs` against demo mode (mocked
   network, no live Supabase project needed) — rerun it by hand whenever
   a UI change makes them stale (not part of CI, same as the sibling
-  Task_Management/WorkSync app's own Help manual). A table of contents
-  at the top jumps to any section.
+  Task_Management/WorkSync app's own Help manual).
 - **FAQ**: a fixed list of the questions a day-to-day user actually runs
   into (role visibility, PO parsing gone wrong, status fields that
   update themselves, reorder/reservation math, CSV export, and more),
   each collapsed by default — click a question to expand its answer.
 
 Bill Payments' exclusion for non-authorized roles (build brief §3)
-extends to this content too — its How To section, its Table of Contents
-entry, and the one FAQ item that names it are all built conditionally on
-the viewer's role (`canViewModule('/bill-payments', role)`), exactly
-like `RESTRICTED_SECTION` did before this rewrite. Covered by
+extends to this content too — its How To topic, its sidebar entry, and
+the one FAQ item that names it are all built conditionally on the
+viewer's role (`canViewModule('/bill-payments', role)`), exactly like
+`RESTRICTED_SECTION` did before this rewrite — never present in the DOM
+at all for anyone else, not just unreachable via the sidebar. Covered by
 `e2e/phase1.spec.js`, including a real regression check that every
 screenshot referenced actually exists and decodes.
 

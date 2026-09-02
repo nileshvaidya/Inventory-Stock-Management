@@ -664,3 +664,43 @@ from the sibling Task_Management/WorkSync app's own Help manual.
   tests (TOC navigation + a real check that every screenshot referenced
   actually loads, plus FAQ expand/collapse) alongside its existing
   Bill-Payments-exclusion coverage.
+
+## Fix: stale-tab navigation failures after a deploy
+
+Reported live on Vercel right after the Help Manual push: "Help link on
+dashboard not working" — clicking it did nothing. Root cause: a tab left
+open across a deploy still runs the old JS bundle, whose dynamic
+`import()` calls point at content-hashed chunk filenames a new deploy has
+already replaced; the import rejects, and `startRouter`'s hashchange
+handler (`src/router.js`) had no catch, so the clicked link's URL updated
+but the screen never swapped — silently, with nothing surfaced anywhere.
+Fixed by catching that failure and reloading once to pick up the fresh
+`index.html`/chunk manifest; a second failure after that reload is a real
+error, not a stale bundle, so it's left to surface instead of reloading
+forever. Verified by deliberately blocking the Help chunk in a built
+preview and confirming the router reloads instead of going silent.
+
+## Help Manual: topic navigation instead of one long scrolling page
+
+Direct user request: the Help Manual above rendered every topic
+concatenated into one page behind a jump-to-anchor table of contents —
+reading about Invoices still meant scrolling past PO Upload, BoM
+Builder, and everything else first. Restructured `src/screens/help.js`
+so only the selected topic is ever in the DOM:
+
+- A sidebar lists every topic (How To screens, FAQ, Troubleshooting);
+  clicking one swaps the content panel and highlights the active entry
+  — no scrolling required to reach a topic, and no unrelated topics'
+  images loaded until their topic is opened.
+- Cross-reference links inside a topic's own body (e.g. Inspection's
+  "see Inventory") use the same `data-help-nav` mechanism as the
+  sidebar, jumping straight to that topic instead of scrolling to an
+  in-page anchor.
+- Bill Payments' role-based exclusion is unaffected — its sidebar entry
+  and How To topic are still only ever built into the topic list when
+  `canViewModule('/bill-payments', role)` is true, so a non-authorized
+  viewer never has it in the DOM, not even unopened.
+- `e2e/phase1.spec.js`'s Help-manual tests updated for the new
+  interaction: switching topics via the sidebar and via an in-content
+  cross-reference link, and the FAQ expand/collapse test now opens the
+  FAQ topic first instead of finding it pre-rendered on the page.
