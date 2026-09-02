@@ -66,15 +66,23 @@ src/
   layout.js                                   # shared app shell (desktop sidebar / mobile top bar+tabs)
   components.js                                 # shared render helpers (escapeHtml, renderIdentityBlock, ...)
   screens/                                        # one file per sidebar module — all real as of Phase 10
+    help.js                                             # click-by-click How To (every screen, real screenshots)
+                                                           # + FAQ — see public/help/screenshots/ and
+                                                           # scripts/capture-help-screenshots.mjs
   dialogs/
     addUserDialog.js                                  # "Add User" modal (Phase 1)
   styles/
     tailwind-base.css                                   # @tailwind base
     nocturne.css                                          # design tokens/components, ported from Task_Management
     tailwind-components-utilities.css                       # @tailwind components/utilities
+public/
+  help/
+    screenshots/                                        # real screenshots embedded in the Help manual, captured
+                                                           # via scripts/capture-help-screenshots.mjs — not hand-made
 e2e/
   phase0.spec.js            # Playwright — auth guard, sign-up validation, inactive-user block, sign-out
-  phase1.spec.js              # Playwright — nav permission matrix, route guards, Users & Roles screen
+  phase1.spec.js              # Playwright — nav permission matrix, route guards, Users & Roles screen,
+                                 # Help manual (Bill Payments exclusion, TOC, screenshots, FAQ)
   phase2.spec.js                # Playwright — PO Upload (incl. Map Fields Manually), Order Status
   phase3.spec.js                  # Playwright — Material Inward, Inspection, Master Material Status
   phase4.spec.js                    # Playwright — Inventory (Item Master, ledger, below-reorder)
@@ -100,6 +108,9 @@ scripts/
                                              # that service-role-only writes aren't logged
   test-rls-bill-payments.mjs                # ...for the 'bill-documents' Storage bucket's RLS policies — no new
                                                # table, "Bill" and "Invoice" are the same record (Phase 10)
+  capture-help-screenshots.mjs                # one-off: captures every screen (demo mode, mocked network) into
+                                                 # public/help/screenshots/ for the Help manual — rerun by hand
+                                                 # whenever the UI changes enough to go stale, not part of CI
 supabase/
   schema.sql               # running source of truth for the DB schema + RLS
   README.md                  # Supabase project setup steps
@@ -165,6 +176,34 @@ both exist:
    `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` from the Supabase
    project (Production **and** Preview environments).
 3. Push to `main` → auto-deploys.
+
+## Help Manual
+
+`src/screens/help.js` (linked from every screen's sidebar) is a full,
+click-by-click user manual aimed at a non-technical reader — not the
+short one-line-per-module summary it started as. Two parts:
+
+- **How To**: one section per screen, each a numbered step-by-step
+  walkthrough ("Click X", "Type Y into Z") illustrated with a real
+  screenshot of that screen, not a description of it. The screenshots
+  live in `public/help/screenshots/` and are captured by
+  `scripts/capture-help-screenshots.mjs` against demo mode (mocked
+  network, no live Supabase project needed) — rerun it by hand whenever
+  a UI change makes them stale (not part of CI, same as the sibling
+  Task_Management/WorkSync app's own Help manual). A table of contents
+  at the top jumps to any section.
+- **FAQ**: a fixed list of the questions a day-to-day user actually runs
+  into (role visibility, PO parsing gone wrong, status fields that
+  update themselves, reorder/reservation math, CSV export, and more),
+  each collapsed by default — click a question to expand its answer.
+
+Bill Payments' exclusion for non-authorized roles (build brief §3)
+extends to this content too — its How To section, its Table of Contents
+entry, and the one FAQ item that names it are all built conditionally on
+the viewer's role (`canViewModule('/bill-payments', role)`), exactly
+like `RESTRICTED_SECTION` did before this rewrite. Covered by
+`e2e/phase1.spec.js`, including a real regression check that every
+screenshot referenced actually exists and decodes.
 
 ## Phases
 

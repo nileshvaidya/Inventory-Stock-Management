@@ -130,3 +130,35 @@ test.describe('Phase 1 — Help excludes Bill Payments for non-authorized roles'
     await expect(page.locator('[data-screen="help"]')).toContainText('Bill Payments');
   });
 });
+
+test.describe('Phase 1 — Help manual: How To and FAQ', () => {
+  test('table of contents jumps to a section, and screenshots load', async ({ page }) => {
+    await page.goto('/?demoRole=admin#/help');
+    await expect(page.locator('[data-screen="help"]')).toBeVisible();
+
+    await page.click('[data-toc-link][href="#help-invoices"]');
+    await expect(page.locator('#help-invoices')).toBeInViewport();
+
+    const shot = page.locator('#help-po-upload img').first();
+    await expect(shot).toHaveAttribute('src', /\/help\/screenshots\/.+\.png$/);
+    // naturalWidth is 0 for a broken/missing image once the browser has
+    // finished trying to load it — a real regression check that the file
+    // in public/help/screenshots/ actually exists and decodes.
+    await expect(async () => {
+      const naturalWidth = await shot.evaluate((img) => /** @type {HTMLImageElement} */ (img).naturalWidth);
+      expect(naturalWidth).toBeGreaterThan(0);
+    }).toPass();
+  });
+
+  test('an FAQ question expands and collapses its answer', async ({ page }) => {
+    await page.goto('/?demoRole=admin#/help');
+    const firstQuestion = page.locator('[data-faq-question]').first();
+    const firstAnswer = page.locator('[data-faq-answer]').first();
+
+    await expect(firstAnswer).toBeHidden();
+    await firstQuestion.click();
+    await expect(firstAnswer).toBeVisible();
+    await firstQuestion.click();
+    await expect(firstAnswer).toBeHidden();
+  });
+});

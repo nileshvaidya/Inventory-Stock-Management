@@ -629,3 +629,38 @@ README section had been carrying forward since Phase 1:
   `README.md`'s and `design-reference/README.md`'s open items updated
   across every phase to point at this instead of repeating "still not
   available."
+
+## Help Manual: click-by-click How To (every screen, real screenshots) + FAQ
+
+Direct user request: rebuilt `src/screens/help.js` from a one-line-per-
+module summary into a full user manual for a non-technical reader,
+porting the pattern (TOC, numbered steps, embedded real screenshots)
+from the sibling Task_Management/WorkSync app's own Help manual.
+
+- **How To**: one section per screen — Getting Started (sign in/up),
+  Dashboard, PO Upload (including Map Fields Manually), Order Status,
+  Material Inward, Inspection, Master Material Status, Inventory, BoM
+  Builder, Work Orders, Invoices, Reports, Users & Roles, Action Log,
+  and (role-gated) Bill Payments — each a numbered, click-by-click
+  walkthrough with a real screenshot, not a description. A table of
+  contents at the top jumps to any section.
+- `scripts/capture-help-screenshots.mjs` (new): captures all 26
+  screenshots against demo mode with mocked network responses — no live
+  Supabase project needed. One shared, coherent set of fixture data
+  (same vendor/project/item names) runs through every screen so the
+  manual reads as one consistent story. Not part of CI; rerun by hand
+  when the UI changes enough to go stale.
+- **FAQ**: a fixed list of real day-to-day questions (role visibility,
+  a PDF that didn't parse right, self-updating PO status, Received vs.
+  Accepted quantity, the reorder/reservation math, undoing a BoM
+  production run, CSV export, and more) — click a question to expand
+  its answer, collapsed by default.
+- Bill Payments' role-based exclusion (build brief §3, previously
+  `RESTRICTED_SECTION`) now extends across all three surfaces this
+  rewrite touches — the How To section, its TOC entry, and the one FAQ
+  item that names it — each built conditionally on
+  `canViewModule('/bill-payments', role)`, never present in the DOM at
+  all for a non-authorized viewer. `e2e/phase1.spec.js` gained two new
+  tests (TOC navigation + a real check that every screenshot referenced
+  actually loads, plus FAQ expand/collapse) alongside its existing
+  Bill-Payments-exclusion coverage.
