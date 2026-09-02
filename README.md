@@ -155,8 +155,9 @@ session persistence) need a real Supabase project wired up.
 
 ## Deployment
 
-Vercel project + Supabase project are set up and owned outside this repo
-(see the open items in this Phase 0 handoff). Once both exist:
+Live at https://inventory-stock-management-nine.vercel.app — Vercel
+project + Supabase project are set up and owned outside this repo. Once
+both exist:
 
 1. Vercel: import this repo, framework preset "Vite", build command
    `npm run build`, output directory `dist` (already in `vercel.json`).
