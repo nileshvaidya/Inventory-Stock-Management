@@ -50,8 +50,28 @@ export async function renderRoute(container, hash = window.location.hash, sessio
   return path;
 }
 
+// A tab left open across a new deploy still holds the old JS bundle, whose
+// dynamic import() calls point at chunk filenames (content-hashed) that no
+// longer exist on the server once the new build has replaced them. That
+// import rejects, and with no handler the failure was silent: the clicked
+// link's hash still updates the URL bar, but renderRoute never gets far
+// enough to swap the screen — from the user's side, the link just does
+// nothing. Recover by reloading once to pick up the fresh index.html and
+// chunk manifest; a second failure after that is a real error, not a stale
+// bundle, so it's left to surface instead of reloading forever.
+const RELOAD_ONCE_KEY = 'ism-router-reload-once';
+
 export function startRouter(container) {
-  const handler = () => renderRoute(container);
+  const handler = () =>
+    renderRoute(container)
+      .then(() => sessionStorage.removeItem(RELOAD_ONCE_KEY))
+      .catch((err) => {
+        console.error('Route render failed', err);
+        if (!sessionStorage.getItem(RELOAD_ONCE_KEY)) {
+          sessionStorage.setItem(RELOAD_ONCE_KEY, '1');
+          window.location.reload();
+        }
+      });
   window.addEventListener('hashchange', handler);
   if (!window.location.hash) {
     window.location.hash = `#${DEFAULT_ROUTE}`;
