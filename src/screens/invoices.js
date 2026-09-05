@@ -364,7 +364,14 @@ function wireEvents(container, store, user, load) {
     });
   });
   container.querySelector('[data-action="form-invoice-number"]')?.addEventListener('input', (e) => store.setState({ invoiceNumber: e.target.value }));
-  container.querySelector('[data-action="form-invoice-date"]')?.addEventListener('input', (e) => {
+  // 'change' rather than 'input': a native date picker's in-progress
+  // segment (day/month/year) lives in the browser's own internal editing
+  // state, which a full re-render (this screen's paint(), on every
+  // store.setState) can't preserve the way repaintPreservingFocus does for
+  // a text input's cursor position — re-rendering mid-edit silently wipes
+  // whatever segment the user was typing. 'change' only fires once a full
+  // date is committed, so no re-render happens until then.
+  container.querySelector('[data-action="form-invoice-date"]')?.addEventListener('change', (e) => {
     const state = store.getState();
     store.setState({ invoiceDate: e.target.value, dueDate: addDays(e.target.value, state.paymentTermsDays) || state.dueDate });
   });
@@ -372,7 +379,7 @@ function wireEvents(container, store, user, load) {
     const state = store.getState();
     store.setState({ paymentTermsDays: e.target.value, dueDate: addDays(state.invoiceDate, e.target.value) || state.dueDate });
   });
-  container.querySelector('[data-action="form-due-date"]')?.addEventListener('input', (e) => store.setState({ dueDate: e.target.value }));
+  container.querySelector('[data-action="form-due-date"]')?.addEventListener('change', (e) => store.setState({ dueDate: e.target.value }));
   container.querySelector('[data-action="form-amount"]')?.addEventListener('input', (e) => store.setState({ amount: e.target.value }));
   container.querySelector('[data-action="form-notes"]')?.addEventListener('input', (e) => store.setState({ notes: e.target.value }));
 

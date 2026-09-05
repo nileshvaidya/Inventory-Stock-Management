@@ -283,7 +283,14 @@ function wireEvents(container, store, user, loadOrders, loadForPo) {
     });
   });
 
-  container.querySelector('[data-action="received-date"]')?.addEventListener('input', (e) => {
+  // 'change' rather than 'input': a native date picker's in-progress
+  // segment (day/month/year) lives in the browser's own internal editing
+  // state, which a full re-render (this screen's paint(), on every
+  // store.setState) can't preserve the way repaintPreservingFocus does for
+  // a text input's cursor position — re-rendering mid-edit silently wipes
+  // whatever segment the user was typing. 'change' only fires once a full
+  // date is committed, so no re-render happens until then.
+  container.querySelector('[data-action="received-date"]')?.addEventListener('change', (e) => {
     store.setState({ receivedDate: e.target.value });
   });
   container.querySelector('[data-action="notes"]')?.addEventListener('input', (e) => {

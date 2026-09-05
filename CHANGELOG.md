@@ -900,3 +900,28 @@ fallback either way.
   also exercise the OCR fallback path — updated to expect and wait out
   an OCR attempt that itself finds nothing, rather than no attempt at
   all.
+
+## Fix: typing into a date field could scramble it
+
+Reported on Invoices' Invoice Date field. Every screen re-renders its
+whole form on every `store.setState` (needed to keep computed
+totals/validation live) — for a text input, `repaintPreservingFocus`
+(`src/domFocus.js`) survives that by remembering and restoring cursor
+position on the freshly-rendered equivalent element. A native `<input
+type="date">` has no equivalent to restore: which day/month/year
+segment is being edited, and any partially-typed digit within it, is
+internal browser state with no DOM API to read or restore. Typing into
+one fired `'input'` on every keystroke — including mid-segment, before
+a full date exists — so it re-rendered (destroying and recreating the
+date input) before the user finished typing, dropping focus back onto
+a brand-new element with no memory of which segment was active.
+
+Switched every date field driven by a live keystroke handler (Invoice
+Date, Due Date, and the derived-total-relevant PO Upload's Order Date,
+Material Inward's Received Date) from `'input'` to `'change'` —
+`'change'` only fires once a full date is committed, so no re-render
+happens while a segment is still being typed. The date-range filters
+on Order Status/Action Log already used `'change'` and were never
+affected. Confirmed the due-date-from-payment-terms auto-calculation
+still fires correctly on `'change'`; full suite (lint, typecheck, 130
+unit tests, all 84 e2e tests, production build) stayed green.

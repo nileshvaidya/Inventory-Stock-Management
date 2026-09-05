@@ -620,7 +620,14 @@ function wireEvents(container, store, user) {
     store.setState({ vendorId: e.target.value });
   });
 
-  container.querySelector('[data-action="order-date"]')?.addEventListener('input', (e) => store.setState({ orderDate: e.target.value }));
+  // 'change' rather than 'input': a native date picker's in-progress
+  // segment (day/month/year) lives in the browser's own internal editing
+  // state, which a full re-render (this screen's paint(), on every
+  // store.setState) can't preserve the way repaintPreservingFocus does for
+  // a text input's cursor position — re-rendering mid-edit silently wipes
+  // whatever segment the user was typing. 'change' only fires once a full
+  // date is committed, so no re-render happens until then.
+  container.querySelector('[data-action="order-date"]')?.addEventListener('change', (e) => store.setState({ orderDate: e.target.value }));
   container.querySelector('[data-action="po-number"]')?.addEventListener('input', (e) => store.setState({ poNumber: e.target.value }));
   container.querySelector('[data-action="payment-terms"]')?.addEventListener('input', (e) => store.setState({ paymentTermsDays: e.target.value }));
 
