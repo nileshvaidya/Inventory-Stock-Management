@@ -14,7 +14,7 @@ import { fetchItems, createItem } from '../items.js';
 import { createPurchaseOrder } from '../purchaseOrders.js';
 import { fetchMappingForVendor, saveMappingForVendor } from '../importMappings.js';
 import { validatePurchaseOrderForm, validateLineItem } from '../validation.js';
-import { repaintPreservingFocus } from '../domFocus.js';
+import { repaintPreservingFocus, afterFocusSettles } from '../domFocus.js';
 
 const DOC_TYPE = 'purchase_order';
 
@@ -630,8 +630,14 @@ function wireEvents(container, store, user) {
   // was assumed in an earlier, insufficient fix here), so it re-renders
   // mid-edit just as often as 'input' did. 'blur' only fires once, after
   // the user is done with the field entirely, so no re-render ever
-  // interrupts an in-progress edit.
-  container.querySelector('[data-action="order-date"]')?.addEventListener('blur', (e) => store.setState({ orderDate: e.target.value }));
+  // interrupts an in-progress edit. The setState itself is deferred via
+  // afterFocusSettles: calling it synchronously inside 'blur' raced the
+  // browser's own Tab-driven focus transfer and broke Tab navigation out
+  // of this field — see domFocus.js.
+  container.querySelector('[data-action="order-date"]')?.addEventListener('blur', (e) => {
+    const value = e.target.value;
+    afterFocusSettles(() => store.setState({ orderDate: value }));
+  });
   container.querySelector('[data-action="po-number"]')?.addEventListener('input', (e) => store.setState({ poNumber: e.target.value }));
   container.querySelector('[data-action="payment-terms"]')?.addEventListener('input', (e) => store.setState({ paymentTermsDays: e.target.value }));
 

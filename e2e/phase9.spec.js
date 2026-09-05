@@ -70,10 +70,16 @@ test.describe('Phase 9 — Action Log', () => {
     await page.selectOption('[data-action="filter-operation"]', 'DELETE');
     await expect.poll(() => lastUrl).toContain('operation=eq.DELETE');
 
+    // The date filters only sync to app state on blur (see
+    // src/screens/actionLog.js — re-rendering while a native date picker
+    // still has focus can corrupt its in-progress segment), so leave the
+    // field before checking; fill() alone doesn't trigger blur.
     await page.fill('[data-action="filter-date-from"]', '2026-01-01');
+    await page.locator('[data-action="filter-date-from"]').blur();
     await expect.poll(() => lastUrl).toContain('created_at=gte.2026-01-01');
 
     await page.fill('[data-action="filter-date-to"]', '2026-01-31');
+    await page.locator('[data-action="filter-date-to"]').blur();
     // Inclusive of the whole "To" day: the query uses an exclusive upper
     // bound of the *next* day, not the literal typed date.
     await expect.poll(() => lastUrl).toContain('created_at=lt.2026-02-01');

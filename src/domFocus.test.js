@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { repaintPreservingFocus } from './domFocus.js';
+import { describe, it, expect, vi } from 'vitest';
+import { repaintPreservingFocus, afterFocusSettles } from './domFocus.js';
 
 function mount(html) {
   const root = document.createElement('div');
@@ -88,5 +88,22 @@ describe('repaintPreservingFocus', () => {
     const after = root.querySelector('select');
     expect(document.activeElement).toBe(after);
     expect(after.value).toBe('item-1');
+  });
+});
+
+describe('afterFocusSettles', () => {
+  it('defers the callback rather than running it synchronously', () => {
+    vi.useFakeTimers();
+    let ran = false;
+    afterFocusSettles(() => {
+      ran = true;
+    });
+    // Not yet — this is the whole point: a 'blur' handler that calls
+    // setState synchronously races the browser's own in-flight focus
+    // transfer (e.g. Tab moving to the next field), stealing focus back.
+    expect(ran).toBe(false);
+    vi.runAllTimers();
+    expect(ran).toBe(true);
+    vi.useRealTimers();
   });
 });

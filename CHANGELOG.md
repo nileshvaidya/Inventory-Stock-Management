@@ -949,3 +949,46 @@ user tabbing/clicking away) before asserting on the computed value —
 previously it asserted immediately after `fill()`, which doesn't
 trigger blur on its own. Full suite (lint, typecheck, 130 unit tests,
 all 84 e2e tests, production build) stayed green.
+
+## Fix: the `'blur'` fix broke Tab navigation out of a date field
+
+Reported next: pressing Tab out of a date field (Invoice Date, Order
+Date, Received Date) went nowhere. Root cause was the `'blur'` fix's
+own `store.setState` call: it ran synchronously inside the `'blur'`
+handler, which is itself part of the browser's Tab-driven focus
+transfer — at that exact point, `document.activeElement` is still (or
+back to) the blurring date field, so `repaintPreservingFocus`, reading
+that, force-refocused it, fighting the Tab key's own attempt to move
+focus onward.
+
+Added `afterFocusSettles` (`src/domFocus.js`): wraps the `setState` in
+a zero-delay `setTimeout`, so it runs just after the browser finishes
+the focus transfer already in flight, by which point
+`document.activeElement` correctly reflects wherever the user actually
+tabbed to. Applied at all four date-blur sites.
+
+Auditing every date field turned up two more affected by the same
+underlying issues (typing corruption and, worse, complete focus loss)
+that had gone unnoticed: Order Status's and Action Log's date-range
+filters shared their event wiring with their `<select>` filters via a
+generic `'change'`-based `bindFilter` helper — same `'change'`-fires-
+per-segment problem as the original bug, now split into a dedicated
+`'blur'` + `afterFocusSettles` handler for just the two date fields.
+Worse, neither screen ever adopted `repaintPreservingFocus` when the
+original per-keystroke focus-loss bug was fixed elsewhere (Order
+Status/Action Log have no other field needing live per-keystroke
+reactivity, so it wasn't obviously needed) — meaning *any* repaint on
+either screen, date field or otherwise, dropped focus to `<body>`
+instead of preserving it. Both screens' `paint()` now wrap their
+render in `repaintPreservingFocus`, matching every other screen.
+
+Verified via real (non-headless-typing) Playwright sessions across all
+five affected screens/eight date fields that: typing no longer
+corrupts a date mid-entry, Tab correctly reaches the next field after
+each date's own multi-segment tab stops (confirmed as native browser
+behavior, not a bug, on a bare zero-JS `<input type=date>`), and
+`e2e/phase9.spec.js`'s date-filter test (also affected by the switch
+to `'blur'`) updated the same way phase5's was. `src/domFocus.test.js`
+gained a unit test for `afterFocusSettles`. Full suite (lint,
+typecheck, 131 unit tests, all 84 e2e tests, production build) stayed
+green.

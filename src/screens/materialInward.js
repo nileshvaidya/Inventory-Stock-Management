@@ -14,7 +14,7 @@ import {
   getChallanFileUrl,
 } from '../materialInward.js';
 import { validateInwardForm, validateInwardLineItem } from '../validation.js';
-import { repaintPreservingFocus } from '../domFocus.js';
+import { repaintPreservingFocus, afterFocusSettles } from '../domFocus.js';
 import { extractPdfText, parseChallanText } from '../pdfParser.js';
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
@@ -293,9 +293,13 @@ function wireEvents(container, store, user, loadOrders, loadForPo) {
   // was assumed in an earlier, insufficient fix here), so it re-renders
   // mid-edit just as often as 'input' did. 'blur' only fires once, after
   // the user is done with the field entirely, so no re-render ever
-  // interrupts an in-progress edit.
+  // interrupts an in-progress edit. The setState itself is deferred via
+  // afterFocusSettles: calling it synchronously inside 'blur' raced the
+  // browser's own Tab-driven focus transfer and broke Tab navigation out
+  // of this field — see domFocus.js.
   container.querySelector('[data-action="received-date"]')?.addEventListener('blur', (e) => {
-    store.setState({ receivedDate: e.target.value });
+    const value = e.target.value;
+    afterFocusSettles(() => store.setState({ receivedDate: value }));
   });
   container.querySelector('[data-action="notes"]')?.addEventListener('input', (e) => {
     store.setState({ notes: e.target.value });

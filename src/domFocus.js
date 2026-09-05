@@ -73,3 +73,23 @@ function describeFocusTarget(el) {
 function escapeAttrValue(value) {
   return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
+
+/**
+ * Defers `fn` (a store.setState call that will trigger a
+ * repaintPreservingFocus re-render) until just after the browser finishes
+ * any focus transfer already in flight — e.g. Tab moving focus to the next
+ * field. A 'blur' handler that calls setState synchronously races that
+ * transfer: repaintPreservingFocus reads document.activeElement to decide
+ * what to refocus, but at the point a 'blur' handler runs, the browser
+ * hasn't yet moved focus to the next element — so it force-refocuses the
+ * very field that's supposed to be losing focus, breaking Tab navigation
+ * (reported after Invoices' date fields were switched to 'blur'). A
+ * zero-delay setTimeout runs after the browser completes the focus change
+ * already underway, so by the time this re-render happens,
+ * document.activeElement correctly reflects wherever the user actually
+ * tabbed to.
+ * @param {() => void} fn
+ */
+export function afterFocusSettles(fn) {
+  setTimeout(fn, 0);
+}

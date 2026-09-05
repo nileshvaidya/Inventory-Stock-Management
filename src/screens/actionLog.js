@@ -11,6 +11,7 @@ import { canViewModule } from '../navPermissions.js';
 import { fetchActionLog, describeAction, TABLE_LABELS, OPERATION_LABELS } from '../actionLog.js';
 import { fetchAdminUsers } from '../admin.js';
 import { toCsv, downloadCsv } from '../csvExport.js';
+import { repaintPreservingFocus, afterFocusSettles } from '../domFocus.js';
 
 function initialState() {
   return {
@@ -60,8 +61,16 @@ export async function render(container) {
   }
 
   function paint() {
-    renderContent(content, store.getState());
-    wireEvents(content, store, load);
+    // Without repaintPreservingFocus, any repaint (a filter's 'change',
+    // the date fields' deferred 'blur' above) drops focus to <body> — this
+    // screen never got the fix the other screens received when the
+    // original per-keystroke focus-loss bug was found, since none of its
+    // fields need live per-keystroke reactivity. It still needs the same
+    // wrapper for anything that re-renders while a field has focus.
+    repaintPreservingFocus(content, () => {
+      renderContent(content, store.getState());
+      wireEvents(content, store, load);
+    });
   }
 
   store.subscribe(paint);
@@ -173,8 +182,26 @@ function wireEvents(container, store, load) {
   bindFilter('[data-action="filter-user"]', 'userId');
   bindFilter('[data-action="filter-table"]', 'tableName');
   bindFilter('[data-action="filter-operation"]', 'operation');
-  bindFilter('[data-action="filter-date-from"]', 'dateFrom');
-  bindFilter('[data-action="filter-date-to"]', 'dateTo');
+  // Date fields use 'blur', not the 'change' the filters above share:
+  // Chrome fires 'change' on a date input on every completed segment, not
+  // just once the full date is committed, so wiring it the same way as a
+  // <select> would re-render (destroying/recreating the input, since this
+  // screen doesn't use repaintPreservingFocus — there's no other live-typed
+  // field to preserve) on every keystroke while the user is still typing a
+  // date, and can also fight the browser's own Tab-driven focus transfer
+  // out of the field (see domFocus.js's afterFocusSettles for why the
+  // state update itself needs deferring, not just the event choice).
+  const bindDateFilter = (selector, key) => {
+    container.querySelector(selector)?.addEventListener('blur', (e) => {
+      const value = e.target.value;
+      afterFocusSettles(() => {
+        store.setState({ [key]: value });
+        load();
+      });
+    });
+  };
+  bindDateFilter('[data-action="filter-date-from"]', 'dateFrom');
+  bindDateFilter('[data-action="filter-date-to"]', 'dateTo');
 
   container.querySelector('[data-action="retry"]')?.addEventListener('click', load);
 
