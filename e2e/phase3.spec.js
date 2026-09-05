@@ -151,12 +151,14 @@ test.describe('Phase 3 — Material Inward', () => {
     expect(insertCalled).toBe(false);
   });
 
-  test('uploading a non-PDF delivery challan attaches it without attempting to auto-fill quantities', async ({ page }) => {
+  test('uploading a non-PDF delivery challan that OCR cannot read falls back to manual entry', async ({ page }) => {
     // Real PDF parsing (extractPdfText + parseChallanText + matching by
     // item name) is covered by src/pdfParser.test.js's own unit tests
     // (pure logic, no PDF binary fixture needed here) — same convention as
     // PO Upload's e2e suite. This test only needs a file whose type isn't
-    // application/pdf, which Playwright can synthesize in-memory.
+    // application/pdf; it isn't a real image, so the OCR fallback
+    // (src/ocr.js) that runs for image files also comes up empty, same end
+    // state as if OCR didn't exist, just reached by a different path.
     await page.route('**/rest/v1/purchase_orders**', (route) =>
       route.fulfill({
         status: 200,
@@ -197,7 +199,7 @@ test.describe('Phase 3 — Material Inward', () => {
       buffer: Buffer.from('not a real png, just a placeholder for a scanned image'),
     });
 
-    await expect(page.locator('[data-role="challan-parse-note"]')).toContainText('enter received quantities by hand');
+    await expect(page.locator('[data-role="challan-parse-note"]')).toContainText('enter quantities by hand', { timeout: 30000 });
     await expect(page.locator('[data-action="received-qty"][data-po-line-item-id="pli-1"]')).toHaveValue('');
     await expect(page.locator('text=Selected: scanned-challan.png')).toBeVisible();
   });

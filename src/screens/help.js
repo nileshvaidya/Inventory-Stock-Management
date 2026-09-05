@@ -229,7 +229,7 @@ function renderPoUpload() {
     ${h3('Step 1 — Upload the PDF')}
     ${ol([
       'Click <strong>Choose File</strong> under "Upload PO PDF" and pick the PDF from your computer.',
-      'The app reads the file and tries to fill in the Line Items table below automatically (item name, quantity, rate) along with the PO Number and Order Date, where it can find them.',
+      'The app reads the file and tries to fill in the Line Items table below automatically (item name, quantity, rate) along with the PO Number and Order Date, where it can find them. If the PDF has no readable text (a scanned or photographed document), it automatically scans the image instead — this can take up to a minute, shown by a "Scanning document…" message.',
       'If nothing was found, a message appears explaining that — you can still add every row by hand, or use <strong>Map Fields Manually</strong> (below) to build rows from the extracted text.',
     ])}
 
@@ -307,7 +307,7 @@ function renderMaterialInward() {
     ${h3('Uploading a Delivery Challan (optional)')}
     ${ol([
       'After picking a Purchase Order, click <strong>Choose File</strong> under "Upload Delivery Challan" and pick the challan file — a PDF or a scanned image.',
-      'For a text-based PDF, the app reads it and tries to fill in <strong>Receiving Now</strong> automatically for any item it can match by name to a line on this PO — items it can\'t match, or an image file, are left for you to fill in by hand.',
+      'For a text-based PDF, the app reads it and tries to fill in <strong>Receiving Now</strong> automatically for any item it can match by name to a line on this PO. For a scanned/photographed challan (an image file, or a PDF with no readable text), it automatically scans the image instead — this can take up to a minute, shown by a "Scanning document…" message — with the same automatic matching once done. Items it still can\'t match are left for you to fill in by hand.',
       'A note above the table explains what happened (e.g. "Matched 2 of 3 line(s)...") — always review the prefilled quantities before saving, same as PO Upload\'s parsed rows.',
     ])}
     ${img('07-material-inward.png', 'Material Inward with a PO selected, the Upload Delivery Challan field, one line item fully received and another being entered, plus the Inward History below')}
@@ -463,7 +463,7 @@ function renderInvoices() {
     ${h3('Creating an invoice')}
     ${ol([
       'Click <strong>+ New Invoice</strong>.',
-      'Click <strong>Choose File</strong> under "Upload Invoice" (optional) and pick the invoice file — a PDF or a scanned image. For a text-based PDF, the app reads it and tries to fill in <strong>Invoice Number</strong>, <strong>Invoice Date</strong>, and <strong>Amount</strong> automatically; an image file, or a PDF nothing could be read from, is just attached as-is and every field stays editable by hand.',
+      'Click <strong>Choose File</strong> under "Upload Invoice" (optional) and pick the invoice file — a PDF or a scanned image. For a text-based PDF, the app reads it and tries to fill in <strong>Invoice Number</strong>, <strong>Invoice Date</strong>, and <strong>Amount</strong> automatically. For a scanned/photographed invoice (an image file, or a PDF with no readable text), it automatically scans the image instead — this can take up to a minute, shown by a "Scanning document…" message. Either way, every field stays editable by hand if something wasn\'t found or was read wrong.',
       'Pick the <strong>Vendor</strong> — <strong>Payment Terms</strong> auto-fills from that vendor\'s usual terms, and <strong>Due Date</strong> auto-computes from Invoice Date + Payment Terms (both stay editable).',
       'Check the <strong>Invoice Number</strong>, <strong>Amount</strong>, and <strong>Notes</strong> (optional) fields — fill in or correct anything the upload didn\'t get right.',
       'Tick any Purchase Order(s) this invoice covers under "Link Purchase Orders" — one invoice can cover several POs.',
@@ -585,7 +585,7 @@ const FAQ = [
   },
   {
     q: 'A document I uploaded (PO, delivery challan, invoice) didn\'t parse correctly — what do I do?',
-    a: 'Every field or row filled in from an uploaded document is directly editable, so just correct whatever\'s wrong by hand — nothing is ever locked in from a scan. On PO Upload specifically, a PDF layout the parser doesn\'t recognize at all also has "Map Fields Manually", to build rows by clicking words instead of retyping everything — see the PO Upload topic. A scanned image file (as opposed to a text-based PDF) is never auto-read at all on any screen — it\'s attached as-is, and every field needs to be filled in by hand.',
+    a: 'Every field or row filled in from an uploaded document is directly editable, so just correct whatever\'s wrong by hand — nothing is ever locked in from a scan. On PO Upload specifically, a PDF layout the parser doesn\'t recognize at all also has "Map Fields Manually", to build rows by clicking words instead of retyping everything — see the PO Upload topic. A scanned or photographed document (an image file, or a PDF with no readable text) is automatically scanned instead — this can take up to a minute — but scanning is far less reliable than a text-based PDF, so double-check everything it fills in especially carefully; if it can\'t make out anything useful, every field is left for you to fill in by hand exactly as before.',
   },
   {
     q: 'Why did a Purchase Order\'s status change without me touching it?',

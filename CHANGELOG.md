@@ -854,3 +854,49 @@ manual entry always still available as the fallback/correction path.
 - `src/screens/help.js` updated for both screens' new upload step, and
   the Bill Payments/Invoices FAQ item to note Invoices can now attach a
   file too (only Bill Payments can remove one).
+
+## OCR fallback for scanned/photographed documents (PO Upload, Material Inward, Invoices)
+
+Direct user request, after a real scanned invoice failed to auto-fill:
+the PDF turned out to have no embedded text layer at all (a photo of the
+invoice saved as a PDF, not a text-based one) — not a bug, but a real
+gap, since a scanned image was previously never auto-read on any
+screen. Added OCR (`tesseract.js`) as a fallback across all three
+upload-and-scan flows, so a scan/photo now gets the same auto-fill
+attempt a text-based document already did — manual entry remains the
+fallback either way.
+
+- New `src/ocr.js`: `ocrFile(file, onProgress)` runs OCR on an image
+  file directly, or on a PDF's first page rendered to an off-DOM canvas
+  via `pdfjs-dist` (scaled up 2.5x — a PDF's native 72dpi is too small
+  for reliable OCR) when that PDF has no text layer. Never throws — any
+  failure (a corrupt file, the OCR engine failing to load) just returns
+  `''`, so callers fall back to exactly the same "enter it by hand"
+  messaging as if OCR didn't exist.
+- Wired into PO Upload, Material Inward, and Invoices: each screen's
+  existing fast/free path (`extractPdfText` + its regex parsers) runs
+  first, and OCR is only attempted once that path finds nothing — a
+  scanned/photographed PDF, or (Material Inward/Invoices only, since PO
+  Upload only ever accepted PDFs) a plain image file. Whatever OCR reads
+  is run through the exact same parsers as a text-based document
+  (`parsePoText`/`parseInvoiceNumber`+`parseInvoiceDate`+
+  `parseInvoiceAmount`/`parseChallanText`), so a successful scan
+  auto-fills fields exactly like a text-based upload would.
+- OCR is slow (can take up to a minute, mostly a one-time cost per
+  browser to fetch the ~3MB OCR engine + language data on first use,
+  cached afterwards) — each screen shows a "Scanning document…" message
+  and disables the file input/Save button while it runs, so it can't be
+  mistaken for a stall or double-submitted.
+- Uses `tesseract.js`'s default CDN-hosted engine/language data
+  (jsdelivr) — the library's own recommended way to run it in a
+  browser, no local asset bundling needed.
+- `src/screens/help.js` updated (PO Upload, Material Inward, Invoices
+  topics, and the "didn't parse correctly" FAQ) to explain the new
+  scanning step and that OCR is less reliable than a text-based PDF, so
+  its results are worth double-checking.
+- e2e coverage: the existing non-PDF/image-upload tests in
+  `phase3.spec.js`/`phase5.spec.js` (which use a synthetic, not-a-real-
+  image buffer, per the established no-binary-fixture convention) now
+  also exercise the OCR fallback path — updated to expect and wait out
+  an OCR attempt that itself finds nothing, rather than no attempt at
+  all.

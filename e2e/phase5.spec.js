@@ -143,12 +143,15 @@ test.describe('Phase 5 — Invoices', () => {
     await expect(page.locator('[data-screen="invoices"]')).toContainText('No invoices match');
   });
 
-  test('uploading a non-PDF file attaches it without attempting to auto-fill fields', async ({ page }) => {
+  test('uploading a non-PDF file that OCR cannot read falls back to manual entry', async ({ page }) => {
     // Real PDF parsing (extractPdfText + parseInvoiceNumber/Date/Amount) is
     // covered by src/pdfParser.test.js's own unit tests (pure logic, no PDF
     // binary fixture needed here) — same convention as PO Upload's e2e
-    // suite. This test only needs a file whose type isn't application/pdf,
-    // which Playwright can synthesize in-memory without a real image.
+    // suite. This test only needs a file whose type isn't application/pdf;
+    // it isn't a real image, so the OCR fallback (src/ocr.js) that runs for
+    // image files also comes up empty, same end state as if OCR didn't
+    // exist, just reached by a different path — hence the longer timeout,
+    // to give that fallback attempt (and its failure) time to finish.
     await mockEmptyLookups(page);
     await page.route('**/rest/v1/invoices**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
 
@@ -160,7 +163,7 @@ test.describe('Phase 5 — Invoices', () => {
       buffer: Buffer.from('not a real png, just a placeholder for a scanned image'),
     });
 
-    await expect(page.locator('[data-role="invoice-parse-note"]')).toContainText("enter the invoice's details by hand");
+    await expect(page.locator('[data-role="invoice-parse-note"]')).toContainText('enter them by hand', { timeout: 30000 });
     await expect(page.locator('#inv-number')).toHaveValue('');
     await expect(page.locator('text=Selected: scanned-invoice.png')).toBeVisible();
   });

@@ -30,6 +30,7 @@ function initialState() {
     lineItems: [],
     parseError: null,
     parsedFileName: null,
+    ocrBusy: false,
     statedTotal: null,
     projectId: '',
     newProjectMode: false,
@@ -167,9 +168,10 @@ function renderContent(container, state) {
       <div class="card-kicker">Step 1</div>
       <h3 class="card-title" style="font-size:16px">Upload PO PDF</h3>
       <p class="card-body" style="margin-bottom:8px">Items, quantity, and rate are parsed automatically where possible — review and correct every row below before saving.</p>
-      <input type="file" accept="application/pdf" data-action="pdf-file" class="input" style="padding:6px" />
+      <input type="file" accept="application/pdf" data-action="pdf-file" class="input" style="padding:6px" ${state.ocrBusy ? 'disabled' : ''} />
       ${state.parsedFileName ? `<p style="font-size:12px;color:var(--color-neutral-500);margin-top:6px">Parsed: ${escapeHtml(state.parsedFileName)}</p>` : ''}
-      ${state.parseError ? `<p data-role="parse-error" style="font-size:13px;color:var(--color-accent-2-200);margin-top:8px">${escapeHtml(state.parseError)} Add rows by hand below, or use "Map Fields Manually" to build them from the raw extracted text.</p>` : ''}
+      ${state.ocrBusy ? `<p data-role="po-ocr-busy" style="font-size:12px;color:var(--color-neutral-500);margin-top:6px">Scanning document for line items… this can take up to a minute on a scanned/photographed file.</p>` : ''}
+      ${!state.ocrBusy && state.parseError ? `<p data-role="parse-error" style="font-size:13px;color:var(--color-accent-2-200);margin-top:8px">${escapeHtml(state.parseError)} Add rows by hand below, or use "Map Fields Manually" to build them from the raw extracted text.</p>` : ''}
     </div>
 
     <div class="card elev-sm" style="margin-bottom:16px">
@@ -270,7 +272,7 @@ function renderContent(container, state) {
       </div>
     </div>
 
-    <button type="button" class="btn btn-primary" data-action="save" ${state.saving ? 'disabled' : ''}>${state.saving ? 'Saving…' : 'Save Purchase Order'}</button>
+    <button type="button" class="btn btn-primary" data-action="save" ${state.saving || state.ocrBusy ? 'disabled' : ''}>${state.saving ? 'Saving…' : 'Save Purchase Order'}</button>
   `;
 }
 
@@ -387,10 +389,28 @@ function wireEvents(container, store, user) {
       // switching files (before saving) means starting over with the new
       // one, not merging both POs' line items together.
       try {
-        const text = await extractPdfText(file);
+        let text = await extractPdfText(file);
+        // No recognizable item/qty/rate lines yet — likely a scanned or
+        // photographed PDF with no text layer. Fall back to OCR before
+        // giving up; applyExtractedText re-parses whatever text this ends
+        // up with, exactly as it would a text-based PDF.
+        if (parsePoText(text).length === 0) {
+          store.setState({ ocrBusy: true });
+          // Dynamically imported — OCR (tesseract.js) is a sizeable
+          // dependency only worth fetching once a document actually needs
+          // this fallback, not on every visit to this screen.
+          const { ocrFile } = await import('../ocr.js');
+          const ocrText = await ocrFile(file);
+          // The user may have picked a different file while OCR was
+          // running — don't clobber it with this stale result.
+          if (fileInput.files?.[0] !== file) return;
+          store.setState({ ocrBusy: false });
+          if (ocrText) text = ocrText;
+        }
         await applyExtractedText(store, text, { fileName: file.name });
       } catch {
         store.setState({
+          ocrBusy: false,
           parsedFileName: file.name,
           parseError: "Couldn't read this PDF.",
           lineItems: store.getState().lineItems,

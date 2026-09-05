@@ -40,6 +40,7 @@ function initialState() {
     challanFileName: '',
     challanParseNote: null,
     challanActionError: null,
+    challanOcrBusy: false,
   };
 }
 
@@ -147,10 +148,11 @@ function renderLineItemsCard(state, selectedOrder) {
       </div>
       <div class="field" style="padding:0 14px 14px">
         <label for="mi-challan-file">Upload Delivery Challan (optional)</label>
-        <input id="mi-challan-file" type="file" accept="application/pdf,image/*" data-action="challan-file" class="input" style="padding:6px" />
+        <input id="mi-challan-file" type="file" accept="application/pdf,image/*" data-action="challan-file" class="input" style="padding:6px" ${state.challanOcrBusy ? 'disabled' : ''} />
         <p style="font-size:12px;color:var(--color-neutral-500);margin-top:6px">Item and quantity are read automatically where possible and matched to the line items below — review and correct every row before saving.</p>
         ${state.challanFileName ? `<p style="font-size:12px;color:var(--color-neutral-500);margin-top:6px">Selected: ${escapeHtml(state.challanFileName)}</p>` : ''}
-        ${state.challanParseNote ? `<p data-role="challan-parse-note" style="font-size:12px;color:var(--color-neutral-500);margin-top:4px">${escapeHtml(state.challanParseNote)}</p>` : ''}
+        ${state.challanOcrBusy ? `<p data-role="challan-ocr-busy" style="font-size:12px;color:var(--color-neutral-500);margin-top:4px">Scanning document for item/quantity lines… this can take up to a minute on a scanned/photographed file.</p>` : ''}
+        ${!state.challanOcrBusy && state.challanParseNote ? `<p data-role="challan-parse-note" style="font-size:12px;color:var(--color-neutral-500);margin-top:4px">${escapeHtml(state.challanParseNote)}</p>` : ''}
       </div>
       ${
         state.loadingLineItems
@@ -166,7 +168,7 @@ function renderLineItemsCard(state, selectedOrder) {
         <label for="mi-notes">Notes (optional)</label>
         <input class="input" id="mi-notes" type="text" data-action="notes" value="${escapeHtml(state.notes)}" />
       </div>
-      ${state.lineItemStatus.length > 0 ? `<div style="padding:0 14px 14px"><button type="button" class="btn btn-primary" data-action="save" ${state.saving ? 'disabled' : ''}>${state.saving ? 'Saving…' : 'Log Receipt'}</button></div>` : ''}
+      ${state.lineItemStatus.length > 0 ? `<div style="padding:0 14px 14px"><button type="button" class="btn btn-primary" data-action="save" ${state.saving || state.challanOcrBusy ? 'disabled' : ''}>${state.saving ? 'Saving…' : 'Log Receipt'}</button></div>` : ''}
     </div>
   `;
 }
@@ -228,48 +230,57 @@ function wireEvents(container, store, user, loadOrders, loadForPo) {
     const file = e.target.files?.[0];
     if (!file) return;
     const state = store.getState();
+    store.setState({ challanFile: file, challanFileName: file.name, challanParseNote: null });
 
-    if (file.type !== 'application/pdf') {
-      // Scanned image files are attached as-is on save — automatic field
-      // detection only works for a text-based PDF, same "parsing is
-      // best-effort, manual entry always works" philosophy as PO Upload.
+    let parsedRows = [];
+    let readFailed = false;
+
+    if (file.type === 'application/pdf') {
+      try {
+        const text = await extractPdfText(file);
+        parsedRows = parseChallanText(text);
+      } catch {
+        readFailed = true;
+      }
+    }
+
+    // Nothing found yet (a scanned/photographed PDF with no text layer, a
+    // plain image file, or a PDF read failure) — fall back to OCR before
+    // giving up and asking for manual entry. OCR is slow, so this is only
+    // attempted once the fast, free path has already come up empty.
+    if (!readFailed && parsedRows.length === 0) {
+      store.setState({ challanOcrBusy: true });
+      // Dynamically imported — OCR (tesseract.js) is a sizeable dependency
+      // only worth fetching once a document actually needs this fallback,
+      // not on every visit to this screen.
+      const { ocrFile } = await import('../ocr.js');
+      const ocrText = await ocrFile(file);
+      // The user may have picked a different file while OCR was running —
+      // don't clobber it with this stale result.
+      if (store.getState().challanFile !== file) return;
+      store.setState({ challanOcrBusy: false });
+      if (ocrText) parsedRows = parseChallanText(ocrText);
+    }
+
+    if (readFailed) {
+      store.setState({ challanParseNote: "Couldn't read this file — enter received quantities by hand below." });
+      return;
+    }
+    if (parsedRows.length === 0) {
       store.setState({
-        challanFile: file,
-        challanFileName: file.name,
-        challanParseNote: 'Image file attached — enter received quantities by hand below.',
+        challanParseNote: "Couldn't find any recognizable item/qty lines in this document — enter quantities by hand below.",
       });
       return;
     }
 
-    try {
-      const text = await extractPdfText(file);
-      const parsedRows = parseChallanText(text);
-      if (parsedRows.length === 0) {
-        store.setState({
-          challanFile: file,
-          challanFileName: file.name,
-          challanParseNote: "Couldn't find any recognizable item/qty lines in this document — enter quantities by hand below.",
-        });
-        return;
-      }
-
-      const { receivedQtyByLineItem, matchedCount, totalParsed } = matchChallanToLineItems(parsedRows, state.lineItemStatus);
-      store.setState({
-        challanFile: file,
-        challanFileName: file.name,
-        receivedQtyByLineItem: { ...state.receivedQtyByLineItem, ...receivedQtyByLineItem },
-        challanParseNote:
-          matchedCount === 0
-            ? "Couldn't match any lines in this document to an item on this PO — enter quantities by hand below."
-            : `Matched ${matchedCount} of ${totalParsed} line(s) from the document to items on this PO — review before saving.`,
-      });
-    } catch {
-      store.setState({
-        challanFile: file,
-        challanFileName: file.name,
-        challanParseNote: "Couldn't read this file — enter received quantities by hand below.",
-      });
-    }
+    const { receivedQtyByLineItem, matchedCount, totalParsed } = matchChallanToLineItems(parsedRows, state.lineItemStatus);
+    store.setState({
+      receivedQtyByLineItem: { ...state.receivedQtyByLineItem, ...receivedQtyByLineItem },
+      challanParseNote:
+        matchedCount === 0
+          ? "Couldn't match any lines in this document to an item on this PO — enter quantities by hand below."
+          : `Matched ${matchedCount} of ${totalParsed} line(s) from the document to items on this PO — review before saving.`,
+    });
   });
 
   container.querySelector('[data-action="received-date"]')?.addEventListener('input', (e) => {

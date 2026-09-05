@@ -53,6 +53,7 @@ function initialFormState() {
     invoiceFile: null,
     invoiceFileName: '',
     invoiceParseNote: null,
+    invoiceOcrBusy: false,
   };
 }
 
@@ -179,9 +180,10 @@ function renderNewInvoiceCard(state) {
 
       <div class="field" style="margin-top:10px">
         <label for="inv-file">Upload Invoice (optional)</label>
-        <input id="inv-file" type="file" accept="application/pdf,image/*" data-action="invoice-file" class="input" style="padding:6px" />
+        <input id="inv-file" type="file" accept="application/pdf,image/*" data-action="invoice-file" class="input" style="padding:6px" ${state.invoiceOcrBusy ? 'disabled' : ''} />
         ${state.invoiceFileName ? `<p style="font-size:12px;color:var(--color-neutral-500);margin-top:6px">Selected: ${escapeHtml(state.invoiceFileName)}</p>` : ''}
-        ${state.invoiceParseNote ? `<p data-role="invoice-parse-note" style="font-size:12px;color:var(--color-neutral-500);margin-top:4px">${escapeHtml(state.invoiceParseNote)}</p>` : ''}
+        ${state.invoiceOcrBusy ? `<p data-role="invoice-ocr-busy" style="font-size:12px;color:var(--color-neutral-500);margin-top:4px">Scanning document for invoice details… this can take up to a minute on a scanned/photographed file.</p>` : ''}
+        ${!state.invoiceOcrBusy && state.invoiceParseNote ? `<p data-role="invoice-parse-note" style="font-size:12px;color:var(--color-neutral-500);margin-top:4px">${escapeHtml(state.invoiceParseNote)}</p>` : ''}
       </div>
 
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-top:10px">
@@ -228,7 +230,7 @@ function renderNewInvoiceCard(state) {
               </div>`
         }
       </div>
-      <button type="button" class="btn btn-primary" data-action="save-invoice" style="margin-top:12px" ${state.saving ? 'disabled' : ''}>${state.saving ? 'Saving…' : 'Save Invoice'}</button>
+      <button type="button" class="btn btn-primary" data-action="save-invoice" style="margin-top:12px" ${state.saving || state.invoiceOcrBusy ? 'disabled' : ''}>${state.saving ? 'Saving…' : 'Save Invoice'}</button>
     </div>
   `;
 }
@@ -296,43 +298,58 @@ function wireEvents(container, store, user, load) {
     const file = e.target.files?.[0];
     if (!file) return;
     const state = store.getState();
+    store.setState({ invoiceFile: file, invoiceFileName: file.name, invoiceParseNote: null });
 
-    if (file.type !== 'application/pdf') {
-      // Scanned image files are attached as-is on save — automatic field
-      // detection only works for a text-based PDF, same "parsing is
-      // best-effort, manual entry always works" philosophy as PO Upload.
-      store.setState({
-        invoiceFile: file,
-        invoiceFileName: file.name,
-        invoiceParseNote: "Image file attached — enter the invoice's details by hand below.",
-      });
-      return;
+    let invoiceNumber = null;
+    let invoiceDate = null;
+    let amount = null;
+    let readFailed = false;
+
+    if (file.type === 'application/pdf') {
+      try {
+        const text = await extractPdfText(file);
+        invoiceNumber = parseInvoiceNumber(text);
+        invoiceDate = parseInvoiceDate(text);
+        amount = parseInvoiceAmount(text);
+      } catch {
+        readFailed = true;
+      }
     }
 
-    try {
-      const text = await extractPdfText(file);
-      const invoiceNumber = parseInvoiceNumber(text);
-      const invoiceDate = parseInvoiceDate(text);
-      const amount = parseInvoiceAmount(text);
-      const foundAnything = invoiceNumber !== null || invoiceDate !== null || amount !== null;
-      store.setState({
-        invoiceFile: file,
-        invoiceFileName: file.name,
-        invoiceNumber: invoiceNumber ?? state.invoiceNumber,
-        invoiceDate: invoiceDate ?? state.invoiceDate,
-        dueDate: addDays(invoiceDate ?? state.invoiceDate, state.paymentTermsDays) || state.dueDate,
-        amount: amount !== null ? String(amount) : state.amount,
-        invoiceParseNote: foundAnything
+    // Nothing found yet (a scanned/photographed PDF with no text layer, a
+    // plain image file, or a PDF read failure) — fall back to OCR before
+    // giving up and asking for manual entry. OCR is slow, so this is only
+    // attempted once the fast, free path has already come up empty.
+    if (!readFailed && invoiceNumber === null && invoiceDate === null && amount === null) {
+      store.setState({ invoiceOcrBusy: true });
+      // Dynamically imported — OCR (tesseract.js) is a sizeable dependency
+      // only worth fetching once a document actually needs this fallback,
+      // not on every visit to this screen.
+      const { ocrFile } = await import('../ocr.js');
+      const ocrText = await ocrFile(file);
+      // The user may have picked a different file while OCR was running —
+      // don't clobber it with this stale result.
+      if (store.getState().invoiceFile !== file) return;
+      store.setState({ invoiceOcrBusy: false });
+      if (ocrText) {
+        invoiceNumber = parseInvoiceNumber(ocrText);
+        invoiceDate = parseInvoiceDate(ocrText);
+        amount = parseInvoiceAmount(ocrText);
+      }
+    }
+
+    const foundAnything = invoiceNumber !== null || invoiceDate !== null || amount !== null;
+    store.setState({
+      invoiceNumber: invoiceNumber ?? state.invoiceNumber,
+      invoiceDate: invoiceDate ?? state.invoiceDate,
+      dueDate: addDays(invoiceDate ?? state.invoiceDate, state.paymentTermsDays) || state.dueDate,
+      amount: amount !== null ? String(amount) : state.amount,
+      invoiceParseNote: readFailed
+        ? "Couldn't read this PDF — enter the invoice's details by hand below."
+        : foundAnything
           ? null
-          : "Couldn't auto-detect invoice details from this PDF — enter them by hand below.",
-      });
-    } catch {
-      store.setState({
-        invoiceFile: file,
-        invoiceFileName: file.name,
-        invoiceParseNote: "Couldn't read this PDF — enter the invoice's details by hand below.",
-      });
-    }
+          : "Couldn't auto-detect invoice details from this file — enter them by hand below.",
+    });
   });
 
   container.querySelector('[data-action="form-vendor"]')?.addEventListener('change', (e) => {
