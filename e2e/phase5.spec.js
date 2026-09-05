@@ -54,9 +54,13 @@ test.describe('Phase 5 — Invoices', () => {
     await page.selectOption('[data-action="form-vendor"]', 'v1');
 
     // Payment terms auto-filled from the vendor's default (30 days) —
-    // due date should be auto-computed from that + the invoice date.
+    // due date should be auto-computed from that + the invoice date. The
+    // date field only syncs to app state on blur (see src/screens/invoices.js
+    // — re-rendering while a native date picker still has focus can corrupt
+    // its in-progress segment), so leave the field before checking.
     await expect(page.locator('[data-action="form-payment-terms"]')).toHaveValue('30');
     await page.fill('[data-action="form-invoice-date"]', '2026-01-01');
+    await page.locator('[data-action="form-invoice-date"]').blur();
     await expect(page.locator('[data-action="form-due-date"]')).toHaveValue('2026-01-31');
 
     await page.fill('[data-action="form-amount"]', '5000');

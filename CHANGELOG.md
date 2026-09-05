@@ -925,3 +925,27 @@ on Order Status/Action Log already used `'change'` and were never
 affected. Confirmed the due-date-from-payment-terms auto-calculation
 still fires correctly on `'change'`; full suite (lint, typecheck, 130
 unit tests, all 84 e2e tests, production build) stayed green.
+
+## Fix: the date field fix above was incomplete — switched to `'blur'`
+
+Reported still broken after the `'change'`-based fix shipped. Turns
+out Chrome fires `'change'` on a date input on every completed
+segment, not only once the whole date is committed as assumed above —
+so it was still re-rendering (and still corrupting the in-progress
+edit) just as often as `'input'` did.
+
+Switched the same four fields (Invoice Date, Due Date, PO Upload's
+Order Date, Material Inward's Received Date) from `'change'` to
+`'blur'`, which fires exactly once, only after the user leaves the
+field entirely — guaranteeing no re-render ever interrupts an
+in-progress edit, regardless of how many intermediate `'input'`/
+`'change'` events the browser fires along the way. The due-date
+auto-calculation (and anything else reading these fields) now updates
+once the user tabs/clicks away, rather than live per-segment — a
+one-time render is unavoidable however this is wired, so this is the
+earliest point that render can safely happen. `e2e/phase5.spec.js`'s
+due-date test updated to blur the invoice-date field (matching a real
+user tabbing/clicking away) before asserting on the computed value —
+previously it asserted immediately after `fill()`, which doesn't
+trigger blur on its own. Full suite (lint, typecheck, 130 unit tests,
+all 84 e2e tests, production build) stayed green.
