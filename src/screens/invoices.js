@@ -5,12 +5,13 @@ import { renderShell } from '../layout.js';
 import { escapeHtml } from '../components.js';
 import { createStore } from '../state.js';
 import { canViewModule } from '../navPermissions.js';
-import { fetchInvoices, createInvoice, markInvoicePaid, softDeleteInvoice } from '../invoices.js';
+import { fetchInvoices, createInvoice, markInvoicePaid, softDeleteInvoice, uploadBillFile, getBillFileUrl } from '../invoices.js';
 import { fetchVendors } from '../vendors.js';
 import { fetchPurchaseOrders } from '../purchaseOrders.js';
 import { validateInvoiceForm } from '../validation.js';
 import { toCsv, downloadCsv } from '../csvExport.js';
 import { repaintPreservingFocus } from '../domFocus.js';
+import { extractPdfText, parseInvoiceNumber, parseInvoiceDate, parseInvoiceAmount } from '../pdfParser.js';
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
@@ -44,6 +45,14 @@ function initialFormState() {
     selectedPoIds: [],
     saving: false,
     saveError: null,
+    // The raw File object survives the state spread fine (setState only
+    // shallow-merges) — kept until Save, since attaching it happens as a
+    // separate step after the invoice row exists (uploadBillFile needs its
+    // id for the storage path), same two-step shape as PO Upload's
+    // create-then-link-line-items save.
+    invoiceFile: null,
+    invoiceFileName: '',
+    invoiceParseNote: null,
   };
 }
 
@@ -70,6 +79,8 @@ export async function render(container) {
     statusFilter: '',
     includeArchived: false,
     savedOk: false,
+    fileBusyId: null,
+    fileActionError: null,
     ...initialFormState(),
   });
 
@@ -113,6 +124,7 @@ function renderContent(container, state) {
     </div>
 
     ${state.savedOk ? `<p style="font-size:13px;color:var(--color-accent-100);background:var(--color-accent-900);border:1px solid var(--color-accent-700);border-radius:var(--radius-md);padding:8px 12px;margin-bottom:14px">Invoice saved.</p>` : ''}
+    ${state.fileActionError ? `<p data-role="file-action-error" style="font-size:13px;color:var(--color-accent-2-200);background:var(--color-accent-2-900);border:1px solid var(--color-accent-2-700);border-radius:var(--radius-md);padding:8px 12px;margin-bottom:14px">${escapeHtml(state.fileActionError)}</p>` : ''}
 
     ${state.formOpen ? renderNewInvoiceCard(state) : ''}
 
@@ -149,9 +161,9 @@ function renderContent(container, state) {
               </div>`
             : state.invoices.length === 0
               ? `<div style="padding:20px;font-size:13px;color:var(--color-neutral-500)">No invoices match these filters.</div>`
-              : `<table class="table" style="min-width:760px">
-                  <thead><tr><th>Invoice #</th><th>Vendor</th><th>Invoice Date</th><th>Due Date</th><th>Amount</th><th>Linked POs</th><th>Status</th><th></th></tr></thead>
-                  <tbody>${state.invoices.map(renderRow).join('')}</tbody>
+              : `<table class="table" style="min-width:900px">
+                  <thead><tr><th>Invoice #</th><th>Vendor</th><th>Invoice Date</th><th>Due Date</th><th>Amount</th><th>Linked POs</th><th>Status</th><th>File</th><th></th></tr></thead>
+                  <tbody>${state.invoices.map((invoice) => renderRow(invoice, state)).join('')}</tbody>
                 </table>`
       }
     </div>
@@ -164,6 +176,14 @@ function renderNewInvoiceCard(state) {
     <div class="card elev-sm" style="margin-bottom:16px">
       <h3 class="card-title" style="font-size:16px">New Invoice</h3>
       ${state.saveError ? `<p data-role="save-error" style="font-size:13px;color:var(--color-accent-2-200);margin-top:8px">${escapeHtml(state.saveError)}</p>` : ''}
+
+      <div class="field" style="margin-top:10px">
+        <label for="inv-file">Upload Invoice (optional)</label>
+        <input id="inv-file" type="file" accept="application/pdf,image/*" data-action="invoice-file" class="input" style="padding:6px" />
+        ${state.invoiceFileName ? `<p style="font-size:12px;color:var(--color-neutral-500);margin-top:6px">Selected: ${escapeHtml(state.invoiceFileName)}</p>` : ''}
+        ${state.invoiceParseNote ? `<p data-role="invoice-parse-note" style="font-size:12px;color:var(--color-neutral-500);margin-top:4px">${escapeHtml(state.invoiceParseNote)}</p>` : ''}
+      </div>
+
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-top:10px">
         <div class="field"><label for="inv-vendor">Vendor</label>
           <select class="input" id="inv-vendor" data-action="form-vendor">
@@ -213,10 +233,12 @@ function renderNewInvoiceCard(state) {
   `;
 }
 
-function renderRow(invoice) {
+function renderRow(invoice, state) {
   const status = invoiceStatus(invoice);
   const archived = Boolean(invoice.deleted_at);
   const linkedPOs = (invoice.invoice_purchase_orders ?? []).map((link) => link.po?.po_number).filter(Boolean);
+  const hasFile = Boolean(invoice.bill_file_path);
+  const fileBusy = state.fileBusyId === invoice.id;
   return `
     <tr data-invoice-row="${escapeHtml(invoice.id)}" style="${archived ? 'opacity:0.55' : ''}">
       <td>${escapeHtml(invoice.invoice_number || '—')}</td>
@@ -226,6 +248,19 @@ function renderRow(invoice) {
       <td>${Number(invoice.amount).toFixed(2)}</td>
       <td>${linkedPOs.length > 0 ? escapeHtml(linkedPOs.join(', ')) : '—'}</td>
       <td><span class="tag ${STATUS_TAG_CLASSES[status]}">${STATUS_LABELS[status]}</span>${archived ? ' (archived)' : ''}</td>
+      <td style="white-space:nowrap">
+        ${
+          archived
+            ? hasFile
+              ? `<button type="button" class="btn btn-ghost" data-action="view-invoice-file" data-path="${escapeHtml(invoice.bill_file_path)}" style="padding:4px 10px;font-size:12px">View</button>`
+              : '—'
+            : `<label class="btn btn-secondary" style="padding:4px 10px;font-size:12px;cursor:pointer;display:inline-block">
+                 ${hasFile ? 'Replace' : 'Attach'}
+                 <input type="file" accept="application/pdf,image/*" data-action="invoice-file-attach" data-id="${escapeHtml(invoice.id)}" style="display:none" ${fileBusy ? 'disabled' : ''} />
+               </label>
+               ${hasFile ? `<button type="button" class="btn btn-ghost" data-action="view-invoice-file" data-path="${escapeHtml(invoice.bill_file_path)}" style="padding:4px 10px;font-size:12px">View</button>` : ''}`
+        }
+      </td>
       <td style="white-space:nowrap">
         ${
           archived
@@ -255,6 +290,49 @@ function wireEvents(container, store, user, load) {
   container.querySelector('[data-action="toggle-form"]')?.addEventListener('click', () => {
     const state = store.getState();
     store.setState(state.formOpen ? { formOpen: false } : { ...initialFormState(), formOpen: true, savedOk: false });
+  });
+
+  container.querySelector('[data-action="invoice-file"]')?.addEventListener('change', async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const state = store.getState();
+
+    if (file.type !== 'application/pdf') {
+      // Scanned image files are attached as-is on save — automatic field
+      // detection only works for a text-based PDF, same "parsing is
+      // best-effort, manual entry always works" philosophy as PO Upload.
+      store.setState({
+        invoiceFile: file,
+        invoiceFileName: file.name,
+        invoiceParseNote: "Image file attached — enter the invoice's details by hand below.",
+      });
+      return;
+    }
+
+    try {
+      const text = await extractPdfText(file);
+      const invoiceNumber = parseInvoiceNumber(text);
+      const invoiceDate = parseInvoiceDate(text);
+      const amount = parseInvoiceAmount(text);
+      const foundAnything = invoiceNumber !== null || invoiceDate !== null || amount !== null;
+      store.setState({
+        invoiceFile: file,
+        invoiceFileName: file.name,
+        invoiceNumber: invoiceNumber ?? state.invoiceNumber,
+        invoiceDate: invoiceDate ?? state.invoiceDate,
+        dueDate: addDays(invoiceDate ?? state.invoiceDate, state.paymentTermsDays) || state.dueDate,
+        amount: amount !== null ? String(amount) : state.amount,
+        invoiceParseNote: foundAnything
+          ? null
+          : "Couldn't auto-detect invoice details from this PDF — enter them by hand below.",
+      });
+    } catch {
+      store.setState({
+        invoiceFile: file,
+        invoiceFileName: file.name,
+        invoiceParseNote: "Couldn't read this PDF — enter the invoice's details by hand below.",
+      });
+    }
   });
 
   container.querySelector('[data-action="form-vendor"]')?.addEventListener('change', (e) => {
@@ -301,7 +379,7 @@ function wireEvents(container, store, user, load) {
 
     store.setState({ saving: true, saveError: null });
     try {
-      await createInvoice({
+      const invoice = await createInvoice({
         invoiceNumber: state.invoiceNumber,
         vendorId: state.vendorId,
         invoiceDate: state.invoiceDate,
@@ -312,11 +390,48 @@ function wireEvents(container, store, user, load) {
         createdBy: user.id,
         poIds: state.selectedPoIds,
       });
+      if (state.invoiceFile) {
+        try {
+          await uploadBillFile(invoice.id, state.invoiceFile);
+        } catch {
+          // The invoice itself is already saved — a failed attach is a
+          // secondary, correctable problem (Attach/Replace is also right
+          // here in the list below), never a reason to make the whole
+          // save look like it failed.
+        }
+      }
       store.setState({ ...initialFormState(), savedOk: true });
       await load();
     } catch (err) {
       store.setState({ saving: false, saveError: err.message || 'Could not save this invoice.' });
     }
+  });
+
+  container.querySelectorAll('[data-action="invoice-file-attach"]').forEach((input) => {
+    input.addEventListener('change', async (e) => {
+      const file = e.target.files?.[0];
+      const id = input.dataset.id;
+      if (!file) return;
+      store.setState({ fileBusyId: id, fileActionError: null });
+      try {
+        await uploadBillFile(id, file);
+        await load();
+        store.setState({ fileBusyId: null });
+      } catch (err) {
+        store.setState({ fileBusyId: null, fileActionError: err.message || 'Could not upload this file.' });
+      }
+    });
+  });
+
+  container.querySelectorAll('[data-action="view-invoice-file"]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      try {
+        const url = await getBillFileUrl(btn.dataset.path);
+        if (url) window.open(url, '_blank', 'noopener');
+      } catch (err) {
+        store.setState({ fileActionError: err.message || 'Could not open this file.' });
+      }
+    });
   });
 
   container.querySelectorAll('[data-action="mark-paid"]').forEach((btn) => {

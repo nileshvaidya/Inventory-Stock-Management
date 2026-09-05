@@ -1675,3 +1675,39 @@ create policy "Authorized/admin can delete bill documents"
   on storage.objects for delete
   to authenticated
   using (bucket_id = 'bill-documents' and public.is_authorized_or_admin(auth.uid()));
+
+-- Material Inward's scanned delivery challan (direct user request, mirrors
+-- Invoices' scanned bill document above): a private Storage bucket plus
+-- two nullable columns on material_inward recording where the file lives.
+-- One challan document per logged receipt header (material_inward), not
+-- per line item — a single delivery note covers everything received in
+-- that one delivery.
+alter table public.material_inward add column if not exists challan_file_path text null;
+alter table public.material_inward add column if not exists challan_file_name text null;
+
+insert into storage.buckets (id, name, public)
+values ('challan-documents', 'challan-documents', false)
+on conflict (id) do nothing;
+
+-- View matches material_inward's own SELECT policy (company-wide read —
+-- Order Status/Master Material Status/Inspection all read this table
+-- regardless of role, so whoever can see the receipt can see its
+-- challan too); only insert/delete are scoped to is_store_or_admin(),
+-- matching the table's own write policy.
+drop policy if exists "Authenticated users can view challan documents" on storage.objects;
+create policy "Authenticated users can view challan documents"
+  on storage.objects for select
+  to authenticated
+  using (bucket_id = 'challan-documents');
+
+drop policy if exists "Store/admin can upload challan documents" on storage.objects;
+create policy "Store/admin can upload challan documents"
+  on storage.objects for insert
+  to authenticated
+  with check (bucket_id = 'challan-documents' and public.is_store_or_admin(auth.uid()));
+
+drop policy if exists "Store/admin can delete challan documents" on storage.objects;
+create policy "Store/admin can delete challan documents"
+  on storage.objects for delete
+  to authenticated
+  using (bucket_id = 'challan-documents' and public.is_store_or_admin(auth.uid()));

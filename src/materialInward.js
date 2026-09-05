@@ -86,3 +86,42 @@ export async function fetchInwardHistory(poId, client = supabase) {
   if (error) throw error;
   return data;
 }
+
+// The scanned delivery challan itself (direct user request, mirrors
+// invoices.js's uploadBillFile/getBillFileUrl), stored in the private
+// 'challan-documents' bucket (RLS: store/admin write, company-wide read —
+// see supabase/schema.sql) rather than a text column, since a binary file
+// needs Storage. Path is namespaced by inward id so re-uploads for
+// different receipts can never collide.
+const CHALLAN_BUCKET = 'challan-documents';
+
+/**
+ * @param {string} inwardId
+ * @param {File} file
+ * @param {any} [client]
+ */
+export async function uploadChallanFile(inwardId, file, client = supabase) {
+  if (!client) throw new Error('Supabase is not configured.');
+  const path = `${inwardId}/${Date.now()}-${file.name}`;
+  const { error: uploadError } = await client.storage.from(CHALLAN_BUCKET).upload(path, file, { upsert: false });
+  if (uploadError) throw uploadError;
+
+  const { error: updateError } = await client
+    .from('material_inward')
+    .update({ challan_file_path: path, challan_file_name: file.name })
+    .eq('id', inwardId);
+  if (updateError) throw updateError;
+}
+
+/**
+ * Signed URL, not getPublicUrl — the bucket is private, so a viewer needs a
+ * time-limited signed link rather than a bare public one.
+ * @param {string} path
+ * @param {any} [client]
+ */
+export async function getChallanFileUrl(path, client = supabase) {
+  if (!client || !path) return null;
+  const { data, error } = await client.storage.from(CHALLAN_BUCKET).createSignedUrl(path, 300);
+  if (error) throw error;
+  return data?.signedUrl ?? null;
+}

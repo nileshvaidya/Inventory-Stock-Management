@@ -108,6 +108,9 @@ scripts/
                                              # that service-role-only writes aren't logged
   test-rls-bill-payments.mjs                # ...for the 'bill-documents' Storage bucket's RLS policies — no new
                                                # table, "Bill" and "Invoice" are the same record (Phase 10)
+  test-rls-challan-documents.mjs              # ...for the 'challan-documents' Storage bucket's RLS policies (Material
+                                                 # Inward's delivery challan) — same pattern as bill-payments, except
+                                                 # the read policy is company-wide, matching material_inward's own
   capture-help-screenshots.mjs                # one-off: captures every screen (demo mode, mocked network) into
                                                  # public/help/screenshots/ for the Help manual — rerun by hand
                                                  # whenever the UI changes enough to go stale, not part of CI

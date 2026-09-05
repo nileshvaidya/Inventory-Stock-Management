@@ -171,24 +171,122 @@ export function parsePoNumber(text) {
 }
 
 /**
- * Looks for an "Order Date:" label followed by a DD/MM/YYYY date (Indian
- * date format) to pre-fill the Order Date field, converting to ISO
- * (YYYY-MM-DD) for the date input. The label and its value are often on
- * different reconstructed lines — real POs commonly lay this out as a
- * multi-column table ("Buyer | Order Date: | Expected Arrival:" as one
- * row, values below) rather than "Order Date: <value>" inline — so this
+ * Shared by parseOrderDate/parseInvoiceDate: looks for `labelPattern`
+ * followed by a DD/MM/YYYY date (Indian date format), converting to ISO
+ * (YYYY-MM-DD) for a date input. The label and its value are often on
+ * different reconstructed lines — real documents commonly lay this out as
+ * a multi-column table ("Buyer | Order Date: | Expected Arrival:" as one
+ * row, values below) rather than "<Label>: <value>" inline — so this
  * allows a bounded gap of other text between the label and the first date
- * that follows it, rather than requiring them adjacent. Returns null if
- * not found or unparsable.
+ * that follows it, rather than requiring them adjacent.
  * @param {string} text
+ * @param {string} labelPattern
  * @returns {string|null}
  */
-export function parseOrderDate(text) {
-  if (!text) return null;
-  const match = text.match(/order\s+date\s*:?[\s\S]{0,80}?(\d{1,2})\/(\d{1,2})\/(\d{2,4})/i);
+function extractDateAfterLabel(text, labelPattern) {
+  const match = text.match(new RegExp(`${labelPattern}\\s*:?[\\s\\S]{0,80}?(\\d{1,2})/(\\d{1,2})/(\\d{2,4})`, 'i'));
   if (!match) return null;
   const [, dd, mm, yyyy] = match;
   const year = yyyy.length === 2 ? `20${yyyy}` : yyyy;
   const iso = `${year}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`;
   return Number.isNaN(Date.parse(iso)) ? null : iso;
+}
+
+/**
+ * Looks for an "Order Date:" label to pre-fill PO Upload's Order Date
+ * field. Returns null if not found or unparsable — the field is always
+ * editable by hand.
+ * @param {string} text
+ * @returns {string|null}
+ */
+export function parseOrderDate(text) {
+  if (!text) return null;
+  return extractDateAfterLabel(text, 'order\\s+date');
+}
+
+/**
+ * Looks for an "Invoice Date:" label to pre-fill Invoices' "Upload
+ * Invoice" flow. Same shape as parseOrderDate, different label.
+ * @param {string} text
+ * @returns {string|null}
+ */
+export function parseInvoiceDate(text) {
+  if (!text) return null;
+  return extractDateAfterLabel(text, 'invoice\\s+date');
+}
+
+/**
+ * Looks for an "Invoice No./Number/#: <value>" line to pre-fill the
+ * Invoice Number field. Returns null if not found — the field is always
+ * editable by hand.
+ * @param {string} text
+ * @returns {string|null}
+ */
+export function parseInvoiceNumber(text) {
+  if (!text) return null;
+  const match = text.match(/invoice\s*(?:no\.?|number|#)\s*[:-]?\s*([A-Za-z0-9/-]+)/i);
+  return match ? match[1] : null;
+}
+
+/**
+ * Looks for a stated total to pre-fill Invoices' Amount field — same
+ * "prefer the labelled total line, ignore anything unparsable" approach as
+ * parseStatedTotal, with invoice-oriented labels ("Grand Total"/"Invoice
+ * Amount" over a bare "Total", which is more likely to be a sub-total on a
+ * multi-line invoice).
+ * @param {string} text
+ * @returns {number|null}
+ */
+export function parseInvoiceAmount(text) {
+  if (!text) return null;
+  return (
+    extractAmountAfterLabel(text, 'grand\\s+total') ??
+    extractAmountAfterLabel(text, 'invoice\\s+amount') ??
+    extractAmountAfterLabel(text, '\\btotal\\b')
+  );
+}
+
+// Delivery challans list what was physically delivered — description and
+// quantity, no rate (that's an invoice/PO concern, not a delivery record).
+// Same "<description> <qty>" or "<description> <qty> <unit-of-measure>"
+// shapes as PO line items minus the rate column, and the same
+// never-block-on-a-bad-parse philosophy: every matched row still needs to
+// be matched against the selected PO's own line items by name before it's
+// used for anything (see materialInward.js screen), and quantities stay
+// fully editable by hand regardless.
+const CHALLAN_LINE_RE = /^(.{2,80}?)\s+(\d+(?:\.\d+)?)\s*$/;
+const CHALLAN_LINE_WITH_UOM_RE = /^(.{2,80}?)\s+([\d,]+(?:\.\d+)?)\s+[A-Za-z][A-Za-z.]*\s*$/;
+
+function matchChallanLine(line) {
+  if (PHONE_NUMBER_RE.test(line)) return null;
+  const simple = line.match(CHALLAN_LINE_RE);
+  const match = simple ?? line.match(CHALLAN_LINE_WITH_UOM_RE);
+  if (!match) return null;
+
+  const [, rawName, rawQty] = match;
+  const itemName = rawName.trim();
+  const quantity = toNumber(rawQty);
+  if (!itemName || quantity === null || quantity <= 0) return null;
+  return { itemName, quantity };
+}
+
+/**
+ * Heuristic: a line matching "<description> <qty>" (optionally with a
+ * unit-of-measure column) becomes one delivered line. Lines that don't
+ * match are ignored rather than erroring — a best-effort pass, not a
+ * guarantee; every result still needs matching against the selected PO's
+ * line items by name (done by the caller), and never blocks logging a
+ * receipt by hand.
+ * @param {string} text
+ * @returns {{ itemName: string, quantity: number }[]}
+ */
+export function parseChallanText(text) {
+  if (!text || !text.trim()) return [];
+
+  return text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map(matchChallanLine)
+    .filter(Boolean);
 }

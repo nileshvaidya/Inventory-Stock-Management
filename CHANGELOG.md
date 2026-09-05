@@ -798,3 +798,59 @@ and would never have caught this). Verified every affected field on all
 7 screens by hand with character-by-character typing against a real
 built preview; the full existing suite (lint, typecheck, 112 unit
 tests, all 80 e2e tests, production build) stayed green throughout.
+
+## Upload-and-scan for Material Inward (delivery challan) and Invoices
+
+Direct user request: "Material Inward" (delivery challans) and
+"Invoices" had no document-upload facility, unlike PO Upload's
+upload-a-PDF-and-auto-fill flow — both now work the same way, with
+manual entry always still available as the fallback/correction path.
+
+- **Invoices**: "Upload Invoice (optional)" on the New Invoice form —
+  choosing a text-based PDF extracts its text (reusing PO Upload's
+  `extractPdfText`) and tries to fill in Invoice Number, Invoice Date,
+  and Amount (new `parseInvoiceNumber`/`parseInvoiceDate`/
+  `parseInvoiceAmount` in `src/pdfParser.js`); every field stays
+  editable regardless. On Save, the chosen file is attached to the new
+  invoice via the existing Phase 10 bill-file plumbing
+  (`uploadBillFile`/`bill-documents` bucket) — no schema change needed,
+  since "bill" and "invoice" are already the same record. The Invoices
+  list itself gained a File column (Attach/Replace/View) so an admin,
+  who doesn't have access to the narrower Bill Payments screen, can
+  still see and manage what's attached.
+- **Material Inward**: "Upload Delivery Challan (optional)", once a PO
+  is selected — extracts text and tries to match each parsed
+  description/quantity line (new `parseChallanText` in
+  `src/pdfParser.js`, same shape as a PO line item minus the rate) by
+  name to a line item on the selected PO, pre-filling "Receiving Now"
+  for whatever matched; a note reports how many of the document's lines
+  matched. Needs new plumbing, since Material Inward never had a file
+  capability before: `material_inward.challan_file_path`/
+  `challan_file_name` columns and a new private `challan-documents`
+  Storage bucket (`supabase/schema.sql`) — read is company-wide
+  (matching material_inward's own SELECT policy), write is store/admin
+  (matching its own write policy), unlike bill-documents' narrower
+  authorized/admin-only read. The Inward History table gained a
+  Challan column (View) for past receipts.
+- Both screens: a non-PDF (scanned image) file is attached as-is with
+  no parsing attempt — parsing only ever works on a text-based PDF, and
+  every field stays fully editable either way, exactly like PO Upload's
+  own manual-entry fallback.
+- New `scripts/test-rls-challan-documents.mjs` (added to
+  `test:integration`), mirroring `test-rls-bill-payments.mjs`, asserts
+  the new bucket's policies against a real Supabase project — **this
+  needs the schema.sql changes above applied to that project before it
+  will pass there**, same "push to git ≠ applied to the live database"
+  gap as the Order Status admin-only fix earlier.
+- Verified end to end against real (hand-built) PDF fixtures through
+  the actual browser: text extraction, field pre-fill, challan-to-line-
+  item matching, and the post-create file attach all confirmed working
+  outside of unit tests. e2e coverage (new tests in `phase3.spec.js`/
+  `phase5.spec.js`) sticks to the codebase's established convention of
+  not committing a binary PDF fixture — pure parsing logic is unit-
+  tested (`pdfParser.test.js`), e2e covers the non-PDF/image-attach path
+  and the resulting UI affordances (View/Attach/Replace), same split PO
+  Upload's own e2e suite already uses.
+- `src/screens/help.js` updated for both screens' new upload step, and
+  the Bill Payments/Invoices FAQ item to note Invoices can now attach a
+  file too (only Bill Payments can remove one).

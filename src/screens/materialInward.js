@@ -5,9 +5,17 @@ import { renderShell } from '../layout.js';
 import { escapeHtml } from '../components.js';
 import { createStore } from '../state.js';
 import { canViewModule } from '../navPermissions.js';
-import { fetchReceivableOrders, fetchLineItemStatusForPo, createInward, fetchInwardHistory } from '../materialInward.js';
+import {
+  fetchReceivableOrders,
+  fetchLineItemStatusForPo,
+  createInward,
+  fetchInwardHistory,
+  uploadChallanFile,
+  getChallanFileUrl,
+} from '../materialInward.js';
 import { validateInwardForm, validateInwardLineItem } from '../validation.js';
 import { repaintPreservingFocus } from '../domFocus.js';
+import { extractPdfText, parseChallanText } from '../pdfParser.js';
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
@@ -24,7 +32,37 @@ function initialState() {
     saving: false,
     saveError: null,
     savedOk: false,
+    // The raw File object survives the state spread fine (setState only
+    // shallow-merges) — kept until Save, since attaching it happens as a
+    // separate step after the inward header row exists (uploadChallanFile
+    // needs its id for the storage path).
+    challanFile: null,
+    challanFileName: '',
+    challanParseNote: null,
+    challanActionError: null,
   };
+}
+
+/**
+ * Matches parsed challan lines to this PO's own line items by (trimmed,
+ * case-insensitive) item name — a challan lists what was physically
+ * delivered, but "Receiving Now" is keyed by po_line_item_id, so a parsed
+ * row is only useful once it's tied to a specific line on the selected PO.
+ * Unmatched lines are simply not pre-filled, never guessed at.
+ * @param {{ itemName: string, quantity: number }[]} parsedRows
+ * @param {{ po_line_item_id: string, item_name: string }[]} lineItemStatus
+ */
+function matchChallanToLineItems(parsedRows, lineItemStatus) {
+  const receivedQtyByLineItem = {};
+  let matchedCount = 0;
+  for (const row of parsedRows) {
+    const target = lineItemStatus.find((li) => li.item_name.trim().toLowerCase() === row.itemName.trim().toLowerCase());
+    if (target) {
+      receivedQtyByLineItem[target.po_line_item_id] = String(row.quantity);
+      matchedCount += 1;
+    }
+  }
+  return { receivedQtyByLineItem, matchedCount, totalParsed: parsedRows.length };
 }
 
 export async function render(container) {
@@ -77,6 +115,7 @@ function renderContent(container, state) {
 
     ${state.savedOk ? `<p style="font-size:13px;color:var(--color-accent-100);background:var(--color-accent-900);border:1px solid var(--color-accent-700);border-radius:var(--radius-md);padding:8px 12px;margin-bottom:14px">Receipt logged.</p>` : ''}
     ${state.saveError ? `<p data-role="save-error" style="font-size:13px;color:var(--color-accent-2-200);background:var(--color-accent-2-900);border:1px solid var(--color-accent-2-700);border-radius:var(--radius-md);padding:8px 12px;margin-bottom:14px">${escapeHtml(state.saveError)}</p>` : ''}
+    ${state.challanActionError ? `<p data-role="challan-action-error" style="font-size:13px;color:var(--color-accent-2-200);background:var(--color-accent-2-900);border:1px solid var(--color-accent-2-700);border-radius:var(--radius-md);padding:8px 12px;margin-bottom:14px">${escapeHtml(state.challanActionError)}</p>` : ''}
 
     <div class="card elev-sm" style="margin-bottom:16px">
       <h3 class="card-title" style="font-size:16px">Select a Purchase Order</h3>
@@ -105,6 +144,13 @@ function renderLineItemsCard(state, selectedOrder) {
     <div class="card elev-sm" style="margin-bottom:16px;padding:0;overflow-x:auto">
       <div style="padding:14px">
         <h3 class="card-title" style="font-size:16px;margin:0">Line Items — ${escapeHtml(selectedOrder?.po_number || '')}</h3>
+      </div>
+      <div class="field" style="padding:0 14px 14px">
+        <label for="mi-challan-file">Upload Delivery Challan (optional)</label>
+        <input id="mi-challan-file" type="file" accept="application/pdf,image/*" data-action="challan-file" class="input" style="padding:6px" />
+        <p style="font-size:12px;color:var(--color-neutral-500);margin-top:6px">Item and quantity are read automatically where possible and matched to the line items below — review and correct every row before saving.</p>
+        ${state.challanFileName ? `<p style="font-size:12px;color:var(--color-neutral-500);margin-top:6px">Selected: ${escapeHtml(state.challanFileName)}</p>` : ''}
+        ${state.challanParseNote ? `<p data-role="challan-parse-note" style="font-size:12px;color:var(--color-neutral-500);margin-top:4px">${escapeHtml(state.challanParseNote)}</p>` : ''}
       </div>
       ${
         state.loadingLineItems
@@ -151,7 +197,7 @@ function renderHistoryCard(state) {
         state.history.length === 0
           ? `<div style="padding:0 14px 14px;font-size:13px;color:var(--color-neutral-500)">No receipts logged yet for this PO.</div>`
           : `<table class="table" style="min-width:520px">
-              <thead><tr><th>Date</th><th>Items</th><th>Notes</th></tr></thead>
+              <thead><tr><th>Date</th><th>Items</th><th>Notes</th><th>Challan</th></tr></thead>
               <tbody>
                 ${state.history
                   .map(
@@ -160,6 +206,7 @@ function renderHistoryCard(state) {
                     <td>${escapeHtml(entry.received_date)}</td>
                     <td>${entry.line_items.map((li) => `${escapeHtml(li.po_line_item?.item_name || '')}: ${li.received_qty}`).join(', ')}</td>
                     <td>${escapeHtml(entry.notes || '—')}</td>
+                    <td>${entry.challan_file_path ? `<button type="button" class="btn btn-ghost" data-action="view-challan" data-path="${escapeHtml(entry.challan_file_path)}" style="padding:4px 10px;font-size:12px">View</button>` : '—'}</td>
                   </tr>`
                   )
                   .join('')}
@@ -173,8 +220,56 @@ function renderHistoryCard(state) {
 function wireEvents(container, store, user, loadOrders, loadForPo) {
   container.querySelector('[data-action="select-po"]')?.addEventListener('change', async (e) => {
     const poId = e.target.value;
-    store.setState({ poId, savedOk: false, saveError: null });
+    store.setState({ poId, savedOk: false, saveError: null, challanFile: null, challanFileName: '', challanParseNote: null, challanActionError: null });
     await loadForPo(poId);
+  });
+
+  container.querySelector('[data-action="challan-file"]')?.addEventListener('change', async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const state = store.getState();
+
+    if (file.type !== 'application/pdf') {
+      // Scanned image files are attached as-is on save — automatic field
+      // detection only works for a text-based PDF, same "parsing is
+      // best-effort, manual entry always works" philosophy as PO Upload.
+      store.setState({
+        challanFile: file,
+        challanFileName: file.name,
+        challanParseNote: 'Image file attached — enter received quantities by hand below.',
+      });
+      return;
+    }
+
+    try {
+      const text = await extractPdfText(file);
+      const parsedRows = parseChallanText(text);
+      if (parsedRows.length === 0) {
+        store.setState({
+          challanFile: file,
+          challanFileName: file.name,
+          challanParseNote: "Couldn't find any recognizable item/qty lines in this document — enter quantities by hand below.",
+        });
+        return;
+      }
+
+      const { receivedQtyByLineItem, matchedCount, totalParsed } = matchChallanToLineItems(parsedRows, state.lineItemStatus);
+      store.setState({
+        challanFile: file,
+        challanFileName: file.name,
+        receivedQtyByLineItem: { ...state.receivedQtyByLineItem, ...receivedQtyByLineItem },
+        challanParseNote:
+          matchedCount === 0
+            ? "Couldn't match any lines in this document to an item on this PO — enter quantities by hand below."
+            : `Matched ${matchedCount} of ${totalParsed} line(s) from the document to items on this PO — review before saving.`,
+      });
+    } catch {
+      store.setState({
+        challanFile: file,
+        challanFileName: file.name,
+        challanParseNote: "Couldn't read this file — enter received quantities by hand below.",
+      });
+    }
   });
 
   container.querySelector('[data-action="received-date"]')?.addEventListener('input', (e) => {
@@ -208,7 +303,7 @@ function wireEvents(container, store, user, loadOrders, loadForPo) {
 
     store.setState({ saving: true, saveError: null });
     try {
-      await createInward({
+      const inward = await createInward({
         poId: state.poId,
         receivedDate: state.receivedDate,
         notes: state.notes,
@@ -217,11 +312,38 @@ function wireEvents(container, store, user, loadOrders, loadForPo) {
           .filter((li) => String(li.receivedQty).trim() !== '')
           .map((li) => ({ poLineItemId: li.poLineItemId, receivedQty: Number(li.receivedQty) })),
       });
-      store.setState({ saving: false, savedOk: true, notes: '' });
+      if (state.challanFile) {
+        try {
+          await uploadChallanFile(inward.id, state.challanFile);
+        } catch {
+          // The receipt itself is already logged — a failed attach is a
+          // secondary, correctable problem, never a reason to make the
+          // whole save look like it failed.
+        }
+      }
+      store.setState({
+        saving: false,
+        savedOk: true,
+        notes: '',
+        challanFile: null,
+        challanFileName: '',
+        challanParseNote: null,
+      });
       await loadOrders();
       await loadForPo(state.poId);
     } catch (err) {
       store.setState({ saving: false, saveError: err.message || 'Could not log this receipt.' });
     }
+  });
+
+  container.querySelectorAll('[data-action="view-challan"]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      try {
+        const url = await getChallanFileUrl(btn.dataset.path);
+        if (url) window.open(url, '_blank', 'noopener');
+      } catch (err) {
+        store.setState({ challanActionError: err.message || 'Could not open this file.' });
+      }
+    });
   });
 }

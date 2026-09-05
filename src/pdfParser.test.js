@@ -1,5 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { parsePoText, parseStatedTotal, parsePoNumber, parseOrderDate } from './pdfParser.js';
+import {
+  parsePoText,
+  parseStatedTotal,
+  parsePoNumber,
+  parseOrderDate,
+  parseInvoiceDate,
+  parseInvoiceNumber,
+  parseInvoiceAmount,
+  parseChallanText,
+} from './pdfParser.js';
 
 // A reconstructed-lines rendering of a real Odoo-style Indian PO
 // (PO/AISL/2026-27/0032), used to calibrate the real-world line-item and
@@ -128,5 +137,106 @@ describe('parseOrderDate', () => {
 
   it('returns null for empty text', () => {
     expect(parseOrderDate('')).toBe(null);
+  });
+});
+
+// A reconstructed-lines rendering of a plausible vendor invoice, used to
+// calibrate parseInvoiceNumber/parseInvoiceDate/parseInvoiceAmount.
+const REAL_INVOICE_TEXT = [
+  'Acme Steel Pvt Ltd',
+  'Invoice No: INV-2026-0088',
+  'Invoice Date: 05/09/2026',
+  'Bill To: ASK INFO-SOLUTIONS LLP',
+  'Base Angle   1,500.00   Nos.   45.00   ₹   67,500.00',
+  'Subtotal   ₹   67,500.00',
+  'GST 18%   ₹   12,150.00',
+  'Grand Total   ₹   79,650.00',
+].join('\n');
+
+describe('parseInvoiceNumber', () => {
+  it('finds an "Invoice No: <number>" line', () => {
+    expect(parseInvoiceNumber(REAL_INVOICE_TEXT)).toBe('INV-2026-0088');
+  });
+
+  it('finds "Invoice Number" and "Invoice #" label variants', () => {
+    expect(parseInvoiceNumber('Invoice Number: INV-1')).toBe('INV-1');
+    expect(parseInvoiceNumber('Invoice # INV-2')).toBe('INV-2');
+  });
+
+  it('returns null when no invoice number line is present', () => {
+    expect(parseInvoiceNumber('Widget A 10 25.50')).toBe(null);
+  });
+
+  it('returns null for empty text', () => {
+    expect(parseInvoiceNumber('')).toBe(null);
+  });
+});
+
+describe('parseInvoiceDate', () => {
+  it('finds an "Invoice Date: DD/MM/YYYY" line and converts to ISO', () => {
+    expect(parseInvoiceDate(REAL_INVOICE_TEXT)).toBe('2026-09-05');
+  });
+
+  it('returns null when no invoice date line is present', () => {
+    expect(parseInvoiceDate('Widget A 10 25.50')).toBe(null);
+  });
+
+  it('returns null for empty text', () => {
+    expect(parseInvoiceDate('')).toBe(null);
+  });
+});
+
+describe('parseInvoiceAmount', () => {
+  it('prefers "Grand Total" over a bare "Total"/"Subtotal" line', () => {
+    expect(parseInvoiceAmount(REAL_INVOICE_TEXT)).toBe(79650);
+  });
+
+  it('falls back to "Invoice Amount" when there is no Grand Total line', () => {
+    expect(parseInvoiceAmount('Invoice Amount: 1234.50')).toBe(1234.5);
+  });
+
+  it('falls back to a bare "Total" when neither labelled total is present', () => {
+    expect(parseInvoiceAmount('Item 1 2 3\nTotal: 999.99')).toBe(999.99);
+  });
+
+  it('returns null when no total line is present', () => {
+    expect(parseInvoiceAmount('Widget A 10 25.50')).toBe(null);
+  });
+
+  it('returns null for empty text', () => {
+    expect(parseInvoiceAmount('')).toBe(null);
+  });
+});
+
+describe('parseChallanText', () => {
+  it('parses clean "item qty" lines', () => {
+    const rows = parseChallanText('Widget A 10\nWidget B 3');
+    expect(rows).toEqual([
+      { itemName: 'Widget A', quantity: 10 },
+      { itemName: 'Widget B', quantity: 3 },
+    ]);
+  });
+
+  it('parses "item qty uom" lines, same shape as a real PO line minus the rate', () => {
+    const rows = parseChallanText('Base Angle   1,500.00   Nos.');
+    expect(rows).toEqual([{ itemName: 'Base Angle', quantity: 1500 }]);
+  });
+
+  it('ignores lines that do not match the item/qty shape', () => {
+    const rows = parseChallanText('Delivery Challan #1234\nDate: 2026-01-01\nThank you');
+    expect(rows).toEqual([]);
+  });
+
+  it('returns an empty array for empty or whitespace-only text', () => {
+    expect(parseChallanText('')).toEqual([]);
+    expect(parseChallanText('   \n  \n ')).toEqual([]);
+  });
+
+  it('rejects a row with zero or negative quantity', () => {
+    expect(parseChallanText('Widget 0\nGadget -5')).toEqual([]);
+  });
+
+  it('does not mistake a phone number for a delivered line', () => {
+    expect(parseChallanText('India  +91 90228 17411')).toEqual([]);
   });
 });

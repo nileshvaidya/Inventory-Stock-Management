@@ -304,15 +304,22 @@ function renderMaterialInward() {
     `
     <p style="font-size:14px;color:var(--color-neutral-300);margin-bottom:10px">Log what physically arrived against a Purchase Order — a delivery can be partial, and you can log as many deliveries against one PO as needed until everything ordered has arrived.</p>
 
+    ${h3('Uploading a Delivery Challan (optional)')}
+    ${ol([
+      'After picking a Purchase Order, click <strong>Choose File</strong> under "Upload Delivery Challan" and pick the challan file — a PDF or a scanned image.',
+      'For a text-based PDF, the app reads it and tries to fill in <strong>Receiving Now</strong> automatically for any item it can match by name to a line on this PO — items it can\'t match, or an image file, are left for you to fill in by hand.',
+      'A note above the table explains what happened (e.g. "Matched 2 of 3 line(s)...") — always review the prefilled quantities before saving, same as PO Upload\'s parsed rows.',
+    ])}
+    ${img('07-material-inward.png', 'Material Inward with a PO selected, the Upload Delivery Challan field, one line item fully received and another being entered, plus the Inward History below')}
+
     ${h3('Logging a receipt')}
     ${ol([
       'Click the <strong>Purchase Order</strong> dropdown and select the PO the delivery is against (only POs that still have something pending show up here).',
       'Set the <strong>Received Date</strong> if it wasn\'t today.',
       'For each item in the Line Items table, type how much arrived in this delivery into <strong>Receiving Now</strong> — you can see what was <strong>Ordered</strong>, already <strong>Received</strong>, and still <strong>Pending</strong> for each. You can\'t enter more than what\'s pending.',
       'Add a note under <strong>Notes</strong> if useful (e.g. which truck, any damage seen).',
-      'Click <strong>Log Receipt</strong>. The Inward History table below the form fills in with what you just logged.',
+      'Click <strong>Log Receipt</strong>. The Inward History table below the form fills in with what you just logged, including a <strong>View</strong> link for the challan if one was attached.',
     ])}
-    ${img('07-material-inward.png', 'Material Inward with a PO selected, one line item fully received and another being entered, plus the Inward History below')}
     ${note(`Once an item is fully received, it moves on to ${jump('help-inspection', 'Inspection')} before it counts as usable stock.`)}
     `
   );
@@ -456,16 +463,18 @@ function renderInvoices() {
     ${h3('Creating an invoice')}
     ${ol([
       'Click <strong>+ New Invoice</strong>.',
+      'Click <strong>Choose File</strong> under "Upload Invoice" (optional) and pick the invoice file — a PDF or a scanned image. For a text-based PDF, the app reads it and tries to fill in <strong>Invoice Number</strong>, <strong>Invoice Date</strong>, and <strong>Amount</strong> automatically; an image file, or a PDF nothing could be read from, is just attached as-is and every field stays editable by hand.',
       'Pick the <strong>Vendor</strong> — <strong>Payment Terms</strong> auto-fills from that vendor\'s usual terms, and <strong>Due Date</strong> auto-computes from Invoice Date + Payment Terms (both stay editable).',
-      'Fill in the <strong>Invoice Number</strong> (optional), <strong>Amount</strong>, and <strong>Notes</strong> (optional).',
+      'Check the <strong>Invoice Number</strong>, <strong>Amount</strong>, and <strong>Notes</strong> (optional) fields — fill in or correct anything the upload didn\'t get right.',
       'Tick any Purchase Order(s) this invoice covers under "Link Purchase Orders" — one invoice can cover several POs.',
-      'Click <strong>Save Invoice</strong>.',
+      'Click <strong>Save Invoice</strong>. If you uploaded a file, it\'s attached to the saved invoice automatically.',
     ])}
-    ${img('18-invoices-new.png', 'The New Invoice form with a vendor selected, auto-filled payment terms/due date, and a PO checked')}
+    ${img('18-invoices-new.png', 'The New Invoice form with the Upload Invoice field, a vendor selected, auto-filled payment terms/due date, and a PO checked')}
 
     ${h3('Marking paid and archiving')}
     ${ol([
       'Click <strong>Mark Paid</strong> on a row once payment is confirmed — its status changes to Paid and it stops counting as Overdue.',
+      'Click <strong>Attach</strong> (or <strong>Replace</strong>, if one is already attached) in the <strong>File</strong> column to add or swap an invoice\'s file after the fact; click <strong>View</strong> to open whatever\'s attached.',
       'Click <strong>Delete</strong> to archive an invoice (doesn\'t erase it — tick "Show archived" in the filters to see archived ones again).',
       'Click <strong>Export CSV</strong> to download the filtered list.',
     ])}
@@ -556,7 +565,7 @@ function renderBillPayments() {
       'Once payment is confirmed, click <strong>Mark Received</strong> on that row.',
       'This is the exact same action as Invoices\' "Mark Paid" — the status updates everywhere in the app, not just here.',
     ])}
-    ${note(`To create a new invoice in the first place, or link it to Purchase Orders, use ${jump('help-invoices', 'Invoices')} — this screen only adds the file-attachment step.`)}
+    ${note(`To create a new invoice in the first place, or link it to Purchase Orders, use ${jump('help-invoices', 'Invoices')} — Invoices also lets you attach or replace a file (and upload one straight from a new invoice's own PDF), but only this screen can <strong>Remove</strong> one entirely.`)}
     `
   );
 }
@@ -575,8 +584,8 @@ const FAQ = [
     a: 'That\'s deliberate — it stops an admin from accidentally locking themselves out. Ask a different admin to make the change for you.',
   },
   {
-    q: 'The PDF I uploaded didn\'t parse correctly — what do I do?',
-    a: 'Every line item on PO Upload is directly editable, so just correct whatever\'s wrong by hand. For a PDF layout the parser doesn\'t recognize at all, use "Map Fields Manually" to build the rows by clicking words instead of retyping everything — see the PO Upload topic.',
+    q: 'A document I uploaded (PO, delivery challan, invoice) didn\'t parse correctly — what do I do?',
+    a: 'Every field or row filled in from an uploaded document is directly editable, so just correct whatever\'s wrong by hand — nothing is ever locked in from a scan. On PO Upload specifically, a PDF layout the parser doesn\'t recognize at all also has "Map Fields Manually", to build rows by clicking words instead of retyping everything — see the PO Upload topic. A scanned image file (as opposed to a text-based PDF) is never auto-read at all on any screen — it\'s attached as-is, and every field needs to be filled in by hand.',
   },
   {
     q: 'Why did a Purchase Order\'s status change without me touching it?',
@@ -622,7 +631,7 @@ const FAQ = [
 // this item is only spliced in when canSeeBillPayments is true.
 const RESTRICTED_FAQ_ITEM = {
   q: 'What\'s the difference between Invoices and Bill Payments?',
-  a: 'They\'re the same underlying record — a "bill" is just this app\'s word for an invoice. Bill Payments is a narrower screen, visible only to the Accounts/Authorized role, focused on attaching the scanned bill document and marking it received; creating an invoice and linking it to Purchase Orders always happens on the Invoices screen.',
+  a: 'They\'re the same underlying record — a "bill" is just this app\'s word for an invoice. Bill Payments is a narrower screen, visible only to the Accounts/Authorized role, focused on attaching the scanned bill document and marking it received (and the only place that can remove one entirely); creating an invoice, uploading its file, and linking it to Purchase Orders always happens on the Invoices screen.',
 };
 
 /** @param {boolean} canSeeBillPayments */

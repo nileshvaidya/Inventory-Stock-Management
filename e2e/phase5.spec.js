@@ -142,4 +142,76 @@ test.describe('Phase 5 — Invoices', () => {
     await page.goto('/?demoRole=admin#/invoices');
     await expect(page.locator('[data-screen="invoices"]')).toContainText('No invoices match');
   });
+
+  test('uploading a non-PDF file attaches it without attempting to auto-fill fields', async ({ page }) => {
+    // Real PDF parsing (extractPdfText + parseInvoiceNumber/Date/Amount) is
+    // covered by src/pdfParser.test.js's own unit tests (pure logic, no PDF
+    // binary fixture needed here) — same convention as PO Upload's e2e
+    // suite. This test only needs a file whose type isn't application/pdf,
+    // which Playwright can synthesize in-memory without a real image.
+    await mockEmptyLookups(page);
+    await page.route('**/rest/v1/invoices**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
+
+    await page.goto('/?demoRole=admin#/invoices');
+    await page.click('[data-action="toggle-form"]');
+    await page.setInputFiles('#inv-file', {
+      name: 'scanned-invoice.png',
+      mimeType: 'image/png',
+      buffer: Buffer.from('not a real png, just a placeholder for a scanned image'),
+    });
+
+    await expect(page.locator('[data-role="invoice-parse-note"]')).toContainText("enter the invoice's details by hand");
+    await expect(page.locator('#inv-number')).toHaveValue('');
+    await expect(page.locator('text=Selected: scanned-invoice.png')).toBeVisible();
+  });
+
+  test('attaching a file to an existing invoice from the list uploads it and shows View', async ({ page }) => {
+    await mockEmptyLookups(page);
+    let uploadCalled = false;
+    let updateBody = null;
+    await page.route('**/rest/v1/invoices**', (route) => {
+      if (route.request().method() === 'PATCH') {
+        updateBody = route.request().postDataJSON();
+        return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+      }
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([
+          {
+            id: 'inv-1',
+            invoice_number: 'INV-001',
+            vendor: { name: 'Acme Supplies' },
+            invoice_date: '2026-01-01',
+            due_date: '2026-01-31',
+            amount: 1000,
+            paid_at: null,
+            deleted_at: null,
+            bill_file_path: null,
+            bill_file_name: null,
+            invoice_purchase_orders: [],
+          },
+        ]),
+      });
+    });
+    await page.route('**/storage/v1/object/bill-documents/**', (route) => {
+      uploadCalled = true;
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '{"Key":"bill-documents/inv-1/x"}' });
+    });
+
+    await page.goto('/?demoRole=admin#/invoices');
+    const row = page.locator('[data-invoice-row="inv-1"]');
+    await expect(row.locator('[data-action="view-invoice-file"]')).toHaveCount(0);
+
+    await row.locator('[data-action="invoice-file-attach"]').setInputFiles({
+      name: 'invoice.pdf',
+      mimeType: 'application/pdf',
+      buffer: Buffer.from('%PDF-1.4 minimal placeholder'),
+    });
+
+    await expect(async () => {
+      expect(uploadCalled).toBe(true);
+      expect(updateBody).toMatchObject({ bill_file_path: expect.stringContaining('inv-1/'), bill_file_name: 'invoice.pdf' });
+    }).toPass();
+  });
 });

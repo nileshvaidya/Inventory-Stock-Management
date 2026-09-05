@@ -150,6 +150,102 @@ test.describe('Phase 3 — Material Inward', () => {
     await expect(page.locator('[data-role="save-error"]')).toBeVisible();
     expect(insertCalled).toBe(false);
   });
+
+  test('uploading a non-PDF delivery challan attaches it without attempting to auto-fill quantities', async ({ page }) => {
+    // Real PDF parsing (extractPdfText + parseChallanText + matching by
+    // item name) is covered by src/pdfParser.test.js's own unit tests
+    // (pure logic, no PDF binary fixture needed here) — same convention as
+    // PO Upload's e2e suite. This test only needs a file whose type isn't
+    // application/pdf, which Playwright can synthesize in-memory.
+    await page.route('**/rest/v1/purchase_orders**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([
+          { id: 'po-1', po_number: 'PO-1001', status: 'to_be_received', deleted_at: null, project: { id: 'p1', name: 'Bridge Build' }, vendor: null },
+        ]),
+      })
+    );
+    await page.route('**/rest/v1/master_material_status**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([
+          {
+            po_line_item_id: 'pli-1',
+            po_id: 'po-1',
+            item_name: 'Base Angle',
+            ordered_qty: 100,
+            received_qty: 0,
+            accepted_qty: 0,
+            rejected_qty: 0,
+            pending_qty: 100,
+            po_status: 'to_be_received',
+          },
+        ]),
+      })
+    );
+    await page.route('**/rest/v1/material_inward*', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
+
+    await page.goto('/?demoRole=store#/material-inward');
+    await page.selectOption('[data-action="select-po"]', 'po-1');
+    await expect(page.locator('[data-inward-row="pli-1"]')).toBeVisible();
+
+    await page.setInputFiles('#mi-challan-file', {
+      name: 'scanned-challan.png',
+      mimeType: 'image/png',
+      buffer: Buffer.from('not a real png, just a placeholder for a scanned image'),
+    });
+
+    await expect(page.locator('[data-role="challan-parse-note"]')).toContainText('enter received quantities by hand');
+    await expect(page.locator('[data-action="received-qty"][data-po-line-item-id="pli-1"]')).toHaveValue('');
+    await expect(page.locator('text=Selected: scanned-challan.png')).toBeVisible();
+  });
+
+  test('a past receipt with an attached challan shows a View link', async ({ page }) => {
+    await page.route('**/rest/v1/purchase_orders**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([
+          { id: 'po-1', po_number: 'PO-1001', status: 'partially_received', deleted_at: null, project: { id: 'p1', name: 'Bridge Build' }, vendor: null },
+        ]),
+      })
+    );
+    await page.route('**/rest/v1/master_material_status**', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
+    );
+    await page.route('**/rest/v1/material_inward*', (route) => {
+      const path = new URL(route.request().url()).pathname;
+      if (path.endsWith('/material_inward')) {
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify([
+            {
+              id: 'inward-1',
+              received_date: '2026-01-15',
+              notes: null,
+              challan_file_path: 'inward-1/1700000000000-challan.pdf',
+              challan_file_name: 'challan.pdf',
+              line_items: [{ po_line_item: { item_name: 'Base Angle' }, received_qty: 500 }],
+            },
+          ]),
+        });
+      }
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+    });
+    await page.route('**/storage/v1/object/sign/challan-documents/**', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: '{"signedURL":"/challan-documents/inward-1/x?token=abc"}' })
+    );
+
+    await page.goto('/?demoRole=store#/material-inward');
+    await page.selectOption('[data-action="select-po"]', 'po-1');
+
+    const historyRow = page.locator('[data-history-row="inward-1"]');
+    await expect(historyRow).toBeVisible();
+    await expect(historyRow.locator('[data-action="view-challan"]')).toBeVisible();
+  });
 });
 
 test.describe('Phase 3 — Inspection', () => {
