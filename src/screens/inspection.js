@@ -7,6 +7,7 @@ import { createStore } from '../state.js';
 import { canViewModule } from '../navPermissions.js';
 import { fetchPendingInspection, recordInspection } from '../inspection.js';
 import { validateInspectionForm } from '../validation.js';
+import { repaintPreservingFocus } from '../domFocus.js';
 
 function initialState() {
   return {
@@ -46,8 +47,10 @@ export async function render(container) {
   }
 
   function paint() {
-    renderContent(content, store.getState());
-    wireEvents(content, store, user, load);
+    repaintPreservingFocus(content, () => {
+      renderContent(content, store.getState());
+      wireEvents(content, store, user, load);
+    });
   }
 
   store.subscribe(paint);
@@ -101,10 +104,10 @@ function renderRow(row, state) {
         <td colspan="6" style="padding:12px 14px;background:var(--color-surface-2, transparent);border-top:1px solid var(--color-divider)">
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;align-items:end">
             <div class="field"><label>Accepted Qty</label>
-              <input class="input" data-action="accepted-qty" data-id="${escapeHtml(row.id)}" type="number" step="any" min="0" value="${escapeHtml(form.acceptedQty)}" style="${errors.acceptedQty ? 'border-color:var(--color-accent-2)' : ''}" />
+              <input class="input" data-action="accepted-qty" data-id="${escapeHtml(row.id)}" type="text" inputmode="decimal" value="${escapeHtml(form.acceptedQty)}" style="${errors.acceptedQty ? 'border-color:var(--color-accent-2)' : ''}" />
             </div>
             <div class="field"><label>Rejected Qty</label>
-              <input class="input" data-action="rejected-qty" data-id="${escapeHtml(row.id)}" type="number" step="any" min="0" value="${escapeHtml(form.rejectedQty)}" style="${errors.rejectedQty ? 'border-color:var(--color-accent-2)' : ''}" />
+              <input class="input" data-action="rejected-qty" data-id="${escapeHtml(row.id)}" type="text" inputmode="decimal" value="${escapeHtml(form.rejectedQty)}" style="${errors.rejectedQty ? 'border-color:var(--color-accent-2)' : ''}" />
             </div>
             <div class="field"><label>Rejection Reason${Number(form.rejectedQty) > 0 ? '' : ' (if any rejected)'}</label>
               <input class="input" data-action="rejection-reason" data-id="${escapeHtml(row.id)}" type="text" value="${escapeHtml(form.rejectionReason)}" style="${errors.rejectionReason ? 'border-color:var(--color-accent-2)' : ''}" />

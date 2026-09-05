@@ -17,6 +17,7 @@ import { canViewModule } from '../navPermissions.js';
 import { fetchBoms, fetchProductionRuns, createBom, updateBom, archiveBom, recordBomProduction } from '../boms.js';
 import { fetchItems, createItem } from '../items.js';
 import { validateBomForm, validateItemForm, validateProductionForm } from '../validation.js';
+import { repaintPreservingFocus } from '../domFocus.js';
 
 function emptyBomForm() {
   return { outputItemId: '', outputQty: '1', name: '', notes: '', components: [{ componentItemId: '', quantity: '' }] };
@@ -76,8 +77,10 @@ export async function render(container) {
   }
 
   function paint() {
-    renderContent(content, store.getState(), canManage);
-    wireEvents(content, store, user, load, canManage);
+    repaintPreservingFocus(content, () => {
+      renderContent(content, store.getState(), canManage);
+      wireEvents(content, store, user, load, canManage);
+    });
   }
 
   store.subscribe(paint);
@@ -128,7 +131,7 @@ function renderBomForm(state) {
           </select>
         </div>
         <div class="field"><label for="bom-output-qty">Output Qty (per batch)</label>
-          <input class="input" id="bom-output-qty" type="number" min="0" step="any" data-action="form-output-qty" value="${escapeHtml(form.outputQty)}" />
+          <input class="input" id="bom-output-qty" type="text" inputmode="decimal" data-action="form-output-qty" value="${escapeHtml(form.outputQty)}" />
         </div>
         <div class="field"><label for="bom-name">Name (optional)</label>
           <input class="input" id="bom-name" data-action="form-name" value="${escapeHtml(form.name)}" />
@@ -169,7 +172,7 @@ function renderBomForm(state) {
                   ${state.items.map((i) => `<option value="${escapeHtml(i.id)}" ${row.componentItemId === i.id ? 'selected' : ''}>${escapeHtml(i.name)}</option>`).join('')}
                 </select>
               </td>
-              <td><input class="input" type="number" min="0" step="any" style="width:100px" data-action="component-quantity" data-idx="${idx}" value="${escapeHtml(row.quantity)}" /></td>
+              <td><input class="input" type="text" inputmode="decimal" style="width:100px" data-action="component-quantity" data-idx="${idx}" value="${escapeHtml(row.quantity)}" /></td>
               <td><button type="button" class="btn btn-ghost" data-action="remove-component" data-idx="${idx}" style="padding:4px 10px;font-size:12px">Remove</button></td>
             </tr>`
             )
@@ -244,7 +247,7 @@ function renderBomDetail(bom, state, canManage) {
           <h4 style="margin:0 0 8px;font-size:13px">Record Production</h4>
           <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap;margin-bottom:8px">
             <div class="field" style="margin:0"><label>Quantity Produced</label>
-              <input class="input" type="number" min="0" step="any" style="width:120px" data-action="production-quantity" data-id="${escapeHtml(bom.id)}" value="${escapeHtml(prodForm.quantityProduced)}" />
+              <input class="input" type="text" inputmode="decimal" style="width:120px" data-action="production-quantity" data-id="${escapeHtml(bom.id)}" value="${escapeHtml(prodForm.quantityProduced)}" />
             </div>
             <div class="field" style="margin:0;flex:1;min-width:140px"><label>Notes</label>
               <input class="input" type="text" data-action="production-notes" data-id="${escapeHtml(bom.id)}" value="${escapeHtml(prodForm.notes)}" />

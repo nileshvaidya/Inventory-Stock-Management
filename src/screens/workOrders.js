@@ -19,6 +19,7 @@ import { canViewModule } from '../navPermissions.js';
 import { fetchWorkOrders, fetchWorkOrderRequirements, previewExplosion, createWorkOrder, reserveWorkOrder, cancelWorkOrder } from '../workOrders.js';
 import { fetchItems } from '../items.js';
 import { validateWorkOrderForm } from '../validation.js';
+import { repaintPreservingFocus } from '../domFocus.js';
 
 const STATUS_LABELS = { open: 'Open', reserved: 'Reserved', cancelled: 'Cancelled' };
 const STATUS_TAG_CLASSES = { open: 'tag-neutral', reserved: 'tag-accent', cancelled: 'tag-accent-2' };
@@ -75,8 +76,10 @@ export async function render(container) {
   }
 
   function paint() {
-    renderContent(content, store.getState(), canManage);
-    wireEvents(content, store, load, canManage);
+    repaintPreservingFocus(content, () => {
+      renderContent(content, store.getState(), canManage);
+      wireEvents(content, store, load, canManage);
+    });
   }
 
   store.subscribe(paint);
@@ -126,7 +129,7 @@ function renderForm(state) {
           </select>
         </div>
         <div class="field"><label for="wo-quantity">Quantity</label>
-          <input class="input" id="wo-quantity" type="number" min="0" step="any" data-action="form-quantity" value="${escapeHtml(form.quantity)}" />
+          <input class="input" id="wo-quantity" type="text" inputmode="decimal" data-action="form-quantity" value="${escapeHtml(form.quantity)}" />
         </div>
       </div>
       <div class="field" style="margin-top:10px"><label for="wo-notes">Notes (optional)</label>

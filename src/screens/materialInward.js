@@ -7,6 +7,7 @@ import { createStore } from '../state.js';
 import { canViewModule } from '../navPermissions.js';
 import { fetchReceivableOrders, fetchLineItemStatusForPo, createInward, fetchInwardHistory } from '../materialInward.js';
 import { validateInwardForm, validateInwardLineItem } from '../validation.js';
+import { repaintPreservingFocus } from '../domFocus.js';
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
@@ -57,8 +58,10 @@ export async function render(container) {
   }
 
   function paint() {
-    renderContent(content, store.getState());
-    wireEvents(content, store, user, loadOrders, loadForPo);
+    repaintPreservingFocus(content, () => {
+      renderContent(content, store.getState());
+      wireEvents(content, store, user, loadOrders, loadForPo);
+    });
   }
 
   store.subscribe(paint);
@@ -133,7 +136,7 @@ function renderLineItemRow(row, state) {
       <td>${row.received_qty}</td>
       <td>${row.pending_qty}</td>
       <td>
-        <input class="input" data-action="received-qty" data-po-line-item-id="${escapeHtml(row.po_line_item_id)}" type="number" step="any" min="0" value="${escapeHtml(enteredQty)}" style="width:100px;${showError ? 'border-color:var(--color-accent-2)' : ''}" ${row.pending_qty <= 0 ? 'disabled' : ''} />
+        <input class="input" data-action="received-qty" data-po-line-item-id="${escapeHtml(row.po_line_item_id)}" type="text" inputmode="decimal" value="${escapeHtml(enteredQty)}" style="width:100px;${showError ? 'border-color:var(--color-accent-2)' : ''}" ${row.pending_qty <= 0 ? 'disabled' : ''} />
         ${showError ? `<div style="font-size:11px;color:var(--color-accent-2-200);margin-top:4px">${escapeHtml(errors.receivedQty)}</div>` : ''}
       </td>
     </tr>

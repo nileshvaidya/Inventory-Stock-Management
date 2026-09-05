@@ -233,6 +233,44 @@ test.describe('Phase 3 — Inspection', () => {
     await expect(page.locator('[data-inspection-form="mil-1"]')).toBeVisible();
     expect(insertCalled).toBe(false);
   });
+
+  test('typing a decimal quantity character by character keeps focus and lands correctly (regression)', async ({ page }) => {
+    await page.route('**/rest/v1/material_inward_line_items**', (route) => {
+      if (route.request().method() === 'GET') {
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify([
+            {
+              id: 'mil-1',
+              received_qty: 100,
+              po_line_item: { item_name: 'Base Angle', po: { id: 'po-1', po_number: 'PO-1001', project: { name: 'Bridge Build' } } },
+              inward: { received_date: '2026-01-15', deleted_at: null },
+              inspection_results: [],
+            },
+          ]),
+        });
+      }
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+    });
+
+    await page.goto('/?demoRole=admin#/inspection');
+    await page.click('[data-action="toggle-row"][data-id="mil-1"]');
+
+    // Every keystroke here triggers a full re-render (to keep validation
+    // live) — .fill() sets the whole value in one shot and would never
+    // exercise that; pressSequentially fires one native keydown/input per
+    // character, like a real person typing, which is what previously lost
+    // focus after the first character (and separately dropped a mid-typed
+    // decimal point, since the old type="number" field couldn't survive a
+    // full node replacement while an incomplete value like "62." was
+    // pending).
+    const acceptedQty = page.locator('[data-action="accepted-qty"][data-id="mil-1"]');
+    await acceptedQty.click();
+    await acceptedQty.pressSequentially('62.5', { delay: 20 });
+    await expect(acceptedQty).toHaveValue('62.5');
+    await expect(acceptedQty).toBeFocused();
+  });
 });
 
 test.describe('Phase 3 — Master Material Status', () => {

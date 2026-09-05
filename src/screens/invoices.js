@@ -10,6 +10,7 @@ import { fetchVendors } from '../vendors.js';
 import { fetchPurchaseOrders } from '../purchaseOrders.js';
 import { validateInvoiceForm } from '../validation.js';
 import { toCsv, downloadCsv } from '../csvExport.js';
+import { repaintPreservingFocus } from '../domFocus.js';
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
@@ -88,8 +89,10 @@ export async function render(container) {
   }
 
   function paint() {
-    renderContent(content, store.getState());
-    wireEvents(content, store, user, load);
+    repaintPreservingFocus(content, () => {
+      renderContent(content, store.getState());
+      wireEvents(content, store, user, load);
+    });
   }
 
   store.subscribe(paint);
@@ -175,13 +178,13 @@ function renderNewInvoiceCard(state) {
           <input class="input" id="inv-date" type="date" data-action="form-invoice-date" value="${escapeHtml(state.invoiceDate)}" />
         </div>
         <div class="field"><label for="inv-terms">Payment Terms (days, optional)</label>
-          <input class="input" id="inv-terms" type="number" min="0" step="1" data-action="form-payment-terms" value="${escapeHtml(state.paymentTermsDays)}" />
+          <input class="input" id="inv-terms" type="text" inputmode="numeric" data-action="form-payment-terms" value="${escapeHtml(state.paymentTermsDays)}" />
         </div>
         <div class="field"><label for="inv-due">Due Date (optional)</label>
           <input class="input" id="inv-due" type="date" data-action="form-due-date" value="${escapeHtml(state.dueDate)}" />
         </div>
         <div class="field"><label for="inv-amount">Amount</label>
-          <input class="input" id="inv-amount" type="number" min="0" step="any" data-action="form-amount" value="${escapeHtml(state.amount)}" />
+          <input class="input" id="inv-amount" type="text" inputmode="decimal" data-action="form-amount" value="${escapeHtml(state.amount)}" />
         </div>
         <div class="field"><label for="inv-notes">Notes (optional)</label>
           <input class="input" id="inv-notes" data-action="form-notes" value="${escapeHtml(state.notes)}" />

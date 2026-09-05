@@ -15,6 +15,7 @@ import { canViewModule } from '../navPermissions.js';
 import { fetchAvailableStock, fetchMovementsForItem, createStockMovement } from '../inventory.js';
 import { createItem } from '../items.js';
 import { validateItemForm, validateStockMovementForm } from '../validation.js';
+import { repaintPreservingFocus } from '../domFocus.js';
 
 function initialState() {
   return {
@@ -65,8 +66,10 @@ export async function render(container) {
   }
 
   function paint() {
-    renderContent(content, store.getState(), canManageStock);
-    wireEvents(content, store, user, load, canManageStock);
+    repaintPreservingFocus(content, () => {
+      renderContent(content, store.getState(), canManageStock);
+      wireEvents(content, store, user, load, canManageStock);
+    });
   }
 
   store.subscribe(paint);
@@ -153,7 +156,7 @@ function renderNewItemCard(state) {
           <input class="input" id="ni-uom" data-action="new-item-uom" value="${escapeHtml(state.newItemUom)}" placeholder="Nos., Kg, ..." />
         </div>
         <div class="field"><label for="ni-reorder">Reorder Level (optional)</label>
-          <input class="input" id="ni-reorder" type="number" min="0" step="any" data-action="new-item-reorder" value="${escapeHtml(state.newItemReorderLevel)}" />
+          <input class="input" id="ni-reorder" type="text" inputmode="decimal" data-action="new-item-reorder" value="${escapeHtml(state.newItemReorderLevel)}" />
         </div>
       </div>
       ${state.newItemError ? `<p data-role="new-item-error" style="font-size:12px;color:var(--color-accent-2-200);margin-top:8px">${escapeHtml(state.newItemError)}</p>` : ''}
@@ -210,7 +213,7 @@ function renderLedger(itemId, state, canManageStock) {
               </select>
             </div>
             <div class="field" style="margin:0"><label>Quantity</label>
-              <input class="input" type="number" step="any" min="0" style="width:100px" data-action="movement-quantity" data-id="${escapeHtml(itemId)}" value="${escapeHtml(form.quantity)}" />
+              <input class="input" type="text" inputmode="decimal" style="width:100px" data-action="movement-quantity" data-id="${escapeHtml(itemId)}" value="${escapeHtml(form.quantity)}" />
             </div>
             <div class="field" style="margin:0;flex:1;min-width:140px"><label>Notes</label>
               <input class="input" type="text" data-action="movement-notes" data-id="${escapeHtml(itemId)}" value="${escapeHtml(form.notes)}" placeholder="Opening balance, correction, ..." />

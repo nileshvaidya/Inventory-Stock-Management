@@ -763,3 +763,38 @@ layers:
   the first test needing it.
 - `src/screens/help.js`'s Order Status topic now marks the archive step
   "Admin only."
+
+## Fix: every editable screen lost focus after each character typed
+
+Reported on Inspection, matching the same bug already fixed on PO
+Upload: every screen with an editable form does a full
+`container.innerHTML` replace on each keystroke (`store.subscribe(paint)`
+re-rendering synchronously so validation/computed totals stay live) —
+destroying and rebuilding the focused `<input>` from scratch each time,
+so continuous typing was impossible anywhere, not just PO Upload.
+
+Extracted the PO Upload fix into a shared `src/domFocus.js`
+(`repaintPreservingFocus`) — remembers the focused element (by
+id/data-* attributes) and its cursor position before a repaint, restores
+both on the equivalent freshly-rendered element afterwards — and wired
+it into every other screen with the same `paint()` pattern: Inspection,
+BoM Builder, Inventory, Invoices, Material Inward, Work Orders (PO
+Upload itself now uses the shared helper too instead of its own inline
+copy). Also converted every free-typed numeric field across those
+screens from `type="number"` to `type="text" inputmode="decimal"` (or
+`"numeric"` for whole-number fields) for the same reason as PO Upload's
+Qty/Rate: a `number` input can't expose or restore cursor position, and
+separately drops a decimal point typed mid-edit across a full node
+replacement (e.g. "62.5" landing as "625"). Every affected field is
+already validated with `Number(...)` on a string (`src/validation.js`),
+so the input's `type` attribute was never load-bearing.
+
+Added `src/domFocus.test.js` (5 unit tests covering focus/cursor
+restore, the number-input caret fallback, no-op cases, and that a
+`<select>` regaining focus isn't touched) and an e2e regression test on
+Inspection using Playwright's `pressSequentially` (fires one native
+keydown/input per character — `.fill()` sets the whole value in one shot
+and would never have caught this). Verified every affected field on all
+7 screens by hand with character-by-character typing against a real
+built preview; the full existing suite (lint, typecheck, 112 unit
+tests, all 80 e2e tests, production build) stayed green throughout.
