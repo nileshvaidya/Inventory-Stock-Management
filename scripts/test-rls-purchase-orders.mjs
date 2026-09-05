@@ -63,15 +63,17 @@ async function cleanup({ userIds, projectId, vendorId, poId, mappingId }) {
 }
 
 async function run() {
-  console.log('Setting up test users (one purchase, one store)...');
+  console.log('Setting up test users (one purchase, one store, one admin)...');
   const purchaseUser = await createUser({ name: `RLS Test Purchase ${stamp}`, email: `rls-purchase-${stamp}@example.com`, role: 'purchase' });
   const storeUser = await createUser({ name: `RLS Test Store ${stamp}`, email: `rls-store-po-${stamp}@example.com`, role: 'store' });
-  const userIds = [purchaseUser.id, storeUser.id];
+  const adminUser = await createUser({ name: `RLS Test Admin ${stamp}`, email: `rls-admin-po-${stamp}@example.com`, role: 'admin' });
+  const userIds = [purchaseUser.id, storeUser.id, adminUser.id];
   let projectId, vendorId, poId, mappingId;
 
   try {
     const clientPurchase = await signedInClient(purchaseUser.email);
     const clientStore = await signedInClient(storeUser.email);
+    const clientAdmin = await signedInClient(adminUser.email);
 
     console.log('\nProjects: purchase role can create, store role cannot (P2-3, P2-4)...');
     const { data: project, error: projectErr } = await clientPurchase
@@ -124,24 +126,29 @@ async function run() {
     const { data: poForStore } = await clientStore.from('purchase_orders').select('id').eq('id', poId);
     assert((poForStore ?? []).some((p) => p.id === poId), "store role can see purchase's PO in Order Status");
 
-    console.log('\nPurchase orders: soft delete (P2 archive) — purchase role can archive, store role cannot...');
-    const { error: archiveErr } = await clientPurchase
-      .from('purchase_orders')
-      .update({ deleted_at: new Date().toISOString() })
-      .eq('id', poId);
-    assert(!archiveErr, 'purchase role can archive (soft-delete) a PO');
-    const { data: afterArchive } = await admin.from('purchase_orders').select('deleted_at').eq('id', poId).single();
-    assert(afterArchive.deleted_at !== null, "the PO's deleted_at persisted");
-
-    await admin.from('purchase_orders').update({ deleted_at: null }).eq('id', poId);
+    console.log('\nPurchase orders: soft delete (Order Status "Delete") — admin can archive, purchase/store cannot (admin-only, per user request)...');
     // Postgres RLS filters an UPDATE's USING clause before the statement
     // ever runs — for a caller the policy excludes, that's zero matching
     // rows, which PostgREST reports as a quiet 200/no-op, not an error.
     // The real assertion is whether the row actually changed, not whether
     // the client call "errored".
+    await clientPurchase.from('purchase_orders').update({ deleted_at: new Date().toISOString() }).eq('id', poId);
+    const { data: afterPurchaseAttempt } = await admin.from('purchase_orders').select('deleted_at').eq('id', poId).single();
+    assert(afterPurchaseAttempt.deleted_at === null, 'purchase role cannot archive a PO (RLS silently filters the update to zero rows)');
+
     await clientStore.from('purchase_orders').update({ deleted_at: new Date().toISOString() }).eq('id', poId);
     const { data: afterStoreAttempt } = await admin.from('purchase_orders').select('deleted_at').eq('id', poId).single();
     assert(afterStoreAttempt.deleted_at === null, 'store role cannot archive a PO (RLS silently filters the update to zero rows)');
+
+    const { error: archiveErr } = await clientAdmin
+      .from('purchase_orders')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', poId);
+    assert(!archiveErr, 'admin role can archive (soft-delete) a PO');
+    const { data: afterArchive } = await admin.from('purchase_orders').select('deleted_at').eq('id', poId).single();
+    assert(afterArchive.deleted_at !== null, "the PO's deleted_at persisted");
+
+    await admin.from('purchase_orders').update({ deleted_at: null }).eq('id', poId);
 
     console.log('\nImport field mappings (Map Fields Manually, Phase 2 addendum): purchase role can save one, store role cannot...');
     const templateV1 = { tokenCount: 5, itemNameTokenIndices: [0, 1], qtyTokenIndex: 2, rateTokenIndex: 3 };

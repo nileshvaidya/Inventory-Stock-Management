@@ -291,7 +291,7 @@ function renderOrderStatus() {
     ${h3('Exporting and archiving')}
     ${ol([
       'Click <strong>Export CSV</strong> to download the filtered list as a spreadsheet.',
-      'Click <strong>Delete</strong> on a row to archive that PO (a confirmation pop-up appears first) — this doesn\'t erase it, it just hides it from the list unless "Show archived" is ticked.',
+      'Click <strong>Delete</strong> on a row to archive that PO (a confirmation pop-up appears first) — this doesn\'t erase it, it just hides it from the list unless "Show archived" is ticked. <strong>Admin only</strong> — a Purchase user can view and filter every PO here but can\'t archive one.',
     ])}
     `
   );

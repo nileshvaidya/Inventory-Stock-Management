@@ -734,3 +734,32 @@ built preview: item name, quantity, rate (including a decimal), PO
 Number, and the inline "+ New Item" field all now type correctly with
 focus retained, and the live computed-total/amount calculations are
 unaffected.
+
+## Order Status: archiving a PO restricted to admin (direct request)
+
+Order Status' only mutating action — the "Delete" button, which
+soft-deletes (archives) a Purchase Order — was previously available to
+both Admin and Purchase (`is_purchase_or_admin`, same grant as creating a
+PO). At the user's explicit request, restricted to admin only, at both
+layers:
+
+- `src/screens/orderStatus.js`: the Delete button is only rendered when
+  `user.role === 'admin'` — a Purchase viewer still sees and filters
+  every PO, just without the action.
+- `supabase/schema.sql`: `purchase_orders`' update policy (the same
+  policy the "Delete" button's soft-delete goes through) now checks
+  `is_admin()` instead of `is_purchase_or_admin()` — the real backstop,
+  since hiding a button alone doesn't stop a direct API call. Automatic
+  PO status recalculation (`recompute_po_status`) is unaffected — it's
+  `security definer` specifically so it never depended on this policy in
+  the first place.
+- `scripts/test-rls-purchase-orders.mjs` updated to assert the new
+  matrix against a real Supabase project: purchase and store roles'
+  archive attempts are silently filtered to zero rows, admin's succeeds.
+- `e2e/phase2.spec.js` gained a test confirming the Delete button
+  renders for admin and is absent for purchase on the same row;
+  `src/demoMode.js` gained a `purchase` demo user (only
+  `admin`/`authorized`/`store`/`production` existed before) since this is
+  the first test needing it.
+- `src/screens/help.js`'s Order Status topic now marks the archive step
+  "Admin only."

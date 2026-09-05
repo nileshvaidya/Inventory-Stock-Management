@@ -37,6 +37,13 @@ export const DEMO_USERS = {
     role: 'production',
     status: 'active',
   },
+  purchase: {
+    id: 'demo-u5',
+    name: 'Demo Purchase',
+    email: 'purchase@example.com',
+    role: 'purchase',
+    status: 'active',
+  },
 };
 
 /**

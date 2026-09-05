@@ -244,4 +244,34 @@ test.describe('Phase 2 — Order Status', () => {
     await page.goto('/?demoRole=admin#/order-status');
     await expect(page.locator('[data-screen="order-status"]')).toContainText('No purchase orders match');
   });
+
+  test('only admin sees the Delete (archive) action — purchase role can view but not edit', async ({ page }) => {
+    await page.route('**/rest/v1/projects**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
+    await page.route('**/rest/v1/purchase_orders**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([
+          {
+            id: 'po-1',
+            po_number: 'PO-1001',
+            order_date: '2026-01-15',
+            status: 'to_be_received',
+            deleted_at: null,
+            project: { id: 'p1', name: 'Bridge Build' },
+            vendor: { id: 'v1', name: 'Acme Supplies' },
+          },
+        ]),
+      })
+    );
+
+    await page.goto('/?demoRole=admin#/order-status');
+    await expect(page.locator('[data-po-row="po-1"] [data-action="delete-po"]')).toBeVisible();
+
+    await page.goto('/?demoRole=purchase#/order-status');
+    await expect(page.locator('[data-screen="order-status"]')).toBeVisible();
+    const row = page.locator('[data-po-row="po-1"]');
+    await expect(row).toContainText('PO-1001');
+    await expect(row.locator('[data-action="delete-po"]')).toHaveCount(0);
+  });
 });

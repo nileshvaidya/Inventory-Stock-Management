@@ -277,16 +277,20 @@ create policy "Purchase/admin can create purchase orders"
   to authenticated
   with check (public.is_purchase_or_admin(auth.uid()) and created_by = auth.uid());
 
--- Update policy covers both status transitions (Phase 3+) and the
--- soft-delete action (Order Status "delete" sets deleted_at, per the
--- build brief's soft-delete-on-POs scope item) — one policy, since both
--- are the same "admin/purchase can modify a PO" permission.
+-- Direct-update policy for Order Status' "Delete" (soft-delete/archive)
+-- action — admin only, at the user's explicit request (previously
+-- admin/purchase, same as create). Automatic status transitions
+-- (Phase 3+) don't go through this policy at all: recompute_po_status
+-- below is security definer specifically so a non-admin's own inspection
+-- can still recompute the PO's status without needing a direct UPDATE
+-- grant on purchase_orders.
 drop policy if exists "Purchase/admin can update purchase orders" on public.purchase_orders;
-create policy "Purchase/admin can update purchase orders"
+drop policy if exists "Admin can update purchase orders" on public.purchase_orders;
+create policy "Admin can update purchase orders"
   on public.purchase_orders for update
   to authenticated
-  using (public.is_purchase_or_admin(auth.uid()))
-  with check (public.is_purchase_or_admin(auth.uid()));
+  using (public.is_admin(auth.uid()))
+  with check (public.is_admin(auth.uid()));
 
 create table if not exists public.po_line_items (
   id uuid primary key default gen_random_uuid(),

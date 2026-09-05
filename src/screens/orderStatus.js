@@ -1,5 +1,8 @@
 // Order Status (Phase 2): every PO, filterable by date range/Project/
-// Status, with CSV export and a soft-delete action. Admin/Purchase only.
+// Status, with CSV export. Screen itself is Admin/Purchase; the
+// soft-delete ("Delete") action is admin-only (per user request),
+// enforced both here (button hidden for non-admin) and at the RLS layer
+// (purchase_orders' update policy — see supabase/schema.sql).
 import { getCurrentProfile } from '../auth.js';
 import { renderShell } from '../layout.js';
 import { escapeHtml } from '../components.js';
@@ -20,6 +23,7 @@ export async function render(container) {
     window.location.hash = '#/dashboard';
     return;
   }
+  const canEdit = user.role === 'admin';
 
   const content = renderShell(container, { activeRoute: '/order-status', user });
   content.setAttribute('data-screen', 'order-status');
@@ -53,7 +57,7 @@ export async function render(container) {
   }
 
   function paint() {
-    renderContent(content, store.getState());
+    renderContent(content, store.getState(), canEdit);
     wireEvents(content, store, load);
   }
 
@@ -64,7 +68,7 @@ export async function render(container) {
   await load();
 }
 
-function renderContent(container, state) {
+function renderContent(container, state, canEdit) {
   container.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px">
       <h1 style="margin:0">Order Status</h1>
@@ -110,14 +114,14 @@ function renderContent(container, state) {
               ? `<div style="padding:20px;font-size:13px;color:var(--color-neutral-500)">No purchase orders match these filters.</div>`
               : `<table class="table" style="min-width:680px">
                   <thead><tr><th>PO Number</th><th>Project</th><th>Vendor</th><th>Order Date</th><th>Status</th><th>Actions</th></tr></thead>
-                  <tbody>${state.orders.map(renderRow).join('')}</tbody>
+                  <tbody>${state.orders.map((po) => renderRow(po, canEdit)).join('')}</tbody>
                 </table>`
       }
     </div>
   `;
 }
 
-function renderRow(po) {
+function renderRow(po, canEdit) {
   const archived = Boolean(po.deleted_at);
   return `
     <tr data-po-row="${escapeHtml(po.id)}" style="${archived ? 'opacity:0.55' : ''}">
@@ -128,7 +132,7 @@ function renderRow(po) {
       <td><span class="tag ${poStatusTagClass(po.status)}">${escapeHtml(poStatusLabel(po.status))}${archived ? ' (archived)' : ''}</span></td>
       <td>
         ${
-          archived
+          archived || !canEdit
             ? ''
             : `<button type="button" class="btn btn-ghost" data-action="delete-po" data-id="${escapeHtml(po.id)}" style="padding:4px 10px;font-size:12px">Delete</button>`
         }
