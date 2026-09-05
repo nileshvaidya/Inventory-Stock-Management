@@ -704,3 +704,33 @@ so only the selected topic is ever in the DOM:
   interaction: switching topics via the sidebar and via an in-content
   cross-reference link, and the FAQ expand/collapse test now opens the
   FAQ topic first instead of finding it pre-rendered on the page.
+
+## Fix: PO Upload lost focus after every character typed
+
+Reported: editing an item name, quantity, rate, or any other field on PO
+Upload dropped focus after each keystroke, making it impossible to type
+continuously. Root cause: `src/screens/poUpload.js`'s `paint()` replaces
+the whole form's `innerHTML` on every `input` event (so the computed
+total and validation stay live as you type) — but that destroys and
+rebuilds the focused `<input>` from scratch each time, so the browser
+drops focus after every single character.
+
+Fixed by having `paint()` remember which element was focused (matched by
+its `data-action`/`data-index`/`data-role`/`id`) and its cursor position
+before repainting, then re-find the equivalent new element afterwards and
+restore both. Also switched the Qty/Rate/Payment Terms fields from
+`type="number"` to `type="text" inputmode="…"`: a `number` input doesn't
+expose `selectionStart`, and it also privately tracks an unrestorable
+"pending edit" state for an incomplete value like `"99."` — surviving a
+full node replacement mid-decimal silently dropped the decimal point
+(typing "99.50" landed as "9950"). Existing validation already parses
+these fields with `Number(...)` on a string, so the field's `type`
+attribute was never load-bearing for it.
+
+Verified with Playwright's `pressSequentially` (fires one native
+keydown/input per character, unlike `.fill()` which sets the whole value
+in one shot and would never have exercised this bug) against a real
+built preview: item name, quantity, rate (including a decimal), PO
+Number, and the inline "+ New Item" field all now type correctly with
+focus retained, and the live computed-total/amount calculations are
+unaffected.

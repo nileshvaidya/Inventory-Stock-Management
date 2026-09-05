@@ -125,13 +125,68 @@ export async function render(container) {
   }
 
   function paint() {
+    // renderContent replaces the whole subtree on every keystroke (each
+    // 'input' event calls store.setState, which re-renders synchronously
+    // so the computed total/validation stay live) — without this, the
+    // focused <input> is destroyed and rebuilt from scratch on every
+    // character, so the browser drops focus and typing continuously is
+    // impossible. Re-find the equivalent new element by the same
+    // data-action/data-index/data-role attributes and restore focus (and
+    // cursor position, where the input type supports it) after repainting.
+    const activeEl = /** @type {HTMLInputElement|HTMLTextAreaElement|null} */ (document.activeElement);
+    const focusSelector = activeEl && content.contains(activeEl) ? describeFocusTarget(activeEl) : null;
+    const selection =
+      focusSelector && typeof activeEl.selectionStart === 'number'
+        ? { start: activeEl.selectionStart, end: activeEl.selectionEnd }
+        : null;
+
     renderContent(content, store.getState());
     wireEvents(content, store, user);
+
+    if (focusSelector) {
+      const next = /** @type {HTMLInputElement|HTMLTextAreaElement|null} */ (content.querySelector(focusSelector));
+      if (next) {
+        next.focus();
+        if (selection) {
+          try {
+            next.setSelectionRange(selection.start, selection.end);
+          } catch {
+            // Some input types (number, date, etc.) don't support selection
+            // ranges — focus is still restored, just not the cursor position.
+          }
+        } else if (next.tagName === 'INPUT' || next.tagName === 'TEXTAREA') {
+          // Types like number/date don't expose selectionStart at all, so
+          // `selection` above is null and the caret isn't restored above —
+          // left alone, focus() plants it at position 0, which would
+          // insert every further keystroke at the front instead of the end
+          // (typing "125" comes out "521"). Reassigning the value to
+          // itself is the standard trick to force the caret to the end.
+          // (Skipped for anything that isn't a text-entry element — e.g. a
+          // <select>/<button> regaining focus needs no caret at all.)
+          const value = next.value;
+          next.value = '';
+          next.value = value;
+        }
+      }
+    }
   }
 
   store.subscribe(paint);
   paint();
   await loadLookups();
+}
+
+/** @param {Element} el */
+function describeFocusTarget(el) {
+  const parts = [];
+  if (el.id) parts.push(`#${CSS.escape(el.id)}`);
+  const role = el.getAttribute('data-role');
+  if (role) parts.push(`[data-role="${role}"]`);
+  const action = el.getAttribute('data-action');
+  if (action) parts.push(`[data-action="${action}"]`);
+  const index = el.getAttribute('data-index');
+  if (index !== null) parts.push(`[data-index="${index}"]`);
+  return parts.length ? parts.join('') : null;
 }
 
 function lineItemAmount(row) {
@@ -257,7 +312,7 @@ function renderContent(container, state) {
           <input class="input" id="po-number" type="text" data-action="po-number" value="${escapeHtml(state.poNumber)}" />
         </div>
         <div class="field"><label for="po-terms">Payment Terms (days, optional)</label>
-          <input class="input" id="po-terms" type="number" min="0" step="1" data-action="payment-terms" value="${escapeHtml(state.paymentTermsDays)}" />
+          <input class="input" id="po-terms" type="text" inputmode="numeric" data-action="payment-terms" value="${escapeHtml(state.paymentTermsDays)}" />
         </div>
       </div>
     </div>
@@ -359,8 +414,8 @@ function renderLineItemRow(row, index, items) {
           ${items.map((it) => `<option value="${escapeHtml(it.id)}" ${row.itemId === it.id ? 'selected' : ''}>${escapeHtml(it.name)}</option>`).join('')}
         </select>
       </td>
-      <td><input class="input" data-action="item-qty" data-index="${index}" type="number" step="any" value="${escapeHtml(row.quantity)}" style="width:90px;${errors.quantity ? 'border-color:var(--color-accent-2)' : ''}" /></td>
-      <td><input class="input" data-action="item-rate" data-index="${index}" type="number" step="any" value="${escapeHtml(row.rate)}" style="width:90px;${errors.rate ? 'border-color:var(--color-accent-2)' : ''}" /></td>
+      <td><input class="input" data-action="item-qty" data-index="${index}" type="text" inputmode="decimal" value="${escapeHtml(row.quantity)}" style="width:90px;${errors.quantity ? 'border-color:var(--color-accent-2)' : ''}" /></td>
+      <td><input class="input" data-action="item-rate" data-index="${index}" type="text" inputmode="decimal" value="${escapeHtml(row.rate)}" style="width:90px;${errors.rate ? 'border-color:var(--color-accent-2)' : ''}" /></td>
       <td style="font-size:13px">${amount.toFixed(2)}</td>
       <td><button type="button" class="btn btn-ghost" data-action="remove-row" data-index="${index}" aria-label="Remove row">🗑</button></td>
     </tr>
