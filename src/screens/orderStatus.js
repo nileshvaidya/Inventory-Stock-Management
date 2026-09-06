@@ -12,7 +12,7 @@ import { fetchPurchaseOrders, softDeletePurchaseOrder } from '../purchaseOrders.
 import { fetchProjects } from '../projects.js';
 import { PO_STATUSES, poStatusLabel, poStatusTagClass } from '../poStatus.js';
 import { toCsv, downloadCsv } from '../csvExport.js';
-import { repaintPreservingFocus, afterFocusSettles } from '../domFocus.js';
+import { repaintPreservingFocus, afterFocusSettles, skipDateSegmentsOnTab } from '../domFocus.js';
 
 export async function render(container) {
   const user = await getCurrentProfile();
@@ -159,14 +159,19 @@ function wireEvents(container, store, load) {
   // Date fields use 'blur', not the 'change' the other filters share above:
   // Chrome fires 'change' on a date input on every completed segment, not
   // just once the full date is committed, so wiring it the same way as a
-  // <select> would re-render (destroying/recreating the input, since this
-  // screen doesn't use repaintPreservingFocus — there's no other live-typed
-  // field to preserve) on every keystroke while the user is still typing a
-  // date, and can also fight the browser's own Tab-driven focus transfer
-  // out of the field (see domFocus.js's afterFocusSettles for why the
-  // state update itself needs deferring, not just the event choice).
+  // <select> would re-render (destroying/recreating the input) on every
+  // keystroke while the user is still typing a date, and can also fight
+  // the browser's own Tab-driven focus transfer out of the field (see
+  // domFocus.js's afterFocusSettles for why the state update itself needs
+  // deferring, not just the event choice). skipDateSegmentsOnTab further
+  // makes Tab always leave the field immediately rather than moving
+  // between its own day/month/year segments first (genuine browser
+  // behavior, not a bug) — Left/Right arrow keys still move between them.
   const bindDateFilter = (selector, key) => {
-    container.querySelector(selector)?.addEventListener('blur', (e) => {
+    const input = container.querySelector(selector);
+    if (!input) return;
+    skipDateSegmentsOnTab(input);
+    input.addEventListener('blur', (e) => {
       const value = e.target.value;
       afterFocusSettles(() => {
         store.setState({ [key]: value });

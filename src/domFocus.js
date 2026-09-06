@@ -93,3 +93,45 @@ function escapeAttrValue(value) {
 export function afterFocusSettles(fn) {
   setTimeout(fn, 0);
 }
+
+const TABBABLE_SELECTOR =
+  'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+/**
+ * Every element Tab can reach, in DOM/tab order, restricted to what's
+ * actually visible (offsetParent is null for display:none — but also for
+ * position:fixed, so the current activeElement is always included too, in
+ * case it's fixed-positioned itself).
+ * @returns {HTMLElement[]}
+ */
+function tabbableElements() {
+  return /** @type {HTMLElement[]} */ (Array.from(document.querySelectorAll(TABBABLE_SELECTOR))).filter(
+    (el) => el.offsetParent !== null || el === document.activeElement
+  );
+}
+
+/**
+ * A native <input type="date"> treats Tab as "move to the next day/month/
+ * year segment" and only actually leaves the control once every segment
+ * has been passed through (confirmed even on a bare, zero-JS date input —
+ * genuine browser behavior, not something introduced by this app's
+ * re-render architecture). That's surprising in a multi-field form where
+ * every other field's Tab moves straight to the next one — reported on
+ * Invoices' Invoice Date, expected to reach Payment Terms in one press.
+ * Attach this to a date input (in wireEvents, since the element is
+ * recreated on every repaint) to make Tab skip straight past it like any
+ * other field; Left/Right arrow keys still move between its segments.
+ * @param {HTMLInputElement} dateInput
+ */
+export function skipDateSegmentsOnTab(dateInput) {
+  dateInput.addEventListener('keydown', (e) => {
+    if (e.key !== 'Tab') return;
+    const focusable = tabbableElements();
+    const index = focusable.indexOf(dateInput);
+    if (index === -1) return;
+    const target = focusable[e.shiftKey ? index - 1 : index + 1];
+    if (!target) return;
+    e.preventDefault();
+    target.focus();
+  });
+}

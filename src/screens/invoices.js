@@ -10,7 +10,7 @@ import { fetchVendors } from '../vendors.js';
 import { fetchPurchaseOrders } from '../purchaseOrders.js';
 import { validateInvoiceForm } from '../validation.js';
 import { toCsv, downloadCsv } from '../csvExport.js';
-import { repaintPreservingFocus, afterFocusSettles } from '../domFocus.js';
+import { repaintPreservingFocus, afterFocusSettles, skipDateSegmentsOnTab } from '../domFocus.js';
 import { extractPdfText, parseInvoiceNumber, parseInvoiceDate, parseInvoiceAmount } from '../pdfParser.js';
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
@@ -378,21 +378,36 @@ function wireEvents(container, store, user, load) {
   // afterFocusSettles: calling it synchronously inside 'blur' raced the
   // browser's own Tab-driven focus transfer and broke Tab navigation out
   // of this field — see domFocus.js.
-  container.querySelector('[data-action="form-invoice-date"]')?.addEventListener('blur', (e) => {
-    const value = e.target.value;
-    afterFocusSettles(() => {
-      const state = store.getState();
-      store.setState({ invoiceDate: value, dueDate: addDays(value, state.paymentTermsDays) || state.dueDate });
+  const invoiceDateInput = container.querySelector('[data-action="form-invoice-date"]');
+  if (invoiceDateInput) {
+    // Tab out of a native date input normally moves between its own
+    // day/month/year segments first (genuine browser behavior, not a bug —
+    // confirmed on a bare, zero-JS date input), only actually reaching the
+    // next field once every segment has been passed. Reported as "Tab
+    // should go straight to Payment Terms" — skipDateSegmentsOnTab makes
+    // Tab always leave the field immediately, like every other field here;
+    // Left/Right arrow keys still move between its segments.
+    skipDateSegmentsOnTab(invoiceDateInput);
+    invoiceDateInput.addEventListener('blur', (e) => {
+      const value = e.target.value;
+      afterFocusSettles(() => {
+        const state = store.getState();
+        store.setState({ invoiceDate: value, dueDate: addDays(value, state.paymentTermsDays) || state.dueDate });
+      });
     });
-  });
+  }
   container.querySelector('[data-action="form-payment-terms"]')?.addEventListener('input', (e) => {
     const state = store.getState();
     store.setState({ paymentTermsDays: e.target.value, dueDate: addDays(state.invoiceDate, e.target.value) || state.dueDate });
   });
-  container.querySelector('[data-action="form-due-date"]')?.addEventListener('blur', (e) => {
-    const value = e.target.value;
-    afterFocusSettles(() => store.setState({ dueDate: value }));
-  });
+  const dueDateInput = container.querySelector('[data-action="form-due-date"]');
+  if (dueDateInput) {
+    skipDateSegmentsOnTab(dueDateInput);
+    dueDateInput.addEventListener('blur', (e) => {
+      const value = e.target.value;
+      afterFocusSettles(() => store.setState({ dueDate: value }));
+    });
+  }
   container.querySelector('[data-action="form-amount"]')?.addEventListener('input', (e) => store.setState({ amount: e.target.value }));
   container.querySelector('[data-action="form-notes"]')?.addEventListener('input', (e) => store.setState({ notes: e.target.value }));
 

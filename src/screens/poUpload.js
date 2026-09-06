@@ -14,7 +14,7 @@ import { fetchItems, createItem } from '../items.js';
 import { createPurchaseOrder } from '../purchaseOrders.js';
 import { fetchMappingForVendor, saveMappingForVendor } from '../importMappings.js';
 import { validatePurchaseOrderForm, validateLineItem } from '../validation.js';
-import { repaintPreservingFocus, afterFocusSettles } from '../domFocus.js';
+import { repaintPreservingFocus, afterFocusSettles, skipDateSegmentsOnTab } from '../domFocus.js';
 
 const DOC_TYPE = 'purchase_order';
 
@@ -634,10 +634,20 @@ function wireEvents(container, store, user) {
   // afterFocusSettles: calling it synchronously inside 'blur' raced the
   // browser's own Tab-driven focus transfer and broke Tab navigation out
   // of this field — see domFocus.js.
-  container.querySelector('[data-action="order-date"]')?.addEventListener('blur', (e) => {
-    const value = e.target.value;
-    afterFocusSettles(() => store.setState({ orderDate: value }));
-  });
+  const orderDateInput = container.querySelector('[data-action="order-date"]');
+  if (orderDateInput) {
+    // Tab out of a native date input normally moves between its own
+    // day/month/year segments first (genuine browser behavior, not a bug),
+    // only actually reaching the next field once every segment has been
+    // passed — skipDateSegmentsOnTab makes Tab always leave the field
+    // immediately, like every other field here; Left/Right arrow keys
+    // still move between its segments.
+    skipDateSegmentsOnTab(orderDateInput);
+    orderDateInput.addEventListener('blur', (e) => {
+      const value = e.target.value;
+      afterFocusSettles(() => store.setState({ orderDate: value }));
+    });
+  }
   container.querySelector('[data-action="po-number"]')?.addEventListener('input', (e) => store.setState({ poNumber: e.target.value }));
   container.querySelector('[data-action="payment-terms"]')?.addEventListener('input', (e) => store.setState({ paymentTermsDays: e.target.value }));
 

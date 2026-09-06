@@ -992,3 +992,32 @@ to `'blur'`) updated the same way phase5's was. `src/domFocus.test.js`
 gained a unit test for `afterFocusSettles`. Full suite (lint,
 typecheck, 131 unit tests, all 84 e2e tests, production build) stayed
 green.
+
+## Fix: Tab from Invoice Date should reach Payment Terms, not a date segment
+
+Reported next: Tab out of Invoice Date was landing somewhere other
+than Payment Terms. The multi-segment tab-stop behavior confirmed as
+"native, not a bug" in the previous fix is real, but it's genuinely
+surprising in a multi-field form — every other field's Tab moves
+straight to the next one, so a date field eating several Tab presses
+before actually leaving reads as broken, especially since Left/Right
+arrow keys already move between its segments (Tab duplicates that,
+serving no purpose Tab-users actually need here).
+
+Added `skipDateSegmentsOnTab` (`src/domFocus.js`): a `'keydown'`
+listener that, on Tab (either direction), looks up every currently
+tabbable element in the document (matching the standard tabbable
+selector, filtered to what's actually visible via `offsetParent` — so
+hidden inputs like a file-upload trigger's own `<input>` don't
+count), finds the date input's position in that list, and moves focus
+directly to the next/previous one instead of letting the browser
+step through segments. Wired onto all eight date fields across the
+five previously-fixed screens (Invoices' Invoice Date and Due Date,
+PO Upload's Order Date, Material Inward's Received Date, Order
+Status's and Action Log's date-range filters).
+
+Verified via real Playwright sessions: Tab and Shift+Tab from every
+date field now land on the correct adjacent field in one press (e.g.
+Invoices' Invoice Date → Payment Terms, Due Date → Amount).
+Full suite (lint, typecheck, 131 unit tests, all 84 e2e tests,
+production build) stayed green.

@@ -14,7 +14,7 @@ import {
   getChallanFileUrl,
 } from '../materialInward.js';
 import { validateInwardForm, validateInwardLineItem } from '../validation.js';
-import { repaintPreservingFocus, afterFocusSettles } from '../domFocus.js';
+import { repaintPreservingFocus, afterFocusSettles, skipDateSegmentsOnTab } from '../domFocus.js';
 import { extractPdfText, parseChallanText } from '../pdfParser.js';
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
@@ -297,10 +297,20 @@ function wireEvents(container, store, user, loadOrders, loadForPo) {
   // afterFocusSettles: calling it synchronously inside 'blur' raced the
   // browser's own Tab-driven focus transfer and broke Tab navigation out
   // of this field — see domFocus.js.
-  container.querySelector('[data-action="received-date"]')?.addEventListener('blur', (e) => {
-    const value = e.target.value;
-    afterFocusSettles(() => store.setState({ receivedDate: value }));
-  });
+  const receivedDateInput = container.querySelector('[data-action="received-date"]');
+  if (receivedDateInput) {
+    // Tab out of a native date input normally moves between its own
+    // day/month/year segments first (genuine browser behavior, not a bug),
+    // only actually reaching the next field once every segment has been
+    // passed — skipDateSegmentsOnTab makes Tab always leave the field
+    // immediately, like every other field here; Left/Right arrow keys
+    // still move between its segments.
+    skipDateSegmentsOnTab(receivedDateInput);
+    receivedDateInput.addEventListener('blur', (e) => {
+      const value = e.target.value;
+      afterFocusSettles(() => store.setState({ receivedDate: value }));
+    });
+  }
   container.querySelector('[data-action="notes"]')?.addEventListener('input', (e) => {
     store.setState({ notes: e.target.value });
   });
