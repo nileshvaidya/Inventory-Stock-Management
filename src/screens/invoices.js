@@ -10,7 +10,7 @@ import { fetchVendors } from '../vendors.js';
 import { fetchPurchaseOrders } from '../purchaseOrders.js';
 import { validateInvoiceForm } from '../validation.js';
 import { toCsv, downloadCsv } from '../csvExport.js';
-import { repaintPreservingFocus, afterFocusSettles, skipDateSegmentsOnTab } from '../domFocus.js';
+import { repaintPreservingFocus, afterFocusSettles, skipDateSegmentsOnTab, onRealBlur } from '../domFocus.js';
 import { extractPdfText, parseInvoiceNumber, parseInvoiceDate, parseInvoiceAmount } from '../pdfParser.js';
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
@@ -388,7 +388,7 @@ function wireEvents(container, store, user, load) {
     // Tab always leave the field immediately, like every other field here;
     // Left/Right arrow keys still move between its segments.
     skipDateSegmentsOnTab(invoiceDateInput);
-    invoiceDateInput.addEventListener('blur', (e) => {
+    onRealBlur(invoiceDateInput, (e) => {
       const value = e.target.value;
       afterFocusSettles(() => {
         const state = store.getState();
@@ -396,14 +396,36 @@ function wireEvents(container, store, user, load) {
       });
     });
   }
-  container.querySelector('[data-action="form-payment-terms"]')?.addEventListener('input', (e) => {
-    const state = store.getState();
-    store.setState({ paymentTermsDays: e.target.value, dueDate: addDays(state.invoiceDate, e.target.value) || state.dueDate });
-  });
+  const paymentTermsInput = container.querySelector('[data-action="form-payment-terms"]');
+  if (paymentTermsInput) {
+    paymentTermsInput.addEventListener('input', (e) => {
+      store.setState({ paymentTermsDays: e.target.value });
+    });
+    // Due date recomputes on 'blur' here too, not live on every keystroke:
+    // consistent with Invoice Date's own fields, and avoids showing a
+    // half-typed number's due date (e.g. briefly "3 days" while typing
+    // "30") before the user finishes. onRealBlur (not a raw 'blur'
+    // listener) is essential here specifically: this field also has a
+    // live 'input' handler above that re-renders on every keystroke,
+    // and a repaint destroys+recreates the focused node, which fires a
+    // synthetic 'blur' as a side effect — without onRealBlur filtering
+    // that out, it would loop forever (blur -> setState -> repaint ->
+    // synthetic blur -> setState -> ...). Deferred via afterFocusSettles
+    // for the same reason as the date fields — a synchronous setState
+    // inside 'blur' races the browser's own Tab-driven focus transfer
+    // and can steal focus back.
+    onRealBlur(paymentTermsInput, (e) => {
+      const value = e.target.value;
+      afterFocusSettles(() => {
+        const state = store.getState();
+        store.setState({ dueDate: addDays(state.invoiceDate, value) || state.dueDate });
+      });
+    });
+  }
   const dueDateInput = container.querySelector('[data-action="form-due-date"]');
   if (dueDateInput) {
     skipDateSegmentsOnTab(dueDateInput);
-    dueDateInput.addEventListener('blur', (e) => {
+    onRealBlur(dueDateInput, (e) => {
       const value = e.target.value;
       afterFocusSettles(() => store.setState({ dueDate: value }));
     });

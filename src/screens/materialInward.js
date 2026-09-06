@@ -14,7 +14,7 @@ import {
   getChallanFileUrl,
 } from '../materialInward.js';
 import { validateInwardForm, validateInwardLineItem } from '../validation.js';
-import { repaintPreservingFocus, afterFocusSettles, skipDateSegmentsOnTab } from '../domFocus.js';
+import { repaintPreservingFocus, afterFocusSettles, skipDateSegmentsOnTab, onRealBlur } from '../domFocus.js';
 import { extractPdfText, parseChallanText } from '../pdfParser.js';
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
@@ -306,7 +306,7 @@ function wireEvents(container, store, user, loadOrders, loadForPo) {
     // immediately, like every other field here; Left/Right arrow keys
     // still move between its segments.
     skipDateSegmentsOnTab(receivedDateInput);
-    receivedDateInput.addEventListener('blur', (e) => {
+    onRealBlur(receivedDateInput, (e) => {
       const value = e.target.value;
       afterFocusSettles(() => store.setState({ receivedDate: value }));
     });

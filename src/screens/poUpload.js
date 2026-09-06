@@ -14,7 +14,7 @@ import { fetchItems, createItem } from '../items.js';
 import { createPurchaseOrder } from '../purchaseOrders.js';
 import { fetchMappingForVendor, saveMappingForVendor } from '../importMappings.js';
 import { validatePurchaseOrderForm, validateLineItem } from '../validation.js';
-import { repaintPreservingFocus, afterFocusSettles, skipDateSegmentsOnTab } from '../domFocus.js';
+import { repaintPreservingFocus, afterFocusSettles, skipDateSegmentsOnTab, onRealBlur } from '../domFocus.js';
 
 const DOC_TYPE = 'purchase_order';
 
@@ -643,7 +643,7 @@ function wireEvents(container, store, user) {
     // immediately, like every other field here; Left/Right arrow keys
     // still move between its segments.
     skipDateSegmentsOnTab(orderDateInput);
-    orderDateInput.addEventListener('blur', (e) => {
+    onRealBlur(orderDateInput, (e) => {
       const value = e.target.value;
       afterFocusSettles(() => store.setState({ orderDate: value }));
     });

@@ -11,7 +11,7 @@ import { canViewModule } from '../navPermissions.js';
 import { fetchActionLog, describeAction, TABLE_LABELS, OPERATION_LABELS } from '../actionLog.js';
 import { fetchAdminUsers } from '../admin.js';
 import { toCsv, downloadCsv } from '../csvExport.js';
-import { repaintPreservingFocus, afterFocusSettles, skipDateSegmentsOnTab } from '../domFocus.js';
+import { repaintPreservingFocus, afterFocusSettles, skipDateSegmentsOnTab, onRealBlur } from '../domFocus.js';
 
 function initialState() {
   return {
@@ -197,7 +197,7 @@ function wireEvents(container, store, load) {
     const input = container.querySelector(selector);
     if (!input) return;
     skipDateSegmentsOnTab(input);
-    input.addEventListener('blur', (e) => {
+    onRealBlur(input, (e) => {
       const value = e.target.value;
       afterFocusSettles(() => {
         store.setState({ [key]: value });

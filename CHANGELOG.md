@@ -1021,3 +1021,46 @@ date field now land on the correct adjacent field in one press (e.g.
 Invoices' Invoice Date → Payment Terms, Due Date → Amount).
 Full suite (lint, typecheck, 131 unit tests, all 84 e2e tests,
 production build) stayed green.
+
+## Fix: Payment Terms losing focus should recompute Due Date, and an infinite-repaint loop that surfaced while building it
+
+Invoices' Due Date auto-calculation previously only reacted to Invoice
+Date's own `'blur'` and Payment Terms' live `'input'` — recomputing on
+every keystroke while typing Payment Terms. Requested instead: Due
+Date should recompute specifically when *either* field loses focus,
+matching Invoice Date's own already-`'blur'`-driven behavior, so a
+half-typed number (e.g. briefly "3" while typing "30") never flashes
+a wrong intermediate due date.
+
+Moving Payment Terms' due-date computation from `'input'` to `'blur'`
+exposed a real, previously-latent bug: Payment Terms still needs a
+live `'input'` handler (to keep its own typed value in state, for
+validation/display), and that handler re-renders the whole form on
+every keystroke — same as always. But re-rendering *destroys and
+recreates* the currently-focused input, and when a focused element is
+removed from the document, the browser fires a synchronous `'blur'`
+on it as a side effect, even though focus is restored to its
+replacement immediately after. With no `'blur'` handler on this field
+before, that synthetic blur was harmless. Adding one turned it into an
+infinite loop: type a digit → repaint → synthetic blur → the new
+`'blur'` handler's `setState` → another repaint → another synthetic
+blur → forever (measured: 100+ re-renders from typing two characters,
+climbing without bound even after typing stopped).
+
+Fixed at the root, not just at this one call site: `repaintPreservingFocus`
+(`src/domFocus.js`) now flags the exact window where its own DOM
+replacement can produce this synthetic blur, and a new `onRealBlur`
+(replacing every raw `addEventListener('blur', ...)` across all five
+previously-fixed screens' date/blur handlers, eight call sites total)
+checks that flag and ignores blur events caused only by the repaint
+itself — so this class of bug can't recur as more `'blur'` handlers
+get added later. `src/domFocus.test.js` gained two tests: the
+synthetic-blur case is ignored, a genuine blur (focus actually moving
+to another element) still fires normally. Verified via real Playwright
+sessions that: typing Payment Terms no longer loops (confirmed via a
+MutationObserver-based repaint counter), Due Date recomputes correctly
+on blur of either field (including with a vendor's default terms, and
+with terms typed manually with no vendor selected), and Tab navigation
+between every field (established in the two fixes above) still works.
+Full suite (lint, typecheck, 133 unit tests, all 84 e2e tests,
+production build) stayed green.

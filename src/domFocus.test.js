@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { repaintPreservingFocus, afterFocusSettles } from './domFocus.js';
+import { repaintPreservingFocus, afterFocusSettles, onRealBlur } from './domFocus.js';
 
 function mount(html) {
   const root = document.createElement('div');
@@ -88,6 +88,48 @@ describe('repaintPreservingFocus', () => {
     const after = root.querySelector('select');
     expect(document.activeElement).toBe(after);
     expect(after.value).toBe('item-1');
+  });
+});
+
+describe('onRealBlur', () => {
+  it('ignores the synthetic blur repaintPreservingFocus causes by replacing the focused element', () => {
+    // Reproduces the infinite loop found on Invoices' Payment Terms: a
+    // field with both a live 'input' handler (re-rendering on every
+    // keystroke, for a computed total elsewhere) and its own 'blur'
+    // handler. Removing a focused element from the DOM (what every
+    // repaint does) fires a synchronous 'blur' on it — without this
+    // filter, that would trigger the handler, which calls setState,
+    // which triggers another repaint, forever.
+    const root = mount('<input data-action="terms" value="x" />');
+    const input = root.querySelector('input');
+    input.focus();
+
+    let calls = 0;
+    onRealBlur(input, () => {
+      calls += 1;
+    });
+
+    repaintPreservingFocus(root, () => {
+      root.innerHTML = '<input data-action="terms" value="x" />';
+    });
+
+    expect(calls).toBe(0);
+  });
+
+  it('still runs for a real blur, where focus genuinely moves to another element', () => {
+    const root = mount('<input data-action="terms" value="x" /><input data-action="other" />');
+    const input = root.querySelector('[data-action="terms"]');
+    const other = root.querySelector('[data-action="other"]');
+    input.focus();
+
+    let calls = 0;
+    onRealBlur(input, () => {
+      calls += 1;
+    });
+
+    other.focus();
+
+    expect(calls).toBe(1);
   });
 });
 

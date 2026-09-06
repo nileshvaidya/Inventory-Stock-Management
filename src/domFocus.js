@@ -11,6 +11,10 @@
 // cursor position before the render, then restores both on the equivalent
 // freshly-rendered element afterwards.
 
+// Set for the duration of a repaintPreservingFocus render+refocus cycle —
+// see onRealBlur below for why any 'blur' handler needs to check this.
+let repaintInProgress = false;
+
 /**
  * @param {HTMLElement} root
  * @param {() => void} render
@@ -23,7 +27,21 @@ export function repaintPreservingFocus(root, render) {
       ? { start: activeEl.selectionStart, end: activeEl.selectionEnd }
       : null;
 
+  // Replacing the DOM below detaches the currently focused element (its
+  // node is destroyed and an equivalent new one takes its place) — when a
+  // focused element is removed from the document, the browser fires a
+  // synchronous 'blur' on it as a side effect, even though focus is
+  // restored to its replacement a few lines down and the user never
+  // actually left the field. A field that both re-renders live (e.g. on
+  // 'input', for a computed total elsewhere) and has its own 'blur'
+  // handler would otherwise treat that synthetic blur as real: blur ->
+  // setState -> another repaint -> another synthetic blur, forever (hit
+  // on Invoices' Payment Terms). onRealBlur checks this flag to ignore
+  // blur events that happen only because of this repaint, not a genuine
+  // focus change.
+  repaintInProgress = true;
   render();
+  repaintInProgress = false;
 
   if (!focusSelector) return;
   const next = /** @type {HTMLInputElement|HTMLTextAreaElement|null} */ (root.querySelector(focusSelector));
@@ -72,6 +90,22 @@ function describeFocusTarget(el) {
 /** @param {string} value */
 function escapeAttrValue(value) {
   return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+/**
+ * Attaches a 'blur' handler that only runs for a real focus change, never
+ * for the synthetic 'blur' repaintPreservingFocus's own DOM replacement
+ * fires on the outgoing element (see the repaintInProgress comment there).
+ * Every 'blur' handler in the app that triggers a repaint should use this
+ * instead of addEventListener('blur', ...) directly.
+ * @param {HTMLInputElement} el
+ * @param {(e: FocusEvent & { target: HTMLInputElement }) => void} handler
+ */
+export function onRealBlur(el, handler) {
+  el.addEventListener('blur', (e) => {
+    if (repaintInProgress) return;
+    handler(/** @type {FocusEvent & { target: HTMLInputElement }} */ (e));
+  });
 }
 
 /**

@@ -12,7 +12,7 @@ import { fetchPurchaseOrders, softDeletePurchaseOrder } from '../purchaseOrders.
 import { fetchProjects } from '../projects.js';
 import { PO_STATUSES, poStatusLabel, poStatusTagClass } from '../poStatus.js';
 import { toCsv, downloadCsv } from '../csvExport.js';
-import { repaintPreservingFocus, afterFocusSettles, skipDateSegmentsOnTab } from '../domFocus.js';
+import { repaintPreservingFocus, afterFocusSettles, skipDateSegmentsOnTab, onRealBlur } from '../domFocus.js';
 
 export async function render(container) {
   const user = await getCurrentProfile();
@@ -171,7 +171,7 @@ function wireEvents(container, store, load) {
     const input = container.querySelector(selector);
     if (!input) return;
     skipDateSegmentsOnTab(input);
-    input.addEventListener('blur', (e) => {
+    onRealBlur(input, (e) => {
       const value = e.target.value;
       afterFocusSettles(() => {
         store.setState({ [key]: value });
