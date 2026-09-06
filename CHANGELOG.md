@@ -1064,3 +1064,22 @@ with terms typed manually with no vendor selected), and Tab navigation
 between every field (established in the two fixes above) still works.
 Full suite (lint, typecheck, 133 unit tests, all 84 e2e tests,
 production build) stayed green.
+
+## Color-coded invoice status tags
+
+Direct request: Overdue/Paid/Received should read as unambiguously
+bad/good at a glance, not just another shade of the purple accent —
+Invoices' and Bill Payments' status tags previously used `tag-accent`/
+`tag-accent-2` for Paid/Overdue, both close variants of the same hue.
+
+Added genuine semantic tag colors to the design system
+(`src/styles/nocturne.css`): `--color-danger-100`/`-800` (a real red)
+and `--color-success-100`/`-800` (a real green), following the same
+800-for-background/100-for-text pairing the existing accent ramps use,
+plus `.tag-danger`/`.tag-success` classes alongside the existing
+`.tag-accent`/`.tag-neutral`/`.tag-outline`. Invoices' Overdue → red,
+Paid → green (Pending stays neutral gray); Bill Payments' identical
+status field (same invoices, just "Received" instead of "Paid") gets
+the same treatment for consistency. Verified visually via screenshots
+of both screens. Full suite (lint, typecheck, 133 unit tests, all 84
+e2e tests, production build) stayed green.

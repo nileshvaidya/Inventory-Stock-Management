@@ -26,7 +26,10 @@ function billStatus(invoice) {
 }
 
 const STATUS_LABELS = { received: 'Received', overdue: 'Overdue', pending: 'Pending' };
-const STATUS_TAG_CLASSES = { received: 'tag-accent', overdue: 'tag-accent-2', pending: 'tag-neutral' };
+// Genuine red/green here, not the purple accent ramps — overdue and
+// received need to read as unambiguously bad/good at a glance, matching
+// Invoices' own status tags (same underlying invoice status field).
+const STATUS_TAG_CLASSES = { received: 'tag-success', overdue: 'tag-danger', pending: 'tag-neutral' };
 
 export async function render(container) {
   const user = await getCurrentProfile();

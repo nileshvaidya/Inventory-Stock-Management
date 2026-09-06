@@ -30,7 +30,10 @@ function invoiceStatus(invoice) {
 }
 
 const STATUS_LABELS = { paid: 'Paid', overdue: 'Overdue', pending: 'Pending' };
-const STATUS_TAG_CLASSES = { paid: 'tag-accent', overdue: 'tag-accent-2', pending: 'tag-neutral' };
+// Genuine red/green here, not the purple accent ramps — overdue and paid
+// need to read as unambiguously bad/good at a glance, not just "another
+// accent color."
+const STATUS_TAG_CLASSES = { paid: 'tag-success', overdue: 'tag-danger', pending: 'tag-neutral' };
 
 function initialFormState() {
   return {
