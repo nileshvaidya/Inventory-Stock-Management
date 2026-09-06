@@ -118,8 +118,8 @@ describe('onRealBlur', () => {
 
   it('still runs for a real blur, where focus genuinely moves to another element', () => {
     const root = mount('<input data-action="terms" value="x" /><input data-action="other" />');
-    const input = root.querySelector('[data-action="terms"]');
-    const other = root.querySelector('[data-action="other"]');
+    const input = /** @type {HTMLInputElement} */ (root.querySelector('[data-action="terms"]'));
+    const other = /** @type {HTMLInputElement} */ (root.querySelector('[data-action="other"]'));
     input.focus();
 
     let calls = 0;
