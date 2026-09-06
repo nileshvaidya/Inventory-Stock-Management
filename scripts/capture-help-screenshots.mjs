@@ -504,13 +504,57 @@ async function run() {
     await page.close();
   }
 
-  // 16. Mobile viewport — bottom tab bar
+  // 16. Material Dispatch (admin role, so the Payment column is visible)
+  {
+    const page = await browser.newPage({ viewport: VIEWPORT });
+    await mockLookups(page);
+    await page.route('**/rest/v1/material_dispatch**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([
+          {
+            id: 'md1',
+            dispatch_date: '2026-09-02',
+            reference: 'Bridge Build — Sector 12',
+            notes: null,
+            challan_file_path: null,
+            challan_file_name: null,
+            authorized_by: null,
+            authorized_at: null,
+            payment_received_by: null,
+            payment_received_at: null,
+            line_items: [{ id: 'mdl1', item_id: 'i4', quantity: 5, item: { id: 'i4', name: 'Control Panel Assembly', unit_of_measure: 'Nos.' } }],
+          },
+          {
+            id: 'md2',
+            dispatch_date: '2026-08-28',
+            reference: 'Line 2 Upgrade',
+            notes: null,
+            challan_file_path: 'md2/challan.pdf',
+            challan_file_name: 'line2-challan.pdf',
+            authorized_by: 'demo-u1',
+            authorized_at: '2026-08-29T09:00:00Z',
+            payment_received_by: null,
+            payment_received_at: null,
+            line_items: [{ id: 'mdl2', item_id: 'i5', quantity: 8, item: { id: 'i5', name: 'Motor Bracket Sub-assembly', unit_of_measure: 'Nos.' } }],
+          },
+        ]),
+      })
+    );
+    await page.goto(`${BASE_URL}/?demoRole=admin#/material-dispatch`);
+    await page.waitForSelector('[data-screen="material-dispatch"]');
+    await shot(page, '26-material-dispatch');
+    await page.close();
+  }
+
+  // 17. Mobile viewport — bottom tab bar
   {
     const page = await browser.newPage({ viewport: MOBILE_VIEWPORT });
     await page.goto(`${BASE_URL}/?demoRole=admin#/dashboard`);
     await page.waitForSelector('[data-screen="dashboard"]');
     await page.waitForTimeout(300);
-    await shot(page, '26-mobile-dashboard');
+    await shot(page, '27-mobile-dashboard');
     await page.close();
   }
 

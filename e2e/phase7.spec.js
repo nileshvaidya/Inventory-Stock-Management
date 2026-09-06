@@ -141,6 +141,61 @@ test.describe('Phase 7 — Work Orders', () => {
     await expect(page.locator('[data-wo-row="wo-1"] [data-role="wo-status"]')).toContainText('Reserved');
   });
 
+  test('completes a reserved work order, deducting components and adding finished stock', async ({ page }) => {
+    await mockItems(page);
+    let requestCount = 0;
+    await page.route('**/rest/v1/work_orders**', (route) => {
+      requestCount += 1;
+      const status = requestCount === 1 ? 'reserved' : 'completed';
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([
+          {
+            id: 'wo-1',
+            output_item_id: 'item-widget',
+            quantity: 10,
+            status,
+            notes: null,
+            created_at: '2026-01-15T00:00:00Z',
+            output_item: { id: 'item-widget', name: 'Widget', unit_of_measure: 'Nos.' },
+          },
+        ]),
+      });
+    });
+    await page.route('**/rest/v1/work_order_requirements**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([
+          { id: 'req-1', work_order_id: 'wo-1', item_id: 'item-bolt', reservable_qty: 40, shortfall_qty: 0, item: { id: 'item-bolt', name: 'Bolt', unit_of_measure: 'Nos.' } },
+        ]),
+      })
+    );
+
+    let completeBody = null;
+    await page.route('**/rest/v1/rpc/complete_work_order**', (route) => {
+      completeBody = route.request().postDataJSON();
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ id: 'wo-1', status: 'completed' }),
+      });
+    });
+
+    await page.goto('/?demoRole=production#/work-orders');
+    await expect(page.locator('[data-wo-row="wo-1"] [data-role="wo-status"]')).toContainText('Reserved');
+    await page.click('[data-action="toggle-wo"][data-id="wo-1"]');
+
+    await page.click('[data-action="complete-wo"][data-id="wo-1"]');
+
+    expect(completeBody).toEqual({ target_work_order_id: 'wo-1' });
+    await expect(page.locator('[data-wo-row="wo-1"] [data-role="wo-status"]')).toContainText('Completed');
+    // A completed work order has no more actions — its lifecycle is over.
+    await expect(page.locator('[data-wo-detail-row="wo-1"] [data-action="complete-wo"]')).toHaveCount(0);
+    await expect(page.locator('[data-wo-detail-row="wo-1"] [data-action="cancel-wo"]')).toHaveCount(0);
+  });
+
   test('shows the server-side shortfall message when reserving is blocked', async ({ page }) => {
     await mockItems(page);
     await page.route('**/rest/v1/work_orders**', (route) =>

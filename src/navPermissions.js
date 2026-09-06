@@ -22,6 +22,7 @@ export const MODULE_ROLES = {
   '/users': ['admin'],
   '/action-log': ['admin'],
   '/bill-payments': ['authorized'],
+  '/material-dispatch': ['admin', 'store'],
   '/help': null, // every signed-in user
 };
 

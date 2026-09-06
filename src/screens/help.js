@@ -130,6 +130,7 @@ function buildTopics(canSeeBillPayments) {
   if (canSeeBillPayments) {
     topics.push({ id: 'help-bill-payments', label: 'Bill Payments', render: renderBillPayments });
   }
+  topics.push({ id: 'help-material-dispatch', label: 'Material Dispatch', render: renderMaterialDispatch });
   topics.push(
     { id: 'help-faq', label: 'Frequently Asked Questions', render: () => renderFaq(canSeeBillPayments) },
     { id: 'help-troubleshooting', label: 'Troubleshooting', render: renderTroubleshooting }
@@ -203,7 +204,7 @@ function renderGettingStarted(canSeeBillPayments) {
     ${note(`A brand-new account has no role yet, so almost every screen is hidden until an admin assigns you one from ${jump('help-users-roles', 'Users & Roles')} — see the Dashboard below.`)}
 
     ${h3('What you see depends on your role')}
-    <p style="font-size:14px;color:var(--color-neutral-300);margin:0">The sidebar only ever shows the screens your role can use — nobody sees every menu item. The roles are: <strong>Admin</strong> (sees and manages everything), <strong>Purchase</strong> (PO Upload, Order Status), <strong>Store/Warehouse</strong> (Material Inward, Inventory, Work Orders), <strong>Inspector</strong> (Inspection), <strong>Accounts/Authorized</strong> (${authorizedModules}), and <strong>Production</strong> (Inventory, BoM Builder, Work Orders, Reports). If a screen you need is missing, ask an admin to check your role in ${jump('help-users-roles', 'Users & Roles')}.</p>
+    <p style="font-size:14px;color:var(--color-neutral-300);margin:0">The sidebar only ever shows the screens your role can use — nobody sees every menu item. The roles are: <strong>Admin</strong> (sees and manages everything), <strong>Purchase</strong> (PO Upload, Order Status), <strong>Store/Warehouse</strong> (Material Inward, Inventory, Work Orders, Material Dispatch), <strong>Inspector</strong> (Inspection), <strong>Accounts/Authorized</strong> (${authorizedModules}), and <strong>Production</strong> (Inventory, BoM Builder, Work Orders, Reports). If a screen you need is missing, ask an admin to check your role in ${jump('help-users-roles', 'Users & Roles')}.</p>
     `
   );
 }
@@ -444,10 +445,18 @@ function renderWorkOrders() {
 
     ${h3('Reserving stock')}
     ${ol([
-      `Click <strong>Reserve Stock</strong> on an Open work order to actually hold the currently-available stock for it — this reduces <strong>Available</strong> everywhere else (see ${jump('help-inventory', 'Inventory')}) until the work order is cancelled.`,
-      'Click <strong>Cancel Work Order</strong> at any time to release the hold and mark it Cancelled.',
+      `Click <strong>Reserve Stock</strong> on an Open work order to actually hold the currently-available stock for it — this reduces <strong>Available</strong> everywhere else (see ${jump('help-inventory', 'Inventory')}) until the work order is completed or cancelled.`,
+      'Click <strong>Cancel Work Order</strong> at any time before completing it to release the hold and mark it Cancelled — the components go straight back to Available for other work orders.',
     ])}
-    ${note(`Reserving only holds stock — it doesn't consume it. Actually producing (and consuming components) happens on ${jump('help-bom-builder', 'BoM Builder')}'s Record Production, one recipe at a time.`)}
+    ${note('Reserving only holds stock — it doesn\'t consume it yet. Nothing physically leaves or enters inventory until you complete the work order.')}
+
+    ${h3('Completing a Work Order')}
+    ${ol([
+      'Once a Reserved work order\'s production is actually done, click <strong>Complete Work Order</strong>.',
+      'This is the step that actually moves stock: every reserved component is deducted from inventory, and the produced quantity of the output item is added to stock — both happen together, or not at all.',
+      'The work order\'s status becomes <strong>Completed</strong>; the finished quantity now shows up in Inventory and Reports like any other stock.',
+    ])}
+    ${note('This does the same thing as BoM Builder\'s Record Production, but tied to this specific work order\'s reservation instead of a standalone recipe run — use whichever screen matches how you\'re tracking the job.')}
     `
   );
 }
@@ -570,6 +579,37 @@ function renderBillPayments() {
   );
 }
 
+function renderMaterialDispatch() {
+  return section(
+    'help-material-dispatch',
+    'Material Dispatch',
+    `
+    <p style="font-size:14px;color:var(--color-neutral-300);margin-bottom:10px">Records material going <em>out</em> — to a customer or site — the counterpart to ${jump('help-material-inward', 'Material Inward')}'s receiving flow. Store or Admin can create a dispatch record, but it never removes anything from stock by itself: only an Admin authorizing it does that.</p>
+    ${img('26-material-dispatch.png', 'Material Dispatch listing one dispatch pending authorization and one already authorized, with the admin-only Payment column visible')}
+
+    ${h3('Creating a dispatch')}
+    ${ol([
+      'Click <strong>+ New Dispatch</strong>.',
+      'Optionally upload the delivery challan — like Material Inward, item/quantity rows are read automatically where possible (including from a scanned or photographed document), but always review every row before saving.',
+      'Pick the Dispatch Date, and add a row (item + quantity) for everything going out — use <strong>+ Add Row</strong> for more than one item.',
+      'Click <strong>Save Dispatch</strong>. The record appears immediately, tagged <strong>Pending Authorization</strong> — stock is untouched at this point.',
+    ])}
+
+    ${h3('Authorizing a dispatch (Admin only)')}
+    <p style="font-size:14px;color:var(--color-neutral-300);margin-bottom:8px">This is the one step that actually deducts inventory — deliberately restricted so a dispatch someone picked can be double-checked before stock leaves the books.</p>
+    ${ol([
+      'Click <strong>Authorize</strong> on that dispatch\'s row, then confirm.',
+      'Every line item is deducted from stock at once. If any item doesn\'t have enough on hand, the whole authorization is blocked with a message naming exactly what\'s short — nothing is deducted until every item can be.',
+      'Once authorized, the tag changes to <strong>Authorized</strong> and the Authorize button disappears — this can\'t be undone from the app.',
+    ])}
+
+    ${h3('Payment tracking (Admin only)')}
+    <p style="font-size:14px;color:var(--color-neutral-300)">Only an Admin sees the <strong>Payment</strong> column. Once a dispatch is authorized, click <strong>Mark Payment Received</strong> on its row when payment comes in — it records who marked it and when, right on that row. Payment can only be marked once a dispatch is authorized.</p>
+    ${note('Click <strong>Details</strong> on any row to see its full item list and notes. If a scanned challan was attached, click <strong>View</strong> to open it.')}
+    `
+  );
+}
+
 const FAQ = [
   {
     q: 'I can\'t see most of the menu items — what\'s wrong?',
@@ -614,6 +654,14 @@ const FAQ = [
   {
     q: 'Why can I only "archive" a Purchase Order or Invoice, not delete it?',
     a: 'Archiving (soft delete) keeps the historical record intact instead of erasing it — it just hides the row from the normal list. Tick "Show archived" in that screen\'s filters to see it again.',
+  },
+  {
+    q: 'I created a Material Dispatch record but stock hasn\'t gone down — why?',
+    a: 'That\'s expected — creating a dispatch never moves stock by itself. Only an Admin clicking Authorize on that record actually deducts inventory, a deliberate check so someone can confirm what\'s dispatched before it leaves the books.',
+  },
+  {
+    q: 'Why don\'t I see a Payment column or a Mark Payment Received button on Material Dispatch?',
+    a: 'Payment tracking on Material Dispatch is visible to the Admin role only — everyone else sees the dispatch record itself, just not that column.',
   },
   {
     q: 'How do I get data out of the app for Excel?',

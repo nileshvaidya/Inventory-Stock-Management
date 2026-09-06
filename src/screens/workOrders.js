@@ -1,28 +1,36 @@
 // Work Orders (Phase 7): explode a nested BoM (netting against available
 // stock at every level, not just the leaves), preview what it would take
-// to produce a quantity of an item, then optionally reserve the stock
-// that's currently on hand for it. Admin/Production/Store, per
-// navPermissions.js — every visitor of this screen already has manage
-// rights (same situation as BoM Builder), but action buttons are still
-// gated on that role check locally too, matching this app's usual
-// double-enforcement.
+// to produce a quantity of an item, then reserve the stock currently on
+// hand for it, and finally complete it — converting the reservation into
+// an actual production run (components deducted, output item added to
+// stock). Admin/Production/Store, per navPermissions.js — every visitor
+// of this screen already has manage rights (same situation as BoM
+// Builder), but action buttons are still gated on that role check locally
+// too, matching this app's usual double-enforcement.
 //
-// This phase stops at plan + reserve — completing/fulfilling a work order
-// (turning its reservation into an actual production run) still happens
-// one recipe at a time via Phase 6's BoM Builder; Cancel here just
-// releases the hold, it never touches stock_movements.
+// Cancel only ever releases the hold (never touches stock_movements);
+// Complete is the one action that actually moves stock, and only from
+// 'reserved' — see complete_work_order() in schema.sql.
 import { getCurrentProfile } from '../auth.js';
 import { renderShell } from '../layout.js';
 import { escapeHtml } from '../components.js';
 import { createStore } from '../state.js';
 import { canViewModule } from '../navPermissions.js';
-import { fetchWorkOrders, fetchWorkOrderRequirements, previewExplosion, createWorkOrder, reserveWorkOrder, cancelWorkOrder } from '../workOrders.js';
+import {
+  fetchWorkOrders,
+  fetchWorkOrderRequirements,
+  previewExplosion,
+  createWorkOrder,
+  reserveWorkOrder,
+  cancelWorkOrder,
+  completeWorkOrder,
+} from '../workOrders.js';
 import { fetchItems } from '../items.js';
 import { validateWorkOrderForm } from '../validation.js';
 import { repaintPreservingFocus } from '../domFocus.js';
 
-const STATUS_LABELS = { open: 'Open', reserved: 'Reserved', cancelled: 'Cancelled' };
-const STATUS_TAG_CLASSES = { open: 'tag-neutral', reserved: 'tag-accent', cancelled: 'tag-accent-2' };
+const STATUS_LABELS = { open: 'Open', reserved: 'Reserved', completed: 'Completed', cancelled: 'Cancelled' };
+const STATUS_TAG_CLASSES = { open: 'tag-neutral', reserved: 'tag-accent', completed: 'tag-success', cancelled: 'tag-accent-2' };
 
 function emptyForm() {
   return { outputItemId: '', quantity: '', notes: '' };
@@ -46,6 +54,8 @@ function initialState() {
     reservingId: null,
     reserveErrorByWorkOrder: {},
     cancellingId: null,
+    completingId: null,
+    completeErrorByWorkOrder: {},
   };
 }
 
@@ -165,7 +175,7 @@ function renderPreview(preview) {
           <tr data-preview-row="${escapeHtml(row.item_id)}">
             <td>${escapeHtml(row.item_name)}</td>
             <td>${row.reservable_qty}</td>
-            <td>${Number(row.shortfall_qty) > 0 ? `<span class="tag tag-accent-2">${row.shortfall_qty} short</span>` : '—'}</td>
+            <td>${Number(row.shortfall_qty) > 0 ? `<span class="tag tag-danger">${row.shortfall_qty} short</span>` : '—'}</td>
           </tr>`
           )
           .join('')}
@@ -203,6 +213,7 @@ function renderWorkOrderRow(wo, state, canManage) {
 function renderWorkOrderDetail(wo, state, canManage) {
   const requirements = state.requirementsByWorkOrder[wo.id];
   const reserveError = state.reserveErrorByWorkOrder[wo.id];
+  const completeError = state.completeErrorByWorkOrder[wo.id];
 
   return `
     ${wo.notes ? `<p style="font-size:12px;color:var(--color-neutral-500);margin:0 0 10px">${escapeHtml(wo.notes)}</p>` : ''}
@@ -217,7 +228,7 @@ function renderWorkOrderDetail(wo, state, canManage) {
               <tbody>
                 ${requirements
                   .map(
-                    (r) => `<tr><td>${escapeHtml(r.item?.name || '—')}</td><td>${r.reservable_qty}</td><td>${Number(r.shortfall_qty) > 0 ? `<span class="tag tag-accent-2">${r.shortfall_qty} short</span>` : '—'}</td></tr>`
+                    (r) => `<tr><td>${escapeHtml(r.item?.name || '—')}</td><td>${r.reservable_qty}</td><td>${Number(r.shortfall_qty) > 0 ? `<span class="tag tag-danger">${r.shortfall_qty} short</span>` : '—'}</td></tr>`
                   )
                   .join('')}
               </tbody>
@@ -225,16 +236,22 @@ function renderWorkOrderDetail(wo, state, canManage) {
     }
 
     ${
-      canManage && wo.status !== 'cancelled'
+      canManage && wo.status !== 'cancelled' && wo.status !== 'completed'
         ? `<div style="display:flex;gap:8px">
             ${
               wo.status === 'open'
                 ? `<button type="button" class="btn btn-secondary" data-action="reserve-wo" data-id="${escapeHtml(wo.id)}" style="padding:5px 12px;font-size:12px" ${state.reservingId === wo.id ? 'disabled' : ''}>${state.reservingId === wo.id ? 'Reserving…' : 'Reserve Stock'}</button>`
                 : ''
             }
+            ${
+              wo.status === 'reserved'
+                ? `<button type="button" class="btn btn-secondary" data-action="complete-wo" data-id="${escapeHtml(wo.id)}" style="padding:5px 12px;font-size:12px" ${state.completingId === wo.id ? 'disabled' : ''}>${state.completingId === wo.id ? 'Completing…' : 'Complete Work Order'}</button>`
+                : ''
+            }
             <button type="button" class="btn btn-ghost" data-action="cancel-wo" data-id="${escapeHtml(wo.id)}" style="padding:5px 12px;font-size:12px" ${state.cancellingId === wo.id ? 'disabled' : ''}>Cancel Work Order</button>
           </div>
-          ${reserveError ? `<p data-role="reserve-error" data-id="${escapeHtml(wo.id)}" style="font-size:12px;color:var(--color-accent-2-200);margin-top:8px">${escapeHtml(reserveError)}</p>` : ''}`
+          ${reserveError ? `<p data-role="reserve-error" data-id="${escapeHtml(wo.id)}" style="font-size:12px;color:var(--color-accent-2-200);margin-top:8px">${escapeHtml(reserveError)}</p>` : ''}
+          ${completeError ? `<p data-role="complete-error" data-id="${escapeHtml(wo.id)}" style="font-size:12px;color:var(--color-accent-2-200);margin-top:8px">${escapeHtml(completeError)}</p>` : ''}`
         : ''
     }
   `;
@@ -327,6 +344,24 @@ function wireEvents(container, store, load, canManage) {
         store.setState({
           reservingId: null,
           reserveErrorByWorkOrder: { ...store.getState().reserveErrorByWorkOrder, [woId]: err.message || 'Could not reserve stock for this work order.' },
+        });
+      }
+    });
+  });
+
+  container.querySelectorAll('[data-action="complete-wo"]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const woId = btn.dataset.id;
+      const state = store.getState();
+      store.setState({ completingId: woId, completeErrorByWorkOrder: { ...state.completeErrorByWorkOrder, [woId]: null } });
+      try {
+        await completeWorkOrder(woId);
+        await load();
+        store.setState({ completingId: null, openWorkOrderId: woId });
+      } catch (err) {
+        store.setState({
+          completingId: null,
+          completeErrorByWorkOrder: { ...store.getState().completeErrorByWorkOrder, [woId]: err.message || 'Could not complete this work order.' },
         });
       }
     });

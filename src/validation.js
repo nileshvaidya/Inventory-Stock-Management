@@ -337,3 +337,46 @@ export function validatePurchaseOrderForm(form) {
 
   return { valid: Object.keys(errors).length === 0, errors };
 }
+
+/**
+ * A single Material Dispatch line item (Phase 11): an Item selected and a
+ * positive quantity — no "pending" cap the way Material Inward's receipt
+ * lines have, since dispatch isn't fulfilling a PO, just picking from
+ * whatever's currently in stock (the shortfall check itself only happens
+ * server-side, atomically, at authorize_material_dispatch() time — see
+ * supabase/schema.sql).
+ * @param {{ itemId?: string, quantity?: string|number }} row
+ */
+export function validateMaterialDispatchLineItem(row) {
+  /** @type {Record<string, string>} */
+  const errors = {};
+  const { itemId = '', quantity = '' } = row || {};
+  const qtyNum = Number(quantity);
+
+  if (!itemId) errors.itemId = 'Select an item.';
+  if (quantity === '' || !Number.isFinite(qtyNum) || qtyNum <= 0) {
+    errors.quantity = 'Enter a positive quantity.';
+  }
+
+  return { valid: Object.keys(errors).length === 0, errors };
+}
+
+/**
+ * The Material Dispatch form as a whole (Phase 11): a dispatch date and at
+ * least one valid line item.
+ * @param {{ dispatchDate?: string, lineItems?: { itemId?: string, quantity?: string|number }[] }} form
+ */
+export function validateMaterialDispatchForm(form) {
+  /** @type {Record<string, string>} */
+  const errors = {};
+  const { dispatchDate = '', lineItems = [] } = form || {};
+
+  if (!dispatchDate) errors.dispatchDate = 'Dispatch date is required.';
+  if (lineItems.length === 0) {
+    errors.lineItems = 'Add at least one item to dispatch.';
+  } else if (lineItems.some((row) => !validateMaterialDispatchLineItem(row).valid)) {
+    errors.lineItems = 'Fix the highlighted item/quantity before saving.';
+  }
+
+  return { valid: Object.keys(errors).length === 0, errors };
+}

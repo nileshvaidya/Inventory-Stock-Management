@@ -1083,3 +1083,135 @@ status field (same invoices, just "Received" instead of "Paid") gets
 the same treatment for consistency. Verified visually via screenshots
 of both screens. Full suite (lint, typecheck, 133 unit tests, all 84
 e2e tests, production build) stayed green.
+
+## Phase 7 addendum: Complete a Work Order (deduct components, add finished stock)
+
+Direct request, and the one piece Phase 7 explicitly deferred at the
+time: a reserved work order previously had no way to actually turn
+its reservation into a finished-goods stock movement — completing a
+production run still required going to BoM Builder and recording it
+there by hand, disconnected from the work order that planned it. The
+rest of the requested lifecycle (see components + availability before
+creating, red-flagged shortages when an assembly and its own
+components are both short, reserving hides components from stock and
+other work orders, cancelling releases them again) was already fully
+built in Phase 7 — this addendum is only the missing "Complete"
+step.
+
+- `supabase/schema.sql`: `work_orders.status` now also accepts
+  `'completed'`, plus a new `completed_at timestamptz`. New
+  `complete_work_order(target_work_order_id)`: admin/production/store
+  only, requires the work order to be `'reserved'`, re-checks
+  `current_stock` (actual on-hand, not `available_stock`) for every
+  reserved component and blocks all-or-nothing with a formatted
+  shortfall message if anything is short — same discipline as
+  `record_bom_production`/`reserve_work_order` — then inserts an `'out'`
+  stock movement per reserved component and one `'in'` movement for the
+  output item, all tagged `reference_type = 'work_order'`, and flips the
+  work order to `'completed'`. The existing `stock_reservations` rows
+  are left in place rather than deleted — `available_stock`'s join
+  already excludes non-`'reserved'` work orders, so a completed order's
+  hold releases the same way a cancelled one's does.
+- `src/screens/workOrders.js`: a "Complete Work Order" button on any
+  `'reserved'` order; a completed order shows no further actions.
+  Shortage flags changed from the purple `tag-accent-2` to the red
+  `tag-danger` introduced by the color-coding work above, in both the
+  availability preview and a work order's requirement detail.
+- `scripts/test-rls-work-orders.mjs`: a second work order exercising
+  `complete_work_order` — blocked before reserving, purchase role
+  cannot complete, production can, the resulting stock movements and
+  `current_stock` changes are correct, `available_stock`'s reserved
+  quantity drops back to just the other order's hold, and completing
+  twice is rejected.
+- `e2e/phase7.spec.js`: completing a reserved work order, verifying the
+  RPC call body, the status tag updating, and that no actions remain
+  once completed.
+
+Verified locally: lint, typecheck, 133 unit tests, and the full e2e
+suite (85 tests, including the new one) all green; production build
+clean. This changes `supabase/schema.sql`, so it needs the migration
+applied manually to any live Supabase project the same way every prior
+schema change here has.
+
+## Phase 11: Material Dispatch (scan/pick, admin-authorized stock deduction, payment tracking)
+
+Direct request: material going *out* (to a customer or site) had no
+counterpart to Material Inward's receiving flow, and no way to deduct
+it from inventory. Specified explicitly: a store/admin user creates
+the dispatch record (optionally scanning a delivery challan the same
+way Material Inward/PO Upload/Invoices already do, including the OCR
+fallback for a scanned/photographed document) and picks what's being
+dispatched, but the record never moves stock by itself — only an
+admin authorizing it does. Payment received / received date is
+visible, and actionable, to admin only, right on each dispatch's row.
+
+- `supabase/schema.sql`: `material_dispatch` (dispatch date, optional
+  reference/notes, optional challan file, `created_by`, and
+  `authorized_by`/`authorized_at`/`payment_received_by`/
+  `payment_received_at`, all null until acted on) and
+  `material_dispatch_line_items` (item + quantity). Both readable
+  company-wide; inserting is store/admin only. Deliberately **no update
+  policy at all** on `material_dispatch` — not even attaching the
+  scanned challan goes through a plain client update — because a
+  general store/admin update policy would also let that same role set
+  `authorized_at` directly, skipping the stock-shortfall check
+  entirely. Every mutation instead goes through its own narrow
+  security-definer RPC, same "the RPC is the only way in" pattern as
+  `bom_production_runs`/`work_orders`:
+  - `attach_dispatch_challan_file()` — store/admin only, no business
+    rule beyond that.
+  - `authorize_material_dispatch()` — **admin only**. Re-checks
+    `current_stock` for every line item and blocks all-or-nothing with
+    a formatted shortfall message if anything is short (nothing
+    written on failure), otherwise inserts an `'out'` stock movement
+    per line item (`reference_type = 'material_dispatch'`) and stamps
+    `authorized_by`/`authorized_at`. Rejects an already-authorized
+    dispatch.
+  - `mark_dispatch_payment_received()` — **admin only**, and only once
+    the dispatch is already authorized (marking payment for goods not
+    yet confirmed dispatched doesn't make sense). Rejects a
+    dispatch that's already marked paid.
+  - Reuses Material Inward's `challan-documents` Storage bucket as-is
+    (bucket-scoped RLS, not table-scoped) — the dispatch's own row id
+    namespaces its file path, same collision-avoidance convention as
+    Material Inward's own path.
+- `src/materialDispatch.js` (new): `fetchMaterialDispatches`,
+  `createMaterialDispatch` (two-step insert: header, then line items),
+  `uploadDispatchChallanFile` (uploads to Storage, then calls the
+  attach RPC — never a plain table update), `authorizeMaterialDispatch`,
+  `markDispatchPaymentReceived`.
+- `src/screens/materialDispatch.js` (new), wired into `src/router.js`,
+  `src/navPermissions.js` (`admin`, `store`) and `src/layout.js`'s nav
+  as Phase 11: a New Dispatch form (challan upload with the same
+  PDF-text/OCR fallback chain as Material Inward, dispatch date using
+  the established date-field-bug-fix pattern, editable item/quantity
+  rows matched from a parsed challan by item name); a list showing
+  each dispatch's status (Pending Authorization / Authorized), a
+  file-view link, and — admin only — a Payment column (a green
+  "Received <date>" tag, a "Mark Payment Received" button once
+  authorized, or "—" before that) plus an Authorize button (behind a
+  confirm dialog) shown only while unauthorized.
+- `src/validation.js`: `validateMaterialDispatchLineItem`,
+  `validateMaterialDispatchForm`.
+- `scripts/test-rls-material-dispatch.mjs` (new, added to `npm run
+  test:integration`): create permissions (store/admin can, production
+  cannot), attaching a challan file, that a direct client update is
+  rejected outright with no update policy to fall back on, authorize/
+  mark-payment-received permissions (admin only, each rejecting a
+  repeat call), that authorizing actually deducts `current_stock`, and
+  that a line item exceeding on-hand stock blocks authorization
+  entirely with nothing written.
+- `e2e/phase11.spec.js` (new): route guard, creating a dispatch by
+  manual entry (verifying both insert bodies), a validation-blocks-save
+  case, the OCR-fallback-to-manual-entry case, that a non-admin role
+  sees no Authorize button and no Payment column, an admin authorizing
+  (verifying the RPC body and the status tag updating), the
+  server-side shortfall message surfacing on a blocked authorize, and
+  admin marking payment received.
+
+Verified locally: lint, typecheck, 133 unit tests, and the full e2e
+suite (94 tests, including the 9 new ones) all green; production build
+clean. This changes `supabase/schema.sql`, so — same as every prior
+schema change in this project — it needs the migration applied
+manually to any live Supabase project before its own integration test
+(or the app's Material Dispatch screen) will work there.

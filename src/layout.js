@@ -28,6 +28,7 @@ const NAV_ITEMS = [
   // of the nav list entirely before it's ever rendered. Visibility for
   // every module (this one included) is decided by navPermissions.js.
   { route: '/bill-payments', label: 'Bill Payments', phase: 10 },
+  { route: '/material-dispatch', label: 'Material Dispatch', phase: 11 },
 ];
 
 const LOGO_SVG = (size) => `

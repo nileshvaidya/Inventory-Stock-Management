@@ -173,6 +173,51 @@ async function run() {
         const { error: reReserveErr } = await clientProduction.rpc('reserve_work_order', { target_work_order_id: wo.id });
         assert(!!reReserveErr, 'reserving a work order that is already reserved fails');
 
+        console.log('\ncomplete_work_order: a second, smaller work order (1 Widget, needs 4 Bolt) — only reserved can complete, purchase cannot, production can...');
+        const { data: wo2 } = await clientProduction.rpc('create_work_order', { target_output_item_id: widget.id, target_qty: 1, notes_in: 'RLS test WO2 (complete)' });
+        if (wo2) workOrderIds.push(wo2.id);
+        assert(!!wo2, 'second work order created for the complete_work_order test');
+
+        if (wo2) {
+          const { error: completeBeforeReserveErr } = await clientProduction.rpc('complete_work_order', { target_work_order_id: wo2.id });
+          assert(!!completeBeforeReserveErr, "completing an 'open' (not yet reserved) work order is rejected");
+
+          const { error: reserve2Err } = await clientProduction.rpc('reserve_work_order', { target_work_order_id: wo2.id });
+          assert(!reserve2Err, `production role can reserve the second work order${reserve2Err ? ` (${reserve2Err.message})` : ''}`);
+
+          const { error: purchaseCompleteErr } = await clientPurchase.rpc('complete_work_order', { target_work_order_id: wo2.id });
+          assert(!!purchaseCompleteErr, 'purchase role cannot complete a work order');
+
+          const { data: completedWo, error: completeErr } = await clientProduction.rpc('complete_work_order', { target_work_order_id: wo2.id });
+          assert(!completeErr, `production role can complete a reserved work order${completeErr ? ` (${completeErr.message})` : ''}`);
+
+          if (completedWo) {
+            assert(completedWo.status === 'completed', "the second work order's status is now 'completed'");
+            assert(completedWo.completed_at !== null, 'completed_at was stamped');
+
+            const { data: movements } = await admin.from('stock_movements').select('*').eq('reference_type', 'work_order').eq('reference_id', wo2.id);
+            const boltOut = (movements ?? []).find((m) => m.item_id === bolt.id && m.movement_type === 'out');
+            const widgetIn = (movements ?? []).find((m) => m.item_id === widget.id && m.movement_type === 'in');
+            assert(!!boltOut && Number(boltOut.quantity) === 4, 'a Bolt "out" movement of 4 was recorded, tagged to this work order');
+            assert(!!widgetIn && Number(widgetIn.quantity) === 1, 'a Widget "in" movement of 1 was recorded, tagged to this work order');
+
+            const { data: boltStockAfterComplete } = await admin.from('current_stock').select('current_qty').eq('item_id', bolt.id).single();
+            const { data: widgetStockAfterComplete } = await admin.from('current_stock').select('current_qty').eq('item_id', widget.id).single();
+            assert(Number(boltStockAfterComplete.current_qty) === 96, 'Bolt current_qty actually dropped to 96 (100 - 4), not just reserved');
+            assert(Number(widgetStockAfterComplete.current_qty) === 1, 'Widget current_qty actually rose to 1 — production run added finished stock');
+
+            const { data: boltAvailabilityAfterComplete } = await admin.from('available_stock').select('*').eq('item_id', bolt.id).single();
+            assert(Number(boltAvailabilityAfterComplete.reserved_qty) === 40, "reserved_qty is back to just the first work order's 40 (this one's hold is released by completing)");
+
+            const { error: doubleCompleteErr } = await clientProduction.rpc('complete_work_order', { target_work_order_id: wo2.id });
+            assert(!!doubleCompleteErr, 'completing an already-completed work order is rejected');
+          } else {
+            assert(false, 'skipped completed-work-order checks — the complete call above failed, see its message');
+          }
+        } else {
+          assert(false, 'skipped all complete_work_order checks — creating the second work order failed');
+        }
+
         console.log('\nA direct client update cannot set status to anything but cancelled...');
         const { error: fakeReserveErr } = await clientProduction.from('work_orders').update({ status: 'reserved' }).eq('id', wo.id);
         const { data: woAfterFakeAttempt } = await admin.from('work_orders').select('status').eq('id', wo.id).single();

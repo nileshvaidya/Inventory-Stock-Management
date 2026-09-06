@@ -1183,11 +1183,14 @@ grant execute on function public.record_bom_production(uuid, numeric, text) to a
 --     "available" everywhere (see available_stock below), so a second
 --     work order — or Phase 6's Record Production — can't also plan
 --     against the same units.
---  3. This phase stops at plan + reserve. Completing/fulfilling a work
---     order (cascading actual production through it) is out of scope —
---     that still happens one recipe at a time via Phase 6's BoM Builder;
---     a work order here is a plan with stock held against it, not a
---     production run.
+--  3. Completing a work order (complete_work_order() below) converts its
+--     reservation into an actual production run: the reserved components
+--     become "out" stock movements and the output item gets an "in"
+--     movement, in the same all-or-nothing transaction record_bom_
+--     production already uses — a work order's own completion doesn't go
+--     through BoM Builder at all, it's a self-contained production event
+--     tied to this work order specifically (reference_type/reference_id
+--     point at it, not at a bom_production_runs row).
 create or replace function public.can_manage_work_orders(uid uuid)
 returns boolean
 language sql
@@ -1214,6 +1217,15 @@ create table if not exists public.work_orders (
   reserved_at timestamptz null,
   cancelled_at timestamptz null
 );
+
+-- Adds the 'completed' status for complete_work_order() below — a
+-- pre-existing table needs an explicit constraint swap, same idiom as
+-- users_role_check above, since `create table if not exists` is a no-op
+-- against a table that already exists.
+alter table public.work_orders drop constraint if exists work_orders_status_check;
+alter table public.work_orders add constraint work_orders_status_check
+  check (status in ('open', 'reserved', 'cancelled', 'completed'));
+alter table public.work_orders add column if not exists completed_at timestamptz null;
 
 create index if not exists work_orders_output_item_id_idx on public.work_orders (output_item_id);
 
@@ -1529,6 +1541,80 @@ $$;
 
 grant execute on function public.reserve_work_order(uuid) to authenticated;
 
+-- Completes a reserved work order: its held components become "out" stock
+-- movements and the output item gets a matching "in" movement, in one
+-- all-or-nothing transaction — same shortfall-blocks-everything discipline
+-- as record_bom_production. The reservation was already a hard hold on
+-- available_stock, but stock can still move for unrelated reasons between
+-- reserve and complete (a manual "out" logged directly against a shared
+-- component, say), so this re-checks current_stock (actual on-hand, not
+-- available_stock — a reservation isn't a database-level lock, just a
+-- netting figure) rather than trusting the old reservation blindly.
+-- stock_reservations rows are left in place, not deleted: available_stock's
+-- reserved_qty only sums reservations whose work order is still 'reserved',
+-- so flipping status to 'completed' here already drops this work order out
+-- of that sum, identical to how cancelling already works.
+create or replace function public.complete_work_order(target_work_order_id uuid)
+returns public.work_orders
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  wo_row public.work_orders%rowtype;
+  res record;
+  available numeric;
+  shortfall_msg text := '';
+  updated_row public.work_orders%rowtype;
+begin
+  if not public.can_manage_work_orders(auth.uid()) then
+    raise exception 'Not authorized to complete work orders.';
+  end if;
+
+  select * into wo_row from public.work_orders where id = target_work_order_id;
+  if not found then
+    raise exception 'Work order not found.';
+  end if;
+  if wo_row.status <> 'reserved' then
+    raise exception 'Only a reserved work order can be completed.';
+  end if;
+
+  for res in
+    select sr.item_id, sr.quantity, i.name
+    from public.stock_reservations sr
+    join public.items i on i.id = sr.item_id
+    where sr.work_order_id = target_work_order_id
+  loop
+    select coalesce(cs.current_qty, 0) into available from public.current_stock cs where cs.item_id = res.item_id;
+    if available is null then
+      available := 0;
+    end if;
+    if available < res.quantity then
+      shortfall_msg := shortfall_msg || format('%s (need %s, have %s); ', res.name, res.quantity, available);
+    end if;
+  end loop;
+
+  if shortfall_msg <> '' then
+    raise exception 'Cannot complete — stock has changed since this work order was reserved: %', shortfall_msg;
+  end if;
+
+  for res in select item_id, quantity from public.stock_reservations where work_order_id = target_work_order_id loop
+    insert into public.stock_movements (item_id, movement_type, quantity, reference_type, reference_id, created_by)
+    values (res.item_id, 'out', res.quantity, 'work_order', target_work_order_id, auth.uid());
+  end loop;
+
+  insert into public.stock_movements (item_id, movement_type, quantity, reference_type, reference_id, created_by)
+  values (wo_row.output_item_id, 'in', wo_row.quantity, 'work_order', target_work_order_id, auth.uid());
+
+  update public.work_orders set status = 'completed', completed_at = now() where id = target_work_order_id
+  returning * into updated_row;
+
+  return updated_row;
+end;
+$$;
+
+grant execute on function public.complete_work_order(uuid) to authenticated;
+
 -- Phase 9: Action Log. Confirmed with the user before building: capture
 -- writes automatically via a single reusable trigger attached to every
 -- mutable table, rather than adding an explicit "log this" call to each
@@ -1711,3 +1797,222 @@ create policy "Store/admin can delete challan documents"
   on storage.objects for delete
   to authenticated
   using (bucket_id = 'challan-documents' and public.is_store_or_admin(auth.uid()));
+
+-- Phase 11: Material Dispatch. Direct user request: dispatching material
+-- out (to a customer/site) should deduct inventory, but only once an
+-- admin authorizes the dispatch — store (or whoever picks the items) can
+-- create the record, optionally attaching a scanned delivery challan, but
+-- never move stock themselves. authorize_material_dispatch() below is the
+-- only path that both flips the record to authorized AND writes the
+-- resulting stock movements, atomically — same all-or-nothing discipline
+-- as record_bom_production/complete_work_order, blocking the whole thing
+-- if any line item is short rather than letting stock go negative.
+-- Reuses Material Inward's challan-documents bucket above (same kind of
+-- document, same access shape — store/admin write, company-wide read);
+-- its path is namespaced by this table's own row id the same way material
+-- inward's is by its id, so the two can never collide.
+create table if not exists public.material_dispatch (
+  id uuid primary key default gen_random_uuid(),
+  dispatch_date date not null default current_date,
+  reference text null,
+  notes text null,
+  challan_file_path text null,
+  challan_file_name text null,
+  created_by uuid not null references public.users (id),
+  created_at timestamptz not null default now(),
+  authorized_by uuid null references public.users (id),
+  authorized_at timestamptz null,
+  payment_received_by uuid null references public.users (id),
+  payment_received_at timestamptz null
+);
+
+alter table public.material_dispatch enable row level security;
+
+drop policy if exists "Authenticated users can view material dispatch" on public.material_dispatch;
+create policy "Authenticated users can view material dispatch"
+  on public.material_dispatch for select
+  to authenticated
+  using (true);
+
+drop policy if exists "Store/admin can create material dispatch" on public.material_dispatch;
+create policy "Store/admin can create material dispatch"
+  on public.material_dispatch for insert
+  to authenticated
+  with check (public.is_store_or_admin(auth.uid()) and created_by = auth.uid());
+
+-- Deliberately no update policy at all: not even attaching the scanned
+-- challan (attach_dispatch_challan_file() below) goes through a plain
+-- client update. A general store/admin update policy would also let that
+-- same role set authorized_at directly, skipping the stock-shortfall
+-- check entirely — the whole point of locking this table down is that
+-- authorizing (and the stock deduction that goes with it, via
+-- authorize_material_dispatch() below) and marking payment received
+-- (mark_dispatch_payment_received() below) can only ever happen through
+-- their own narrow, security-definer RPCs, same "the RPC is the only way
+-- in" pattern as bom_production_runs — so every mutable column here gets
+-- its own RPC rather than sharing one broad update policy.
+
+create table if not exists public.material_dispatch_line_items (
+  id uuid primary key default gen_random_uuid(),
+  dispatch_id uuid not null references public.material_dispatch (id) on delete cascade,
+  item_id uuid not null references public.items (id),
+  quantity numeric not null check (quantity > 0),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists material_dispatch_line_items_dispatch_id_idx on public.material_dispatch_line_items (dispatch_id);
+create index if not exists material_dispatch_line_items_item_id_idx on public.material_dispatch_line_items (item_id);
+
+alter table public.material_dispatch_line_items enable row level security;
+
+drop policy if exists "Authenticated users can view material dispatch line items" on public.material_dispatch_line_items;
+create policy "Authenticated users can view material dispatch line items"
+  on public.material_dispatch_line_items for select
+  to authenticated
+  using (true);
+
+drop policy if exists "Store/admin can create material dispatch line items" on public.material_dispatch_line_items;
+create policy "Store/admin can create material dispatch line items"
+  on public.material_dispatch_line_items for insert
+  to authenticated
+  with check (public.is_store_or_admin(auth.uid()));
+
+-- Store/admin only (matching material_inward's own uploadChallanFile
+-- permission level) — no business rule beyond that, just the same
+-- one-column-at-a-time RPC discipline as the two functions below.
+create or replace function public.attach_dispatch_challan_file(target_dispatch_id uuid, file_path_in text, file_name_in text)
+returns public.material_dispatch
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  updated_row public.material_dispatch%rowtype;
+begin
+  if not public.is_store_or_admin(auth.uid()) then
+    raise exception 'Not authorized to attach a delivery challan to material dispatch.';
+  end if;
+
+  update public.material_dispatch set challan_file_path = file_path_in, challan_file_name = file_name_in where id = target_dispatch_id
+  returning * into updated_row;
+
+  if not found then
+    raise exception 'Material dispatch record not found.';
+  end if;
+
+  return updated_row;
+end;
+$$;
+
+grant execute on function public.attach_dispatch_challan_file(uuid, text, text) to authenticated;
+
+create or replace function public.authorize_material_dispatch(target_dispatch_id uuid)
+returns public.material_dispatch
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  dispatch_row public.material_dispatch%rowtype;
+  li record;
+  available numeric;
+  shortfall_msg text := '';
+  updated_row public.material_dispatch%rowtype;
+begin
+  if not public.is_admin(auth.uid()) then
+    raise exception 'Not authorized to authorize material dispatch.';
+  end if;
+
+  select * into dispatch_row from public.material_dispatch where id = target_dispatch_id;
+  if not found then
+    raise exception 'Material dispatch record not found.';
+  end if;
+  if dispatch_row.authorized_at is not null then
+    raise exception 'This dispatch has already been authorized.';
+  end if;
+
+  for li in
+    select mdl.item_id, mdl.quantity, i.name
+    from public.material_dispatch_line_items mdl
+    join public.items i on i.id = mdl.item_id
+    where mdl.dispatch_id = target_dispatch_id
+  loop
+    select coalesce(cs.current_qty, 0) into available from public.current_stock cs where cs.item_id = li.item_id;
+    if available is null then
+      available := 0;
+    end if;
+    if available < li.quantity then
+      shortfall_msg := shortfall_msg || format('%s (need %s, have %s); ', li.name, li.quantity, available);
+    end if;
+  end loop;
+
+  if shortfall_msg <> '' then
+    raise exception 'Cannot authorize — insufficient stock: %', shortfall_msg;
+  end if;
+
+  for li in select item_id, quantity from public.material_dispatch_line_items where dispatch_id = target_dispatch_id loop
+    insert into public.stock_movements (item_id, movement_type, quantity, reference_type, reference_id, created_by)
+    values (li.item_id, 'out', li.quantity, 'material_dispatch', target_dispatch_id, auth.uid());
+  end loop;
+
+  update public.material_dispatch set authorized_by = auth.uid(), authorized_at = now() where id = target_dispatch_id
+  returning * into updated_row;
+
+  return updated_row;
+end;
+$$;
+
+grant execute on function public.authorize_material_dispatch(uuid) to authenticated;
+
+-- No stock side effect, but still an RPC rather than a plain client
+-- update, so the "no direct update policy" lockdown above covers this
+-- column too, not just authorized_at. Requires the dispatch to already be
+-- authorized — receiving payment for goods not yet confirmed dispatched
+-- doesn't make sense.
+create or replace function public.mark_dispatch_payment_received(target_dispatch_id uuid)
+returns public.material_dispatch
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  dispatch_row public.material_dispatch%rowtype;
+  updated_row public.material_dispatch%rowtype;
+begin
+  if not public.is_admin(auth.uid()) then
+    raise exception 'Not authorized to mark payment received.';
+  end if;
+
+  select * into dispatch_row from public.material_dispatch where id = target_dispatch_id;
+  if not found then
+    raise exception 'Material dispatch record not found.';
+  end if;
+  if dispatch_row.authorized_at is null then
+    raise exception 'Cannot mark payment received before this dispatch is authorized.';
+  end if;
+  if dispatch_row.payment_received_at is not null then
+    raise exception 'Payment has already been marked received for this dispatch.';
+  end if;
+
+  update public.material_dispatch set payment_received_by = auth.uid(), payment_received_at = now() where id = target_dispatch_id
+  returning * into updated_row;
+
+  return updated_row;
+end;
+$$;
+
+grant execute on function public.mark_dispatch_payment_received(uuid) to authenticated;
+
+-- Extends action_log coverage (Phase 9 above) to these two new tables —
+-- added here as a second loop rather than editing that phase's own array,
+-- since these tables don't exist yet at the point that loop runs.
+do $$
+declare
+  t text;
+begin
+  foreach t in array array['material_dispatch', 'material_dispatch_line_items']
+  loop
+    execute format('drop trigger if exists log_action on public.%I', t);
+    execute format('create trigger log_action after insert or update or delete on public.%I for each row execute function public.trg_log_action()', t);
+  end loop;
+end $$;

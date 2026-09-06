@@ -81,3 +81,19 @@ export async function cancelWorkOrder(workOrderId, client = supabase) {
   const { error } = await client.from('work_orders').update({ status: 'cancelled' }).eq('id', workOrderId);
   if (error) throw error;
 }
+
+/**
+ * Converts a reserved work order's hold into an actual production run:
+ * its components become "out" stock movements and the output item gets a
+ * matching "in" movement, atomically, via complete_work_order() — the
+ * only way in, same "the RPC re-checks and writes everything together"
+ * pattern as reserve_work_order.
+ * @param {string} workOrderId
+ * @param {any} [client]
+ */
+export async function completeWorkOrder(workOrderId, client = supabase) {
+  if (!client) throw new Error('Supabase is not configured.');
+  const { data, error } = await client.rpc('complete_work_order', { target_work_order_id: workOrderId });
+  if (error) throw error;
+  return data;
+}
