@@ -246,7 +246,11 @@ async function run() {
 
         const { data: boltAvailabilityAfterCancel } = await admin.from('available_stock').select('*').eq('item_id', bolt.id).single();
         assert(Number(boltAvailabilityAfterCancel.reserved_qty) === 0, 'reserved_qty drops back to 0 once the work order is cancelled');
-        assert(Number(boltAvailabilityAfterCancel.available_qty) === 100, 'available_qty is back to 100');
+        // Not 100: the complete_work_order test block above actually
+        // consumed 4 Bolt for real (wo2's completion), so current_qty is
+        // 96 here, not the original 100 — cancelling releases a
+        // reservation, it doesn't restore stock that was genuinely used.
+        assert(Number(boltAvailabilityAfterCancel.available_qty) === 96, 'available_qty is 96 (100 - 4 actually consumed by wo2 above, none reserved now)');
       } else {
         assert(false, 'skipped downstream reservation checks — the reserve call above failed, see its message');
       }
