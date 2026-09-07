@@ -1285,3 +1285,50 @@ test asserting the container is actually taller than its content
 (scrollable) and that scrolling it doesn't move the filter bar out of
 the viewport. Full suite (lint, typecheck, 133 unit tests, all e2e
 tests, production build) stayed green. No schema changes.
+
+## Follow-up: Action Log should load 25 at a time, not pull the whole log up front
+
+Direct follow-up to the scrolling fix above: `fetchActionLog` still
+pulled up to 500 rows in one request before any scrolling ever
+happened — the scroll container just gave you somewhere to scroll
+through all 500 at once. Requested instead: load 25 initially, and
+fetch more only once the user actually scrolls near the bottom.
+
+- `src/actionLog.js`: `fetchActionLog` now paginates via
+  `.range(offset, offset + limit - 1)` (`limit`/`offset` in its
+  `filters` param, defaulting to 25/0) instead of a flat
+  `.limit(500)`. The Dashboard's activity widget (which only ever
+  wants the last 8) is unaffected by this — it already sliced the
+  result down after fetching, so a smaller default page is strictly
+  cheaper for it, not a behavior change.
+- `src/screens/actionLog.js`: tracks `offset`/`hasMore` per the
+  active filters; a `scroll` listener on the log's own container
+  fetches the next 25-row page once scrolled within 100px of the
+  bottom, appending rather than replacing. A filter change resets
+  back to page 1 (the previous offset belongs to a different result
+  set). **Export CSV** now issues its own separate fetch of the full
+  filtered set (up to the old 500-row cap) rather than exporting only
+  whatever's currently paginated on screen — exporting a silently
+  truncated subset would be a real correctness problem for an audit
+  trail, not just a display nicety — and disables itself with an
+  "Exporting…" label while that fetch is in flight.
+- `src/domFocus.js`: new `repaintPreservingScroll(root, selector,
+  render)`, the same before/after pattern as
+  `repaintPreservingFocus` but for a scrollable element's `scrollTop`
+  instead of an input's focus — needed because appending a "load
+  more" page still does a full `innerHTML` replace, which would
+  otherwise silently reset the log's scroll position to the top on
+  every page load. `domFocus.test.js` gained two tests. Action Log's
+  `paint()` now layers this on top of `repaintPreservingFocus`.
+- `e2e/phase9.spec.js`'s scroll test rewritten to mock `offset`/
+  `limit` query params against a 40-row fixture: asserts exactly 25
+  rows load initially with exactly one request, that a fully-scrolled
+  container already overflows on page 1 alone, that reaching the
+  bottom fetches exactly one more page (verifying the requested
+  ranges), that the filter bar never moves, and that scrolling again
+  once every row is loaded doesn't issue a wasted third request.
+
+Verified locally in a real browser session with 60 rows (25 → 50 → 60
+across successive scrolls, confirmed via request logging) as well as
+the full test suite: lint, typecheck, 135 unit tests, all e2e tests,
+production build all green. No schema changes.

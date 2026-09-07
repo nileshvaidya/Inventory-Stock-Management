@@ -122,29 +122,61 @@ test.describe('Phase 9 — Action Log', () => {
     await expect(page.locator('[data-screen="action-log"]')).toContainText('No actions match these filters.');
   });
 
-  test('a long log scrolls within its own container instead of growing the page indefinitely', async ({ page }) => {
+  test('loads 25 rows initially and only fetches more once the user scrolls near the bottom', async ({ page }) => {
     await page.route('**/rest/v1/rpc/admin_list_users**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
-    const rows = Array.from({ length: 40 }, (_, i) => ({
+    const allRows = Array.from({ length: 40 }, (_, i) => ({
       id: `log-${i}`,
       table_name: 'work_orders',
       operation: 'UPDATE',
       user: { name: 'Demo Production' },
       created_at: new Date(2026, 0, 1 + i).toISOString(),
     }));
-    await page.route('**/rest/v1/action_log**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(rows) }));
+    let requestCount = 0;
+    const requestedRanges = [];
+    await page.route('**/rest/v1/action_log**', (route) => {
+      requestCount += 1;
+      // fetchActionLog paginates via .range(offset, offset+limit-1), which
+      // this postgrest-js version sends as ?offset=&limit= query params —
+      // slice the fixture the same way a real Postgres OFFSET/LIMIT would,
+      // so "load more" actually returns the next page instead of repeating
+      // page 1.
+      const params = new URL(route.request().url()).searchParams;
+      const offset = Number(params.get('offset') ?? 0);
+      const limit = Number(params.get('limit') ?? 25);
+      requestedRanges.push(`${offset}-${offset + limit - 1}`);
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(allRows.slice(offset, offset + limit)) });
+    });
 
     await page.goto('/?demoRole=admin#/action-log');
     await expect(page.locator('[data-action-row="log-0"]')).toBeVisible();
+    await expect(page.locator('[data-action-row]')).toHaveCount(25);
+    expect(requestCount).toBe(1);
 
+    // Even just the first page of 25 already overflows the container —
+    // "limit to 25 initially, then scrolling" means scrolling starts
+    // immediately, not only once every row has ever been loaded.
     const scrollEl = page.locator('[data-role="action-log-scroll"]');
     const { scrollHeight, clientHeight } = await scrollEl.evaluate((el) => ({ scrollHeight: el.scrollHeight, clientHeight: el.clientHeight }));
     expect(scrollHeight).toBeGreaterThan(clientHeight);
 
-    // Scrolling the log's own container must not move the page itself —
-    // the filter bar above stays put.
+    // Scrolling the log's own container to its bottom must not move the
+    // page itself — the filter bar above stays put — and triggers exactly
+    // one more page fetch (the remaining 15 rows).
     await scrollEl.evaluate((el) => {
-      el.scrollTop = 500;
+      el.scrollTop = el.scrollHeight;
     });
+    await expect(page.locator('[data-action-row]')).toHaveCount(40);
+    await expect(page.locator('[data-action-row="log-39"]')).toBeVisible();
     await expect(page.locator('[data-action="filter-user"]')).toBeInViewport();
+    expect(requestCount).toBe(2);
+    expect(requestedRanges).toEqual(['0-24', '25-49']);
+
+    // All 40 rows now fit within one page-worth of data (nothing left to
+    // fetch) — scrolling again must not issue a third, unnecessary request.
+    await scrollEl.evaluate((el) => {
+      el.scrollTop = el.scrollHeight;
+    });
+    await page.waitForTimeout(200);
+    expect(requestCount).toBe(2);
   });
 });

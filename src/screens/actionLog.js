@@ -11,7 +11,20 @@ import { canViewModule } from '../navPermissions.js';
 import { fetchActionLog, describeAction, TABLE_LABELS, OPERATION_LABELS } from '../actionLog.js';
 import { fetchAdminUsers } from '../admin.js';
 import { toCsv, downloadCsv } from '../csvExport.js';
-import { repaintPreservingFocus, afterFocusSettles, skipDateSegmentsOnTab, onRealBlur } from '../domFocus.js';
+import { repaintPreservingFocus, repaintPreservingScroll, afterFocusSettles, skipDateSegmentsOnTab, onRealBlur } from '../domFocus.js';
+
+// Loads 25 at a time — scrolling near the bottom of the log's own
+// container fetches the next page instead of pulling the whole (possibly
+// very long) log up front. Export CSV bypasses this and fetches the full
+// filtered set in one go (up to the old flat cap), since an export
+// silently truncated to whatever's scrolled into view would be a real
+// correctness problem for an audit trail, not just a display nicety.
+const PAGE_SIZE = 25;
+const EXPORT_LIMIT = 500;
+// Fetch the next page once the user has scrolled within this many pixels
+// of the bottom, rather than waiting until the exact last pixel — feels
+// more responsive and tolerates sub-pixel scroll rounding.
+const LOAD_MORE_THRESHOLD_PX = 100;
 
 function initialState() {
   return {
@@ -19,12 +32,27 @@ function initialState() {
     users: [],
     loading: true,
     error: false,
+    loadingMore: false,
+    hasMore: true,
+    offset: 0,
+    exporting: false,
     userId: '',
     tableName: '',
     operation: '',
     dateFrom: '',
     dateTo: '',
     openRowId: null,
+  };
+}
+
+/** @param {ReturnType<typeof initialState>} s */
+function activeFilters(s) {
+  return {
+    userId: s.userId || undefined,
+    tableName: s.tableName || undefined,
+    operation: s.operation || undefined,
+    dateFrom: s.dateFrom || undefined,
+    dateTo: s.dateTo || undefined,
   };
 }
 
@@ -43,20 +71,38 @@ export async function render(container) {
   content.setAttribute('data-screen', 'action-log');
   const store = createStore(initialState());
 
+  // Resets to page 1 — used for the initial load and whenever a filter
+  // changes, since a filter change makes the previous pagination offset
+  // meaningless (it applied to a different result set).
   async function load() {
     store.setState({ loading: true, error: false });
     const s = store.getState();
     try {
-      const rows = await fetchActionLog({
-        userId: s.userId || undefined,
-        tableName: s.tableName || undefined,
-        operation: s.operation || undefined,
-        dateFrom: s.dateFrom || undefined,
-        dateTo: s.dateTo || undefined,
-      });
-      store.setState({ rows, loading: false, error: false });
+      const rows = await fetchActionLog({ ...activeFilters(s), limit: PAGE_SIZE, offset: 0 });
+      store.setState({ rows, offset: rows.length, hasMore: rows.length === PAGE_SIZE, loading: false, error: false });
     } catch {
       store.setState({ loading: false, error: true });
+    }
+  }
+
+  async function loadMore() {
+    const s = store.getState();
+    if (s.loading || s.loadingMore || !s.hasMore) return;
+    store.setState({ loadingMore: true });
+    try {
+      const nextRows = await fetchActionLog({ ...activeFilters(s), limit: PAGE_SIZE, offset: s.offset });
+      const current = store.getState();
+      store.setState({
+        rows: [...current.rows, ...nextRows],
+        offset: current.offset + nextRows.length,
+        hasMore: nextRows.length === PAGE_SIZE,
+        loadingMore: false,
+      });
+    } catch {
+      // A failed "load more" leaves what's already on screen intact and
+      // just stops trying — the user can scroll again (or re-filter) to
+      // retry, same as any other transient network hiccup here.
+      store.setState({ loadingMore: false });
     }
   }
 
@@ -67,9 +113,17 @@ export async function render(container) {
     // original per-keystroke focus-loss bug was found, since none of its
     // fields need live per-keystroke reactivity. It still needs the same
     // wrapper for anything that re-renders while a field has focus.
+    //
+    // repaintPreservingScroll is layered on top for the same reason, but
+    // for the log's own scroll position: appending a "load more" page
+    // repaints this whole subtree, which would otherwise reset scrollTop
+    // to 0 and yank the user back to the top of the list they were
+    // scrolling through.
     repaintPreservingFocus(content, () => {
-      renderContent(content, store.getState());
-      wireEvents(content, store, load);
+      repaintPreservingScroll(content, '[data-role="action-log-scroll"]', () => {
+        renderContent(content, store.getState());
+        wireEvents(content, store, load, loadMore);
+      });
     });
   }
 
@@ -84,7 +138,7 @@ function renderContent(container, state) {
   container.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px">
       <h1 style="margin:0">Action Log</h1>
-      <button type="button" class="btn btn-secondary" data-action="export-csv">Export CSV</button>
+      <button type="button" class="btn btn-secondary" data-action="export-csv" ${state.exporting ? 'disabled' : ''}>${state.exporting ? 'Exporting…' : 'Export CSV'}</button>
     </div>
 
     <div class="card elev-sm" style="margin-bottom:16px">
@@ -134,7 +188,8 @@ function renderContent(container, state) {
               : `<table class="table" style="min-width:680px">
                   <thead style="position:sticky;top:0;background:var(--color-surface);z-index:1"><tr><th>Date/Time</th><th>User</th><th>Action</th><th></th></tr></thead>
                   <tbody>${state.rows.map((row) => renderRow(row, state)).join('')}</tbody>
-                </table>`
+                </table>
+                ${state.loadingMore ? `<div style="padding:12px 20px;font-size:12px;color:var(--color-neutral-500)" data-role="action-log-loading-more">Loading more…</div>` : ''}`
       }
     </div>
   `;
@@ -172,7 +227,14 @@ function renderRow(row, state) {
   return rows.join('');
 }
 
-function wireEvents(container, store, load) {
+function wireEvents(container, store, load, loadMore) {
+  container.querySelector('[data-role="action-log-scroll"]')?.addEventListener('scroll', (e) => {
+    const el = /** @type {HTMLElement} */ (e.target);
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - LOAD_MORE_THRESHOLD_PX) {
+      loadMore();
+    }
+  });
+
   const bindFilter = (selector, key) => {
     container.querySelector(selector)?.addEventListener('change', (e) => {
       store.setState({ [key]: e.target.value });
@@ -218,22 +280,32 @@ function wireEvents(container, store, load) {
     });
   });
 
-  container.querySelector('[data-action="export-csv"]')?.addEventListener('click', () => {
-    const { rows } = store.getState();
-    const csv = toCsv(
-      rows.map((row) => ({
-        date: new Date(row.created_at).toLocaleString(),
-        user: row.user?.name || '',
-        action: describeAction(row),
-        row_id: row.row_id || '',
-      })),
-      [
-        { key: 'date', header: 'Date/Time' },
-        { key: 'user', header: 'User' },
-        { key: 'action', header: 'Action' },
-        { key: 'row_id', header: 'Row ID' },
-      ]
-    );
-    downloadCsv(csv, `action-log-${new Date().toISOString().slice(0, 10)}.csv`);
+  container.querySelector('[data-action="export-csv"]')?.addEventListener('click', async () => {
+    // Fetches the full filtered set independently of what's currently
+    // paginated on screen — exporting only whatever happens to be
+    // scrolled into view would silently truncate an audit-trail export.
+    const s = store.getState();
+    if (s.exporting) return;
+    store.setState({ exporting: true });
+    try {
+      const rows = await fetchActionLog({ ...activeFilters(s), limit: EXPORT_LIMIT, offset: 0 });
+      const csv = toCsv(
+        rows.map((row) => ({
+          date: new Date(row.created_at).toLocaleString(),
+          user: row.user?.name || '',
+          action: describeAction(row),
+          row_id: row.row_id || '',
+        })),
+        [
+          { key: 'date', header: 'Date/Time' },
+          { key: 'user', header: 'User' },
+          { key: 'action', header: 'Action' },
+          { key: 'row_id', header: 'Row ID' },
+        ]
+      );
+      downloadCsv(csv, `action-log-${new Date().toISOString().slice(0, 10)}.csv`);
+    } finally {
+      store.setState({ exporting: false });
+    }
   });
 }

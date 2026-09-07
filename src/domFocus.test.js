@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { repaintPreservingFocus, afterFocusSettles, onRealBlur } from './domFocus.js';
+import { repaintPreservingFocus, repaintPreservingScroll, afterFocusSettles, onRealBlur } from './domFocus.js';
 
 function mount(html) {
   const root = document.createElement('div');
@@ -130,6 +130,33 @@ describe('onRealBlur', () => {
     other.focus();
 
     expect(calls).toBe(1);
+  });
+});
+
+describe('repaintPreservingScroll', () => {
+  it('restores scrollTop on the equivalent element after a full re-render', () => {
+    const root = mount('<div data-role="scroller" style="overflow-y:auto"><p>row 1</p></div>');
+    const before = root.querySelector('[data-role="scroller"]');
+    before.scrollTop = 240;
+
+    repaintPreservingScroll(root, '[data-role="scroller"]', () => {
+      // Simulates a full innerHTML replace appending more rows — a
+      // brand-new element, not the one scrollTop was set on.
+      root.innerHTML = '<div data-role="scroller" style="overflow-y:auto"><p>row 1</p><p>row 2</p></div>';
+    });
+
+    const after = root.querySelector('[data-role="scroller"]');
+    expect(after.scrollTop).toBe(240);
+  });
+
+  it('does not crash when the scrollable element does not exist yet (e.g. still loading)', () => {
+    const root = mount('<p>Loading…</p>');
+
+    expect(() => {
+      repaintPreservingScroll(root, '[data-role="scroller"]', () => {
+        root.innerHTML = '<div data-role="scroller"><p>row 1</p></div>';
+      });
+    }).not.toThrow();
   });
 });
 

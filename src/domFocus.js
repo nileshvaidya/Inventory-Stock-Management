@@ -128,6 +128,30 @@ export function afterFocusSettles(fn) {
   setTimeout(fn, 0);
 }
 
+/**
+ * Like repaintPreservingFocus, but for a scrollable subtree's scroll
+ * position instead of an input's focus/cursor — needed anywhere a repaint
+ * can happen *while the user has scrolled down* (Action Log's infinite
+ * scroll: reaching the bottom triggers a fetch-more, which repaints to
+ * append the new rows; without this, that repaint would silently reset
+ * scrollTop to 0, yanking the user back to the top of the list they were
+ * scrolling through). `selector` must match the same scrollable element
+ * before and after `render()` — a full innerHTML replace destroys the old
+ * node, so this is genuinely two different elements, not one being moved.
+ * @param {HTMLElement} root
+ * @param {string} selector
+ * @param {() => void} render
+ */
+export function repaintPreservingScroll(root, selector, render) {
+  const before = /** @type {HTMLElement|null} */ (root.querySelector(selector));
+  const scrollTop = before?.scrollTop ?? 0;
+
+  render();
+
+  const after = /** @type {HTMLElement|null} */ (root.querySelector(selector));
+  if (after) after.scrollTop = scrollTop;
+}
+
 const TABBABLE_SELECTOR =
   'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 

@@ -36,16 +36,22 @@ export function describeAction(row) {
 }
 
 /**
- * @param {{ userId?: string, tableName?: string, operation?: string, dateFrom?: string, dateTo?: string }} filters
+ * Paginated via `.range()` (offset/limit), not a flat cap — the Action Log
+ * screen loads 25 at a time and fetches more as the user scrolls, rather
+ * than pulling the whole log up front. Callers that just want a handful
+ * of recent entries (the Dashboard's activity feed) can rely on the
+ * default limit and skip a page straight into it.
+ * @param {{ userId?: string, tableName?: string, operation?: string, dateFrom?: string, dateTo?: string, limit?: number, offset?: number }} filters
  * @param {any} [client]
  */
 export async function fetchActionLog(filters = {}, client = supabase) {
   if (!client) return [];
+  const { limit = 25, offset = 0 } = filters;
   let query = client
     .from('action_log')
     .select('*, user:users(id, name, email)')
     .order('created_at', { ascending: false })
-    .limit(500);
+    .range(offset, offset + limit - 1);
 
   if (filters.userId) query = query.eq('user_id', filters.userId);
   if (filters.tableName) query = query.eq('table_name', filters.tableName);
