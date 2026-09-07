@@ -69,11 +69,73 @@ async function run() {
     await page.close();
   }
 
-  // 2. Dashboard
+  // 2. Dashboard — quick-stat cards + recent activity, admin role so every
+  // card (and the admin-only activity feed) is visible at once.
   {
     const page = await browser.newPage({ viewport: VIEWPORT });
+    await mockLookups(page);
+    await page.route('**/rest/v1/available_stock**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([
+          { item_id: 'i2', name: 'Terminal Block 12-way', current_qty: 12, reserved_qty: 0, available_qty: 12, reorder_level: 20 },
+          { item_id: 'i3', name: 'Enclosure Panel 300x200', current_qty: 15, reserved_qty: 0, available_qty: 15, reorder_level: 10 },
+        ]),
+      })
+    );
+    await page.route('**/rest/v1/purchase_orders**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([
+          { id: 'po1', status: 'to_be_received', deleted_at: null },
+          { id: 'po2', status: 'partially_received', deleted_at: null },
+        ]),
+      })
+    );
+    await page.route('**/rest/v1/material_inward_line_items**', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ id: 'mil1', inward: { deleted_at: null }, inspection_results: [] }]) })
+    );
+    await page.route('**/rest/v1/work_orders**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([
+          { id: 'wo1', status: 'open' },
+          { id: 'wo2', status: 'reserved' },
+        ]),
+      })
+    );
+    await page.route('**/rest/v1/work_order_requirements**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([{ id: 'req1', shortfall_qty: 4, item: { name: 'Enclosure Panel 300x200' }, work_order: { status: 'open' } }]),
+      })
+    );
+    await page.route('**/rest/v1/invoices**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([{ id: 'inv1', due_date: '2026-08-03', paid_at: null, deleted_at: null }]),
+      })
+    );
+    await page.route('**/rest/v1/material_dispatch**', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ id: 'md1', authorized_at: null }]) })
+    );
+    await page.route('**/rest/v1/action_log**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([
+          { id: 'log1', table_name: 'work_orders', operation: 'UPDATE', user: { name: 'Sunita Patil' }, created_at: '2026-09-01T14:22:03Z' },
+          { id: 'log2', table_name: 'invoices', operation: 'INSERT', user: { name: 'Demo Admin' }, created_at: '2026-09-01T11:05:00Z' },
+        ]),
+      })
+    );
     await page.goto(`${BASE_URL}/?demoRole=admin#/dashboard`);
-    await page.waitForSelector('[data-screen="dashboard"]');
+    await page.waitForSelector('[data-role="dashboard-widgets"]');
     await shot(page, '03-dashboard');
     await page.close();
   }

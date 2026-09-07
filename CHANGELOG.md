@@ -1215,3 +1215,54 @@ clean. This changes `supabase/schema.sql`, so — same as every prior
 schema change in this project — it needs the migration applied
 manually to any live Supabase project before its own integration test
 (or the app's Material Dispatch screen) will work there.
+
+## Dashboard: real quick-stat cards + recent activity, replacing the Phase 0 placeholder
+
+Direct user report: "Dashboard still doesn't show anything" — turned
+out to be literal. `src/screens/dashboard.js` had never been revisited
+past its original Phase 0 scaffold (a static "Welcome" message and a
+placeholder card whose own text says KPI cards were "planned for
+Phase 8, pending your sign-off" — sign-off that never happened once
+Phase 8 became the separate Reports screen instead).
+
+No new schema, no new RLS — every card reuses an existing module's own
+already-permitted read:
+
+- **Items Below Reorder Level** (`fetchAvailableStock` + the same
+  filter Reports' Below Reorder tab uses) → Inventory.
+- **Open Purchase Orders** (`to_be_received`/`partially_received`
+  count) → Order Status.
+- **Pending Inspections** (`fetchPendingInspection`) → Inspection.
+- **Active Work Orders** (`open`/`reserved` count) and **Component
+  Shortages** (`fetchShortages`) → Work Orders.
+- **Overdue Invoices** → Invoices.
+- **Dispatches Awaiting Authorization** → Material Dispatch.
+- **Recent Activity** (admin only, since `action_log`'s own RLS is
+  admin-only) — the last 8 entries from Action Log, with a "View all"
+  link.
+
+Each card is gated by the exact same `canViewModule()` check the
+sidebar itself uses, so a role never even issues a query against a
+table its RLS policy would reject — a purchase-only user's dashboard
+never calls `fetchInvoices`, for instance. A role with no card-eligible
+module (most commonly a brand-new account before an admin assigns a
+role) gets a short explanatory message instead of a blank space. Each
+card's fetch is also caught independently, so one failing widget (a
+transient network error) shows "—" without taking down the cards
+around it or the activity feed.
+
+- `e2e/dashboard.spec.js` (new): admin sees every card with correct
+  counts plus recent activity; a card click navigates to its screen;
+  store sees only its four relevant cards and never even calls the
+  Invoices/Action Log endpoints; a role with no eligible module sees
+  the friendly empty state; one card's endpoint failing still shows
+  every other card and the activity feed correctly.
+- Help manual's Dashboard topic rewritten to describe the cards and
+  where each links, plus a new FAQ item; its screenshot regenerated
+  with representative data.
+
+Verified locally: lint, typecheck, 133 unit tests, and the full e2e
+suite (99 tests, including 5 new ones) all green; production build
+clean; the rendered dashboard checked visually in a real browser
+session. No schema changes — this ships on the next push with no
+manual database step required.

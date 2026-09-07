@@ -214,8 +214,23 @@ function renderDashboard() {
     'help-dashboard',
     'Dashboard',
     `
-    <p style="font-size:14px;color:var(--color-neutral-300);margin:0">Your landing page after signing in. It shows your name and your assigned role. Use the sidebar (left, or the bottom tabs on a phone) to go anywhere else in the app.</p>
-    ${img('03-dashboard.png', 'The Dashboard, showing a welcome message, the signed-in role, and the full sidebar')}
+    <p style="font-size:14px;color:var(--color-neutral-300);margin-bottom:10px">Your landing page after signing in. Shows your name, your assigned role, and a set of quick-stat cards for the modules your role can use — click any card to jump straight to that screen. Use the sidebar (left, or the bottom tabs on a phone) to go anywhere else in the app.</p>
+    ${img('03-dashboard.png', 'The Dashboard, showing quick-stat cards (Items Below Reorder Level, Open Purchase Orders, Pending Inspections, Active Work Orders, Component Shortages, Overdue Invoices, Dispatches Awaiting Authorization) and a Recent Activity feed')}
+
+    ${h3('Quick-stat cards')}
+    <p style="font-size:14px;color:var(--color-neutral-300);margin-bottom:8px">Only the cards relevant to your role appear — the same rule the sidebar itself uses. A role with no matching module (for example, before an admin has assigned you one) sees a short message instead of an empty page.</p>
+    ${ol([
+      `<strong>Items Below Reorder Level</strong> — links to ${jump('help-inventory', 'Inventory')}.`,
+      `<strong>Open Purchase Orders</strong> — links to ${jump('help-order-status', 'Order Status')}.`,
+      `<strong>Pending Inspections</strong> — links to ${jump('help-inspection', 'Inspection')}.`,
+      `<strong>Active Work Orders</strong> and <strong>Component Shortages</strong> — link to ${jump('help-work-orders', 'Work Orders')}.`,
+      `<strong>Overdue Invoices</strong> — links to ${jump('help-invoices', 'Invoices')}.`,
+      `<strong>Dispatches Awaiting Authorization</strong> — links to ${jump('help-material-dispatch', 'Material Dispatch')}.`,
+    ])}
+    ${note('If a card can\'t load its number right now (a connection hiccup), it shows "—" instead — the rest of the dashboard still works normally; refresh the page to try again.')}
+
+    ${h3('Recent Activity')}
+    <p style="font-size:14px;color:var(--color-neutral-300);margin:0">Admin only — the last few entries from ${jump('help-action-log', 'Action Log')}, right on the landing page. Click <strong>View all</strong> to see the full, filterable log.</p>
     `
   );
 }
@@ -614,6 +629,10 @@ const FAQ = [
   {
     q: 'I can\'t see most of the menu items — what\'s wrong?',
     a: 'Nothing is wrong — the sidebar only ever shows the screens your role is allowed to use (see "What you see depends on your role" under Getting Started). Ask an admin to check your role on the Users &amp; Roles screen.',
+  },
+  {
+    q: 'My Dashboard just shows a short message instead of any quick-stat cards — why?',
+    a: 'Each card only appears if your role can use the screen behind it — same rule as the sidebar. If your role doesn\'t have a matching module yet (most commonly before an admin has assigned you a role at all), there\'s nothing to show a card for. Ask an admin to check your role on the Users &amp; Roles screen.',
   },
   {
     q: 'I forgot my password. How do I reset it?',
