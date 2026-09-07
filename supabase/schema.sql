@@ -2107,3 +2107,110 @@ begin
   execute format('drop trigger if exists log_action on public.%I', 'item_price_history');
   execute format('create trigger log_action after insert or update or delete on public.%I for each row execute function public.trg_log_action()', 'item_price_history');
 end $$;
+
+-- Phase 12 addendum: match the company's existing external Stock Statement
+-- format (a real report they already produce outside this app) and add a
+-- real From/To date range to it — direct user request, attaching that
+-- document as the target format. Four columns from it don't exist on
+-- items yet; added as plain nullable fields, same "optional, set once at
+-- creation, no edit flow" treatment as category/unit_of_measure/
+-- reorder_level already get (this app has no "edit item" screen at all).
+--
+-- item_type is deliberately its own column, not a reuse of the existing
+-- free-text `category` (already meaning something else app-wide — a
+-- product grouping like "Fasteners", used by Inventory's own category
+-- filter) — conflating the two would silently break every existing
+-- reader of `category`. `source` covers both a real vendor name and the
+-- literal value "Self" for in-house-made items, so it's freeform text,
+-- not a foreign key into `vendors`.
+alter table public.items add column if not exists item_code text null;
+alter table public.items add column if not exists item_type text null;
+alter table public.items drop constraint if exists items_item_type_check;
+alter table public.items add constraint items_item_type_check
+  check (item_type is null or item_type in ('RM', 'WIP', 'FG'));
+alter table public.items add column if not exists source text null;
+alter table public.items add column if not exists location text null;
+
+-- Opening/Inward/Outward/Closing quantities for a date range, the actual
+-- shape of the reference report — a plain view can't take parameters, so
+-- this is a table-valued function instead (same shape as
+-- explode_bom_requirements above). security invoker, not definer: every
+-- table this reads (items, stock_movements, item_price_history) is
+-- already company-wide readable, so there's nothing to bypass.
+--
+-- "Opening" nets every movement strictly before date_from (the balance
+-- at the start of the period); "Closing" nets everything up to and
+-- including the whole date_to day (the exclusive-next-day trick Action
+-- Log's own date filter already uses, so the literal typed end date is
+-- included, not cut off at its midnight). Closing is derived as
+-- opening + inward - outward rather than queried a second time, so the
+-- three numbers can never disagree with each other by construction.
+--
+-- The rate used is whichever item_price_history entry was in effect ON
+-- date_to (the latest entry with effective_date <= date_to) — a
+-- genuinely historical valuation, not always "whatever the rate happens
+-- to be today" — which naturally reduces to today's current rate in the
+-- one case where date_to IS today, so this subsumes stock_valuation's
+-- own math rather than duplicating it under a different name.
+create or replace function public.stock_statement_for_range(date_from date, date_to date)
+returns table (
+  item_id uuid,
+  item_code text,
+  name text,
+  item_type text,
+  source text,
+  location text,
+  unit_of_measure text,
+  opening_qty numeric,
+  inward_qty numeric,
+  outward_qty numeric,
+  closing_qty numeric,
+  rate numeric,
+  rate_effective_date date,
+  stock_value numeric
+)
+language sql
+stable
+security invoker
+set search_path = public
+as $$
+  with movements as (
+    select
+      i.id as item_id,
+      coalesce(sum(case when sm.created_at < date_from::timestamptz then (case when sm.movement_type = 'in' then sm.quantity else -sm.quantity end) else 0 end), 0) as opening_qty,
+      coalesce(sum(case when sm.created_at >= date_from::timestamptz and sm.created_at < (date_to + 1)::timestamptz and sm.movement_type = 'in' then sm.quantity else 0 end), 0) as inward_qty,
+      coalesce(sum(case when sm.created_at >= date_from::timestamptz and sm.created_at < (date_to + 1)::timestamptz and sm.movement_type = 'out' then sm.quantity else 0 end), 0) as outward_qty
+    from public.items i
+    left join public.stock_movements sm on sm.item_id = i.id
+    where i.deleted_at is null
+    group by i.id
+  )
+  select
+    i.id as item_id,
+    i.item_code,
+    i.name,
+    i.item_type,
+    i.source,
+    i.location,
+    i.unit_of_measure,
+    m.opening_qty,
+    m.inward_qty,
+    m.outward_qty,
+    m.opening_qty + m.inward_qty - m.outward_qty as closing_qty,
+    r.rate,
+    r.effective_date as rate_effective_date,
+    case when r.rate is not null then (m.opening_qty + m.inward_qty - m.outward_qty) * r.rate else null end as stock_value
+  from public.items i
+  join movements m on m.item_id = i.id
+  left join lateral (
+    select ph.rate, ph.effective_date
+    from public.item_price_history ph
+    where ph.item_id = i.id and ph.effective_date <= date_to
+    order by ph.effective_date desc, ph.created_at desc
+    limit 1
+  ) r on true
+  where i.deleted_at is null
+  order by i.name;
+$$;
+
+grant execute on function public.stock_statement_for_range(date, date) to authenticated;

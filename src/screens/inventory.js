@@ -15,6 +15,7 @@ import { canViewModule } from '../navPermissions.js';
 import { fetchAvailableStock, fetchMovementsForItem, createStockMovement } from '../inventory.js';
 import { createItem } from '../items.js';
 import { fetchCurrentRates, setItemRate } from '../itemPricing.js';
+import { ITEM_TYPES, itemTypeLabel } from '../itemType.js';
 import { validateItemForm, validateStockMovementForm, validateRateForm } from '../validation.js';
 import { repaintPreservingFocus, afterFocusSettles, skipDateSegmentsOnTab, onRealBlur } from '../domFocus.js';
 
@@ -42,6 +43,10 @@ function initialState() {
     newItemUom: '',
     newItemReorderLevel: '',
     newItemUnitRate: '',
+    newItemCode: '',
+    newItemType: '',
+    newItemSource: '',
+    newItemLocation: '',
     newItemError: null,
   };
 }
@@ -185,6 +190,21 @@ function renderNewItemCard(state) {
         <div class="field"><label for="ni-unit-rate">Unit Rate ₹ (optional)</label>
           <input class="input" id="ni-unit-rate" type="text" inputmode="decimal" data-action="new-item-unit-rate" value="${escapeHtml(state.newItemUnitRate)}" placeholder="Leave blank if not known yet" />
         </div>
+        <div class="field"><label for="ni-item-code">Item Code (optional)</label>
+          <input class="input" id="ni-item-code" data-action="new-item-code" value="${escapeHtml(state.newItemCode)}" />
+        </div>
+        <div class="field"><label for="ni-item-type">Type (optional)</label>
+          <select class="input" id="ni-item-type" data-action="new-item-type">
+            <option value="">—</option>
+            ${ITEM_TYPES.map((t) => `<option value="${t}" ${state.newItemType === t ? 'selected' : ''}>${itemTypeLabel(t)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field"><label for="ni-source">Vendor / Source (optional)</label>
+          <input class="input" id="ni-source" data-action="new-item-source" value="${escapeHtml(state.newItemSource)}" placeholder="A vendor name, or &quot;Self&quot; if made in-house" />
+        </div>
+        <div class="field"><label for="ni-location">Stock Location (optional)</label>
+          <input class="input" id="ni-location" data-action="new-item-location" value="${escapeHtml(state.newItemLocation)}" />
+        </div>
       </div>
       ${state.newItemError ? `<p data-role="new-item-error" style="font-size:12px;color:var(--color-accent-2-200);margin-top:8px">${escapeHtml(state.newItemError)}</p>` : ''}
       <div style="margin-top:10px;display:flex;gap:8px">
@@ -314,7 +334,19 @@ function wireEvents(container, store, user, load, loadStock, canManageStock) {
   });
 
   container.querySelector('[data-action="new-item"]')?.addEventListener('click', () => {
-    store.setState({ newItemMode: true, newItemName: '', newItemCategory: '', newItemUom: '', newItemReorderLevel: '', newItemUnitRate: '', newItemError: null });
+    store.setState({
+      newItemMode: true,
+      newItemName: '',
+      newItemCategory: '',
+      newItemUom: '',
+      newItemReorderLevel: '',
+      newItemUnitRate: '',
+      newItemCode: '',
+      newItemType: '',
+      newItemSource: '',
+      newItemLocation: '',
+      newItemError: null,
+    });
   });
   container.querySelector('[data-action="cancel-new-item"]')?.addEventListener('click', () => {
     store.setState({ newItemMode: false });
@@ -324,9 +356,18 @@ function wireEvents(container, store, user, load, loadStock, canManageStock) {
   container.querySelector('[data-action="new-item-uom"]')?.addEventListener('input', (e) => store.setState({ newItemUom: e.target.value }));
   container.querySelector('[data-action="new-item-reorder"]')?.addEventListener('input', (e) => store.setState({ newItemReorderLevel: e.target.value }));
   container.querySelector('[data-action="new-item-unit-rate"]')?.addEventListener('input', (e) => store.setState({ newItemUnitRate: e.target.value }));
+  container.querySelector('[data-action="new-item-code"]')?.addEventListener('input', (e) => store.setState({ newItemCode: e.target.value }));
+  container.querySelector('[data-action="new-item-type"]')?.addEventListener('change', (e) => store.setState({ newItemType: e.target.value }));
+  container.querySelector('[data-action="new-item-source"]')?.addEventListener('input', (e) => store.setState({ newItemSource: e.target.value }));
+  container.querySelector('[data-action="new-item-location"]')?.addEventListener('input', (e) => store.setState({ newItemLocation: e.target.value }));
   container.querySelector('[data-action="confirm-new-item"]')?.addEventListener('click', async () => {
     const state = store.getState();
-    const { valid, errors } = validateItemForm({ name: state.newItemName, reorderLevel: state.newItemReorderLevel, unitRate: state.newItemUnitRate });
+    const { valid, errors } = validateItemForm({
+      name: state.newItemName,
+      reorderLevel: state.newItemReorderLevel,
+      unitRate: state.newItemUnitRate,
+      itemType: state.newItemType,
+    });
     if (!valid) {
       store.setState({ newItemError: Object.values(errors)[0] });
       return;
@@ -337,6 +378,10 @@ function wireEvents(container, store, user, load, loadStock, canManageStock) {
         category: state.newItemCategory,
         unitOfMeasure: state.newItemUom,
         reorderLevel: state.newItemReorderLevel === '' ? null : Number(state.newItemReorderLevel),
+        itemCode: state.newItemCode,
+        itemType: state.newItemType,
+        source: state.newItemSource,
+        location: state.newItemLocation,
       });
       // A rate isn't part of the items table itself (see itemPricing.js) —
       // a second, separate write records the item's first price_history

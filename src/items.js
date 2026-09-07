@@ -12,7 +12,8 @@ export async function fetchItems(client = supabase) {
 }
 
 /**
- * @param {{ name: string, category?: string|null, unitOfMeasure?: string|null, reorderLevel?: number|null }} form
+ * @param {{ name: string, category?: string|null, unitOfMeasure?: string|null, reorderLevel?: number|null,
+ *   itemCode?: string|null, itemType?: string|null, source?: string|null, location?: string|null }} form
  * @param {any} [client]
  */
 export async function createItem(form, client = supabase) {
@@ -24,6 +25,10 @@ export async function createItem(form, client = supabase) {
       category: form.category || null,
       unit_of_measure: form.unitOfMeasure || null,
       reorder_level: form.reorderLevel ?? null,
+      item_code: form.itemCode || null,
+      item_type: form.itemType || null,
+      source: form.source || null,
+      location: form.location || null,
     })
     .select()
     .single();

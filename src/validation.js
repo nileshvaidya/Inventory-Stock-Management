@@ -1,5 +1,6 @@
 // Pure validation logic — no DOM, no Supabase — cheap to unit test directly.
 import { ROLE_VALUES } from './roles.js';
+import { ITEM_TYPES } from './itemType.js';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -166,17 +167,20 @@ export function validateInspectionForm(form) {
 }
 
 /**
- * New Item form (Phase 4) — used both by the Inventory screen's own "+ New
- * Item" and PO Upload's inline quick-add. Only the name is required;
- * category/UoM/reorder level/unit rate are optional everywhere they're
- * collected — a rate isn't always known yet at creation (Phase 12), and
- * can be added or changed later via validateRateForm below.
- * @param {{ name?: string, reorderLevel?: string|number|null, unitRate?: string|number|null }} form
+ * New Item form (Phase 4, extended Phase 12) — used both by the Inventory
+ * screen's own "+ New Item" and PO Upload's inline quick-add. Only the
+ * name is required; everything else is optional everywhere it's
+ * collected — a rate isn't always known yet at creation, and can be
+ * added or changed later via validateRateForm below (itemCode/itemType/
+ * source/location have no such later-edit path — this app has no "edit
+ * item" screen at all, same as category/unitOfMeasure/reorderLevel).
+ * @param {{ name?: string, reorderLevel?: string|number|null, unitRate?: string|number|null,
+ *   itemCode?: string|null, itemType?: string|null, source?: string|null, location?: string|null }} form
  */
 export function validateItemForm(form) {
   /** @type {Record<string, string>} */
   const errors = {};
-  const { name = '', reorderLevel = '', unitRate = '' } = form || {};
+  const { name = '', reorderLevel = '', unitRate = '', itemType = '' } = form || {};
 
   if (!name.trim()) errors.name = 'Item name is required.';
   if (reorderLevel !== '' && reorderLevel !== null && reorderLevel !== undefined) {
@@ -190,6 +194,9 @@ export function validateItemForm(form) {
     if (!Number.isFinite(rateNum) || rateNum < 0) {
       errors.unitRate = 'Unit rate must be zero or a positive number.';
     }
+  }
+  if (itemType && !ITEM_TYPES.includes(itemType)) {
+    errors.itemType = 'Type must be Raw Material, Work In Progress, or Finished Goods.';
   }
 
   return { valid: Object.keys(errors).length === 0, errors };

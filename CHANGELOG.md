@@ -1426,3 +1426,102 @@ including the print view with the app chrome hidden. This changes
 project — it needs the migration applied manually to any live
 Supabase project before its own integration test (or Unit Rate/Price
 History/Stock Statement) will work there.
+
+## Phase 12 addendum: Stock Statement reformatted to the company's real bank-statement layout, plus a From/To period filter
+
+Direct request, with the company's own existing external stock
+statement (a PDF) attached as the target format: the printable Stock
+Statement was reformatted to that document's own column layout and
+banner style, and — since that format reports a period's movement,
+not just a snapshot — the screen gained a real From/To date filter
+that drives genuine Opening/Inward/Outward/Closing quantity math
+instead of always showing "right now." The reference PDF's separate
+Creditors/Debitors pages were left out of scope — the request named
+the Stock Statement screen specifically, and those are a different
+report entirely.
+
+- `supabase/schema.sql`: `items` gains four new, optional, set-once
+  fields — `item_code` (free text), `item_type` (`RM`/`WIP`/`FG`,
+  check-constrained, deliberately a new column rather than reusing the
+  pre-existing `category`, which is an unrelated free-text product
+  grouping already relied on by Inventory's own category filter),
+  `source` (free-text vendor/"Self", not a `vendors` FK — this is
+  informational for the statement, not a real vendor relationship the
+  way Purchase Orders' vendor field is), and `location`. Like every
+  other item field except Unit Rate, none of these four get an edit
+  screen — they're set at creation and stay fixed, same as
+  `category`/`unit_of_measure`/`reorder_level` always have been.
+  New table function `stock_statement_for_range(date_from, date_to)`
+  (`language sql stable security invoker` — modeled on the existing
+  `explode_bom_requirements` table-function precedent, needing no RLS
+  bypass since every table it reads is already company-wide
+  readable): for each item, sums `stock_movements` into an
+  `opening_qty` (everything before `date_from`), `inward_qty`/
+  `outward_qty` (everything inside the range, inclusive of
+  `date_to` via the same "less than the next day" idiom
+  `fetchActionLog` already established for inclusive date-range
+  filtering), and a derived `closing_qty` — then resolves the rate
+  that was actually in effect on `date_to` (a `LEFT JOIN LATERAL`
+  against `item_price_history`, ordered `effective_date desc,
+  created_at desc` and filtered to `effective_date <= date_to` — the
+  same "most recent as of a point in time" shape as the existing
+  `item_current_rate` view, generalized from "now" to an arbitrary
+  date) to value `closing_qty`, again `null` rather than `0` when no
+  rate applies yet.
+- `src/itemPricing.js`: `fetchStockStatement(range)` calls the new
+  RPC. `fetchStockValuation`/`stock_valuation` are left in place
+  unchanged — still a real, separately useful "what's on hand right
+  now" reading, still covered by their own existing RLS test, so nothing
+  forced a rewrite just because this one screen changed its source.
+- `src/itemType.js` (new): the shared `RM`/`WIP`/`FG` list and display
+  labels ("Raw Material"/"Work In Progress"/"Finished Goods"), used by
+  both the New Item form and the statement's Category column.
+- `src/items.js`/`src/validation.js`: `createItem` and
+  `validateItemForm` accept the four new optional fields;
+  `validateItemForm` rejects an `itemType` outside the three allowed
+  values.
+- `src/screens/inventory.js`: New Item gains Item Code, Type (a
+  select), Vendor/Source, and Stock Location fields, all optional,
+  wired the same way as every other New Item field.
+- `src/screens/stockStatement.js`: rewritten to the reference
+  document's own layout — a magenta company banner, a "Period: <from>
+  to <to>" line instead of a single "As on" date, and a table with
+  Item Code / Item Description / Category / Vendor-Source / Opening /
+  Inward / Outward / Closing Qty / UoM / Rate per Unit / Closing Stock
+  Value / Stock Location columns. A From/To date filter above the
+  sheet (defaulting to the 1st of the current month through today)
+  uses the same `skipDateSegmentsOnTab`/`onRealBlur`/
+  `afterFocusSettles` pattern as every other filterable date range in
+  the app, and re-runs `fetchStockStatement` on blur. The unpriced-item
+  note, total row, and signature block carry over unchanged from the
+  prior version.
+- `scripts/test-rls-item-pricing.mjs`: new coverage for
+  `stock_statement_for_range` — seeds movements before/inside/after a
+  March 2026 range and rates before/inside/after `date_to`, then
+  asserts `opening_qty`/`inward_qty`/`outward_qty`/`closing_qty` match
+  the expected math, the resolved rate is the one in effect on
+  `date_to` (not an earlier or a not-yet-effective later one), the new
+  item fields pass through unchanged, every authenticated role
+  (including production) can read the function, and an item with
+  movements but no rate on record still reports its `closing_qty` with
+  a `null` rate/value rather than `0`.
+- `e2e/phase12.spec.js`: the three existing Stock Statement tests now
+  mock `stock_statement_for_range` instead of `stock_valuation` and
+  assert the new column set; a new test drives the From/To filter and
+  confirms it re-fetches with the right `date_from`/`date_to` and
+  updates the on-screen period line. `e2e/phase4.spec.js` gained a
+  test confirming the New Item form's four new fields land correctly
+  on the `items` insert.
+- `src/screens/help.js` and `public/help/screenshots/29-stock-statement.png`
+  updated for the new column set and the date filter; the FAQ entry on
+  "why does an item show — instead of a value" now names the To date,
+  not just "no rate ever recorded", since a rate can exist but not yet
+  apply as of that date.
+
+Verified locally: lint, typecheck, 143 unit tests, full e2e suite
+green; production build clean; the reformatted statement and its date
+filter checked visually in a real browser session, including the
+print view. This changes `supabase/schema.sql` again, so it needs the
+migration applied manually to any live Supabase project before
+`stock_statement_for_range` (or its integration test) will work
+there.

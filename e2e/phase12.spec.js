@@ -71,14 +71,22 @@ test.describe('Phase 12 — Price History', () => {
 });
 
 test.describe('Phase 12 — Stock Statement', () => {
-  test('renders a printable valuation with a total, excluding items with no rate', async ({ page }) => {
-    await page.route('**/rest/v1/stock_valuation**', (route) =>
+  test('renders a printable statement with Opening/Inward/Outward/Closing columns and a total, excluding items with no rate', async ({ page }) => {
+    await page.route('**/rest/v1/rpc/stock_statement_for_range**', (route) =>
       route.fulfill({
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify([
-          { item_id: 'item-1', name: 'Widget', category: 'Fasteners', unit_of_measure: 'Nos.', current_qty: 100, reserved_qty: 10, available_qty: 90, rate: 45.5, rate_effective_date: '2026-02-01', stock_value: 4550 },
-          { item_id: 'item-2', name: 'Bolt', category: 'Fasteners', unit_of_measure: 'Nos.', current_qty: 500, reserved_qty: 0, available_qty: 500, rate: null, rate_effective_date: null, stock_value: null },
+          {
+            item_id: 'item-1', item_code: 'RM-001', name: 'Widget', item_type: 'RM', source: 'Acme Vendors', location: 'Rack A1',
+            unit_of_measure: 'Nos.', opening_qty: 80, inward_qty: 30, outward_qty: 10, closing_qty: 100,
+            rate: 45.5, rate_effective_date: '2026-02-01', stock_value: 4550,
+          },
+          {
+            item_id: 'item-2', item_code: 'RM-002', name: 'Bolt', item_type: 'RM', source: null, location: null,
+            unit_of_measure: 'Nos.', opening_qty: 500, inward_qty: 0, outward_qty: 0, closing_qty: 500,
+            rate: null, rate_effective_date: null, stock_value: null,
+          },
         ]),
       })
     );
@@ -88,7 +96,14 @@ test.describe('Phase 12 — Stock Statement', () => {
     await expect(page.locator('[data-screen="stock-statement"]')).toContainText('ASK Info-Solutions LLP');
 
     const widgetRow = page.locator('[data-statement-row="item-1"]');
+    await expect(widgetRow).toContainText('RM-001');
     await expect(widgetRow).toContainText('Widget');
+    await expect(widgetRow).toContainText('Raw Material');
+    await expect(widgetRow).toContainText('Acme Vendors');
+    await expect(widgetRow).toContainText('Rack A1');
+    await expect(widgetRow).toContainText('80');
+    await expect(widgetRow).toContainText('30');
+    await expect(widgetRow).toContainText('10');
     await expect(widgetRow).toContainText('100');
     await expect(widgetRow).toContainText('45.50');
     await expect(widgetRow).toContainText('4550.00');
@@ -104,18 +119,24 @@ test.describe('Phase 12 — Stock Statement', () => {
   });
 
   test('shows an empty state when no items are recorded yet', async ({ page }) => {
-    await page.route('**/rest/v1/stock_valuation**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
+    await page.route('**/rest/v1/rpc/stock_statement_for_range**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
 
     await page.goto('/?demoRole=admin#/stock-statement');
     await expect(page.locator('[data-role="stock-statement-sheet"]')).toContainText('No items recorded yet.');
   });
 
   test('the Print button calls window.print()', async ({ page }) => {
-    await page.route('**/rest/v1/stock_valuation**', (route) =>
+    await page.route('**/rest/v1/rpc/stock_statement_for_range**', (route) =>
       route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify([{ item_id: 'item-1', name: 'Widget', category: null, unit_of_measure: 'Nos.', current_qty: 10, reserved_qty: 0, available_qty: 10, rate: 5, rate_effective_date: '2026-01-01', stock_value: 50 }]),
+        body: JSON.stringify([
+          {
+            item_id: 'item-1', item_code: null, name: 'Widget', item_type: null, source: null, location: null,
+            unit_of_measure: 'Nos.', opening_qty: 5, inward_qty: 5, outward_qty: 0, closing_qty: 10,
+            rate: 5, rate_effective_date: '2026-01-01', stock_value: 50,
+          },
+        ]),
       })
     );
 
@@ -132,5 +153,28 @@ test.describe('Phase 12 — Stock Statement', () => {
 
     await page.click('[data-action="print"]');
     await expect.poll(() => printCalled).toBe(true);
+  });
+
+  test('changing the From/To date filter re-fetches the statement for that range', async ({ page }) => {
+    const seenRanges = [];
+    await page.route('**/rest/v1/rpc/stock_statement_for_range**', (route) => {
+      const body = route.request().postDataJSON();
+      seenRanges.push({ date_from: body.date_from, date_to: body.date_to });
+      route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+    });
+
+    await page.goto('/?demoRole=admin#/stock-statement');
+    await expect(page.locator('[data-role="stock-statement-sheet"]')).toBeVisible();
+    expect(seenRanges.length).toBeGreaterThan(0);
+
+    await page.fill('[data-action="filter-date-from"]', '2026-01-01');
+    await page.locator('[data-action="filter-date-from"]').blur();
+    await expect.poll(() => seenRanges[seenRanges.length - 1]?.date_from).toBe('2026-01-01');
+
+    await page.fill('[data-action="filter-date-to"]', '2026-01-31');
+    await page.locator('[data-action="filter-date-to"]').blur();
+    await expect.poll(() => seenRanges[seenRanges.length - 1]).toEqual({ date_from: '2026-01-01', date_to: '2026-01-31' });
+    await expect(page.locator('[data-screen="stock-statement"]')).toContainText('01 Jan 2026');
+    await expect(page.locator('[data-screen="stock-statement"]')).toContainText('31 Jan 2026');
   });
 });

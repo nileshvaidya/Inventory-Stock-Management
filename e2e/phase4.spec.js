@@ -273,6 +273,31 @@ test.describe('Phase 4 — Inventory', () => {
     expect(rateInsertCalled).toBe(false);
   });
 
+  test('creating a new item with Item Code/Type/Source/Location fills them in on the insert', async ({ page }) => {
+    await mockNoRates(page);
+    await page.route('**/rest/v1/available_stock**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
+    let insertBody = null;
+    await page.route('**/rest/v1/items**', (route) => {
+      if (route.request().method() === 'POST') {
+        insertBody = route.request().postDataJSON();
+        return route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ id: 'item-9', ...insertBody }) });
+      }
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+    });
+
+    await page.goto('/?demoRole=store#/inventory');
+    await page.click('[data-action="new-item"]');
+    await page.fill('[data-action="new-item-name"]', 'Steel Rod');
+    await page.fill('[data-action="new-item-code"]', 'RM-100');
+    await page.selectOption('[data-action="new-item-type"]', 'RM');
+    await page.fill('[data-action="new-item-source"]', 'Acme Vendors');
+    await page.fill('[data-action="new-item-location"]', 'Rack A1');
+    await page.click('[data-action="confirm-new-item"]');
+
+    await expect(page.locator('[data-action="new-item-name"]')).toHaveCount(0);
+    expect(insertBody).toMatchObject({ name: 'Steel Rod', item_code: 'RM-100', item_type: 'RM', source: 'Acme Vendors', location: 'Rack A1' });
+  });
+
   test('production role sees the rate but not the Update Rate form (read-only)', async ({ page }) => {
     await page.route('**/rest/v1/item_current_rate**', (route) =>
       route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ item_id: 'item-1', rate: 10, effective_date: '2026-01-01' }]) })

@@ -441,11 +441,10 @@ function renderStockStatement() {
     'help-stock-statement',
     'Stock Statement',
     `
-    <p style="font-size:14px;color:var(--color-neutral-300);margin-bottom:10px">A printable Rs. valuation of stock in hand, in a standard letterhead format — built for handing to a bank. Admin/Accounts (Authorized) only.</p>
-    ${img('29-stock-statement.png', 'The Stock Statement showing the company letterhead, an item table with quantities/rates/values, a total, and a signature block')}
-    <p style="font-size:14px;color:var(--color-neutral-300);margin:0 0 8px">Every item's current quantity on hand is valued at its current Unit Rate (see ${jump('help-inventory', 'Inventory')}) — quantity on the shelf, not netted against what a Work Order has reserved, since reserved stock is still physically present. An item with no rate recorded yet shows "—" and is left out of the total, with a note naming how many were excluded, rather than being silently counted as worth nothing.</p>
-    ${ol(['Click <strong>Print</strong> — this opens your browser\'s normal print dialog, already showing just the statement (no sidebar or menus). Choose "Save as PDF" there if you need a file instead of a paper copy.'])}
-    ${note('The date on the statement is always today — there\'s no way to generate one for a past date.')}
+    <p style="font-size:14px;color:var(--color-neutral-300);margin-bottom:10px">A printable Rs. valuation of stock in hand for a chosen date range, in the company's standard bank-statement format — Item Code, Category (RM/WIP/FG), Vendor/Source, Opening/Inward/Outward/Closing Qty, Unit of Measure, Rate, Closing Stock Value, and Stock Location. Admin/Accounts (Authorized) only.</p>
+    ${img('29-stock-statement.png', 'The Stock Statement showing the company letterhead, the From/To date filter, an item table with Opening/Inward/Outward/Closing quantities/rates/values, a total, and a signature block')}
+    <p style="font-size:14px;color:var(--color-neutral-300);margin:0 0 8px">Set <strong>From</strong>/<strong>To</strong> above the statement to pick the period — it defaults to the 1st of this month through today. <strong>Opening Qty</strong> is what was on hand right before the From date; <strong>Inward</strong>/<strong>Outward</strong> are everything received or issued inside the range; <strong>Closing Qty</strong> (Opening + Inward − Outward) is valued at whichever Unit Rate (see ${jump('help-inventory', 'Inventory')}) was in effect on the To date, not necessarily today's rate. An item with no rate on record as of the To date shows "—" and is left out of the total, with a note naming how many were excluded, rather than being silently counted as worth nothing. Item Code/Category/Vendor/Location come from the Item Master and are optional — an item without one shows "—" in that column.</p>
+    ${ol(['Adjust the <strong>From</strong>/<strong>To</strong> dates if you need a different period.', 'Click <strong>Print</strong> — this opens your browser\'s normal print dialog, already showing just the statement (no sidebar or menus). Choose "Save as PDF" there if you need a file instead of a paper copy.'])}
     `
   );
 }
@@ -709,7 +708,7 @@ const FAQ = [
   },
   {
     q: 'An item shows "—" on the Stock Statement instead of a value — why?',
-    a: 'That item has no Unit Rate recorded yet, so there\'s nothing to multiply its quantity by. Set a rate for it on Inventory — the note below the statement\'s total always says how many items are currently excluded this way, so nothing is silently left out of the total without you knowing.',
+    a: 'That item has no Unit Rate recorded as of the statement\'s To date, so there\'s nothing to multiply its Closing Qty by. Set a rate for it on Inventory (dated on or before the To date) — the note below the statement\'s total always says how many items are currently excluded this way, so nothing is silently left out of the total without you knowing.',
   },
   {
     q: 'A Work Order shows a shortfall — what happens if I create/reserve it anyway?',

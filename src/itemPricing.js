@@ -27,6 +27,25 @@ export async function fetchStockValuation(client = supabase) {
 }
 
 /**
+ * The Stock Statement screen's own data source (Phase 12 addendum) —
+ * Opening/Inward/Outward/Closing quantities for a date range, valued at
+ * whichever rate was in effect on dateTo (not necessarily today's rate).
+ * See stock_statement_for_range() in supabase/schema.sql for the actual
+ * math; this table function (not a plain view — views can't take
+ * parameters) supersedes fetchStockValuation above for that screen,
+ * though the always-"now" view above is left in place since it's still a
+ * real, separately useful reading.
+ * @param {{ dateFrom: string, dateTo: string }} range
+ * @param {any} [client]
+ */
+export async function fetchStockStatement(range, client = supabase) {
+  if (!client) return [];
+  const { data, error } = await client.rpc('stock_statement_for_range', { date_from: range.dateFrom, date_to: range.dateTo });
+  if (error) throw error;
+  return data;
+}
+
+/**
  * @param {{ itemId?: string, dateFrom?: string, dateTo?: string }} [filters]
  * @param {any} [client]
  */

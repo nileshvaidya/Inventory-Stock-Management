@@ -6,6 +6,9 @@
 // previous entry (both stay queryable), item_current_rate always resolves
 // to the most recent by effective_date, and stock_valuation's stock_value
 // is current_qty * that rate (null, not zero, when no rate exists yet).
+// Also covers the Phase 12 addendum's stock_statement_for_range() —
+// Opening/Inward/Outward/Closing math for a date range, and the
+// as-of-dateTo rate resolution the Stock Statement screen depends on.
 import 'dotenv/config';
 import { createClient } from '@supabase/supabase-js';
 
@@ -143,6 +146,66 @@ async function run() {
     const { error: deleteErr } = await clientPurchase.from('item_price_history').delete().eq('id', secondRate.id);
     const { data: rowAfterDeleteAttempt } = await admin.from('item_price_history').select('id').eq('id', secondRate.id).maybeSingle();
     assert(!!deleteErr || rowAfterDeleteAttempt !== null, 'a direct delete of a price history row is rejected (or silently filtered) — the row still exists');
+
+    console.log('\nstock_statement_for_range: seeding a second item with movements before/inside/after a March 2026 range, and rates before/inside/after it...');
+    const { data: rangedItem } = await admin
+      .from('items')
+      .insert({ name: `RLS Test Ranged Widget ${stamp}`, item_code: 'RLS-CODE-1', item_type: 'RM', source: 'RLS Test Vendor', location: 'Rack Z9' })
+      .select()
+      .single();
+    itemIds.push(rangedItem.id);
+    // Opening balance: 20 units in, well before the range.
+    await admin
+      .from('stock_movements')
+      .insert({ item_id: rangedItem.id, movement_type: 'in', quantity: 20, created_by: storeUser.id, created_at: '2020-01-01T00:00:00Z' });
+    // Inside the range (1-31 March 2026): 15 in, 5 out.
+    await admin
+      .from('stock_movements')
+      .insert({ item_id: rangedItem.id, movement_type: 'in', quantity: 15, created_by: storeUser.id, created_at: '2026-03-10T00:00:00Z' });
+    await admin
+      .from('stock_movements')
+      .insert({ item_id: rangedItem.id, movement_type: 'out', quantity: 5, created_by: storeUser.id, created_at: '2026-03-20T00:00:00Z' });
+    // After the range: should not affect Closing Qty for this range at all.
+    await admin
+      .from('stock_movements')
+      .insert({ item_id: rangedItem.id, movement_type: 'in', quantity: 100, created_by: storeUser.id, created_at: '2026-04-15T00:00:00Z' });
+    // Rates: one before the range, one inside it (the one that should win — latest effective_date <= dateTo), one after dateTo (should not apply).
+    await admin.from('item_price_history').insert({ item_id: rangedItem.id, rate: 40, effective_date: '2026-02-01', created_by: purchaseUser.id });
+    await admin.from('item_price_history').insert({ item_id: rangedItem.id, rate: 55, effective_date: '2026-03-15', created_by: purchaseUser.id });
+    await admin.from('item_price_history').insert({ item_id: rangedItem.id, rate: 99, effective_date: '2026-04-01', created_by: purchaseUser.id });
+
+    const { data: statementRows, error: statementErr } = await clientProduction.rpc('stock_statement_for_range', {
+      date_from: '2026-03-01',
+      date_to: '2026-03-31',
+    });
+    assert(
+      !statementErr,
+      `stock_statement_for_range is readable by every authenticated role, including production${statementErr ? ` (${statementErr.message})` : ''}`
+    );
+    const rangedRow = (statementRows ?? []).find((r) => r.item_id === rangedItem.id);
+    assert(!!rangedRow, 'the ranged item appears in the statement');
+    assert(
+      rangedRow?.item_code === 'RLS-CODE-1' && rangedRow?.item_type === 'RM' && rangedRow?.source === 'RLS Test Vendor' && rangedRow?.location === 'Rack Z9',
+      'item_code/item_type/source/location pass through unchanged'
+    );
+    assert(Number(rangedRow?.opening_qty) === 20, 'opening_qty (20) reflects only movements before dateFrom');
+    assert(Number(rangedRow?.inward_qty) === 15, 'inward_qty (15) reflects only "in" movements inside the range');
+    assert(Number(rangedRow?.outward_qty) === 5, 'outward_qty (5) reflects only "out" movements inside the range');
+    assert(Number(rangedRow?.closing_qty) === 30, 'closing_qty (30) = opening (20) + inward (15) - outward (5), ignoring the after-range movement');
+    assert(Number(rangedRow?.rate) === 55, 'rate (55) resolves to whichever was in effect on dateTo, not the earlier (40) or the later, not-yet-effective (99)');
+    assert(Number(rangedRow?.stock_value) === 1650, 'stock_value (1650) = closing_qty (30) x the resolved rate (55)');
+
+    console.log('\nstock_statement_for_range: an item with movements in range but no rate on record shows a null rate and stock_value, not zero...');
+    const { data: unratedItem } = await admin.from('items').insert({ name: `RLS Test Unrated ${stamp}` }).select().single();
+    itemIds.push(unratedItem.id);
+    await admin
+      .from('stock_movements')
+      .insert({ item_id: unratedItem.id, movement_type: 'in', quantity: 8, created_by: storeUser.id, created_at: '2026-03-05T00:00:00Z' });
+    const { data: statementRows2 } = await clientProduction.rpc('stock_statement_for_range', { date_from: '2026-03-01', date_to: '2026-03-31' });
+    const unratedRow = (statementRows2 ?? []).find((r) => r.item_id === unratedItem.id);
+    assert(!!unratedRow && Number(unratedRow.closing_qty) === 8, 'the unrated item still reports its closing_qty (8)');
+    assert(unratedRow?.rate === null, 'rate is null, not 0, when no price history exists on or before dateTo');
+    assert(unratedRow?.stock_value === null, 'stock_value is null, not 0, when no price history exists on or before dateTo');
   } finally {
     console.log('\nCleaning up test data...');
     await cleanup({ userIds, itemIds });

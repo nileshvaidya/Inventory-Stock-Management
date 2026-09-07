@@ -653,14 +653,26 @@ async function run() {
   // 18. Stock Statement — printable letterhead-style valuation
   {
     const page = await browser.newPage({ viewport: VIEWPORT });
-    await page.route('**/rest/v1/stock_valuation**', (route) =>
+    await page.route('**/rest/v1/rpc/stock_statement_for_range**', (route) =>
       route.fulfill({
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify([
-          { item_id: 'i1', name: 'M6 Hex Bolt', category: 'Fasteners', unit_of_measure: 'Nos.', current_qty: 1240, reserved_qty: 320, available_qty: 920, rate: 12.5, rate_effective_date: '2026-09-01', stock_value: 15500 },
-          { item_id: 'i2', name: 'Terminal Block 12-way', category: 'Electrical', unit_of_measure: 'Nos.', current_qty: 40, reserved_qty: 40, available_qty: 0, rate: 145, rate_effective_date: '2026-07-15', stock_value: 5800 },
-          { item_id: 'i3', name: 'Enclosure Panel 300x200', category: 'Fabrication', unit_of_measure: 'Nos.', current_qty: 6, reserved_qty: 0, available_qty: 6, rate: null, rate_effective_date: null, stock_value: null },
+          {
+            item_id: 'i1', item_code: 'FS-M6HB', name: 'M6 Hex Bolt', item_type: 'RM', source: 'Bharat Fasteners', location: 'Rack A2',
+            unit_of_measure: 'Nos.', opening_qty: 1100, inward_qty: 460, outward_qty: 320, closing_qty: 1240,
+            rate: 12.5, rate_effective_date: '2026-09-01', stock_value: 15500,
+          },
+          {
+            item_id: 'i2', item_code: 'EL-TB12', name: 'Terminal Block 12-way', item_type: 'RM', source: 'Voltek Electricals', location: 'Rack B1',
+            unit_of_measure: 'Nos.', opening_qty: 60, inward_qty: 0, outward_qty: 20, closing_qty: 40,
+            rate: 145, rate_effective_date: '2026-07-15', stock_value: 5800,
+          },
+          {
+            item_id: 'i3', item_code: 'FB-EP302', name: 'Enclosure Panel 300x200', item_type: 'WIP', source: 'Self', location: 'Fabrication Bay',
+            unit_of_measure: 'Nos.', opening_qty: 4, inward_qty: 2, outward_qty: 0, closing_qty: 6,
+            rate: null, rate_effective_date: null, stock_value: null,
+          },
         ]),
       })
     );
