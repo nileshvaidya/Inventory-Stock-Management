@@ -121,4 +121,30 @@ test.describe('Phase 9 — Action Log', () => {
     await page.goto('/?demoRole=admin#/action-log');
     await expect(page.locator('[data-screen="action-log"]')).toContainText('No actions match these filters.');
   });
+
+  test('a long log scrolls within its own container instead of growing the page indefinitely', async ({ page }) => {
+    await page.route('**/rest/v1/rpc/admin_list_users**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
+    const rows = Array.from({ length: 40 }, (_, i) => ({
+      id: `log-${i}`,
+      table_name: 'work_orders',
+      operation: 'UPDATE',
+      user: { name: 'Demo Production' },
+      created_at: new Date(2026, 0, 1 + i).toISOString(),
+    }));
+    await page.route('**/rest/v1/action_log**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(rows) }));
+
+    await page.goto('/?demoRole=admin#/action-log');
+    await expect(page.locator('[data-action-row="log-0"]')).toBeVisible();
+
+    const scrollEl = page.locator('[data-role="action-log-scroll"]');
+    const { scrollHeight, clientHeight } = await scrollEl.evaluate((el) => ({ scrollHeight: el.scrollHeight, clientHeight: el.clientHeight }));
+    expect(scrollHeight).toBeGreaterThan(clientHeight);
+
+    // Scrolling the log's own container must not move the page itself —
+    // the filter bar above stays put.
+    await scrollEl.evaluate((el) => {
+      el.scrollTop = 500;
+    });
+    await expect(page.locator('[data-action="filter-user"]')).toBeInViewport();
+  });
 });

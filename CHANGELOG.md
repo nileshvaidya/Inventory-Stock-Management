@@ -1266,3 +1266,22 @@ suite (99 tests, including 5 new ones) all green; production build
 clean; the rendered dashboard checked visually in a real browser
 session. No schema changes — this ships on the next push with no
 manual database step required.
+
+## Fix: Action Log should scroll within its own container
+
+Direct request. Action Log's table had no height limit at all — with
+up to 500 rows (`fetchActionLog`'s own cap) the table just grew the
+whole page vertically, pushing the filter bar out of view the moment
+you scrolled down.
+
+Gave the table's card a `max-height` + `overflow-y: auto` (only once
+there's actually a table to scroll — not on the loading/error/empty
+states), and made the `<thead>` `position: sticky` so column headers
+stay visible while scrolling instead of scrolling away with row 1.
+Verified with 40 rows in a real browser session: the container
+scrolls independently of the page, the filter bar above stays put,
+and the sticky header tracks correctly. `e2e/phase9.spec.js` gained a
+test asserting the container is actually taller than its content
+(scrollable) and that scrolling it doesn't move the filter bar out of
+the viewport. Full suite (lint, typecheck, 133 unit tests, all e2e
+tests, production build) stayed green. No schema changes.

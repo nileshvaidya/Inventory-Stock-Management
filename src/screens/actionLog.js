@@ -120,7 +120,7 @@ function renderContent(container, state) {
       </div>
     </div>
 
-    <div class="card elev-sm" style="padding:0;overflow-x:auto">
+    <div class="card elev-sm" style="padding:0;overflow-x:auto${state.loading || state.error || state.rows.length === 0 ? '' : ';overflow-y:auto;max-height:600px'}" data-role="action-log-scroll">
       ${
         state.loading
           ? `<div style="padding:20px;font-size:13px;color:var(--color-neutral-500)">Loading…</div>`
@@ -132,7 +132,7 @@ function renderContent(container, state) {
             : state.rows.length === 0
               ? `<div style="padding:20px;font-size:13px;color:var(--color-neutral-500)">No actions match these filters.</div>`
               : `<table class="table" style="min-width:680px">
-                  <thead><tr><th>Date/Time</th><th>User</th><th>Action</th><th></th></tr></thead>
+                  <thead style="position:sticky;top:0;background:var(--color-surface);z-index:1"><tr><th>Date/Time</th><th>User</th><th>Action</th><th></th></tr></thead>
                   <tbody>${state.rows.map((row) => renderRow(row, state)).join('')}</tbody>
                 </table>`
       }
