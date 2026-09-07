@@ -602,9 +602,10 @@ function renderActionLog() {
     ${ol([
       'Filter by <strong>User</strong>, <strong>Record Type</strong>, <strong>Action</strong> (Created/Updated/Deleted), and a <strong>Date range</strong>.',
       'Click <strong>Details</strong> on a row to expand it and see exactly what changed, side by side — <strong>Before</strong> and <strong>After</strong>. Click <strong>Hide</strong> to collapse it again.',
-      'Click <strong>Export CSV</strong> to download the filtered log.',
+      'Click <strong>Export CSV</strong> to download the full filtered log — not just what\'s currently loaded on screen (see below).',
     ])}
     ${img('24-action-log.png', 'The Action Log with one row expanded to its before/after JSON detail')}
+    ${note('The list loads 25 entries at a time and fetches 25 more automatically once you scroll near the bottom of the table — it doesn\'t pull the whole log up front. The filter bar above always stays in place while you scroll. Export CSV isn\'t affected by this: it always downloads every entry matching your filters, however many that is.')}
     `
   );
 }
