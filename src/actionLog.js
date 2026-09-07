@@ -24,6 +24,13 @@ export const TABLE_LABELS = {
   work_orders: 'Work Order',
   work_order_requirements: 'WO Requirement',
   stock_reservations: 'Stock Reservation',
+  // material_dispatch/material_dispatch_line_items were missed when Phase
+  // 11 added those tables — filled in now while touching this file for
+  // Phase 12's own new table, rather than leaving Action Log showing the
+  // raw table name for every dispatch-related entry.
+  material_dispatch: 'Material Dispatch',
+  material_dispatch_line_items: 'Dispatch Line Item',
+  item_price_history: 'Item Price History',
 };
 
 export const OPERATION_LABELS = { INSERT: 'Created', UPDATE: 'Updated', DELETE: 'Deleted' };

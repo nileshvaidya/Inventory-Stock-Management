@@ -15,6 +15,7 @@ import {
   validateBomForm,
   validateProductionForm,
   validateWorkOrderForm,
+  validateRateForm,
 } from './validation.js';
 
 describe('validateSignupForm', () => {
@@ -240,6 +241,47 @@ describe('validateItemForm', () => {
 
   it('treats an empty reorder level as unset, not invalid', () => {
     expect(validateItemForm({ name: 'Base Angle', reorderLevel: '' }).valid).toBe(true);
+  });
+
+  it('accepts a valid unit rate, including zero', () => {
+    expect(validateItemForm({ name: 'Base Angle', unitRate: 125.5 }).valid).toBe(true);
+    expect(validateItemForm({ name: 'Base Angle', unitRate: 0 }).valid).toBe(true);
+  });
+
+  it('rejects a negative or non-numeric unit rate', () => {
+    expect(validateItemForm({ name: 'Base Angle', unitRate: -1 }).valid).toBe(false);
+    expect(validateItemForm({ name: 'Base Angle', unitRate: 'abc' }).valid).toBe(false);
+  });
+
+  it('treats an empty unit rate as unset, not invalid — a rate isn\'t always known at creation', () => {
+    expect(validateItemForm({ name: 'Base Angle', unitRate: '' }).valid).toBe(true);
+  });
+});
+
+describe('validateRateForm', () => {
+  it('accepts a valid rate and effective date', () => {
+    expect(validateRateForm({ rate: 125.5, effectiveDate: '2026-01-15' }).valid).toBe(true);
+  });
+
+  it('accepts a rate of exactly zero', () => {
+    expect(validateRateForm({ rate: 0, effectiveDate: '2026-01-15' }).valid).toBe(true);
+  });
+
+  it('rejects a missing rate, unlike the optional one on the New Item form', () => {
+    const { valid, errors } = validateRateForm({ rate: '', effectiveDate: '2026-01-15' });
+    expect(valid).toBe(false);
+    expect(errors.rate).toBeTruthy();
+  });
+
+  it('rejects a negative or non-numeric rate', () => {
+    expect(validateRateForm({ rate: -5, effectiveDate: '2026-01-15' }).valid).toBe(false);
+    expect(validateRateForm({ rate: 'abc', effectiveDate: '2026-01-15' }).valid).toBe(false);
+  });
+
+  it('rejects a missing effective date', () => {
+    const { valid, errors } = validateRateForm({ rate: 100, effectiveDate: '' });
+    expect(valid).toBe(false);
+    expect(errors.effectiveDate).toBeTruthy();
   });
 });
 

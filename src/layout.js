@@ -17,6 +17,7 @@ const NAV_ITEMS = [
   { route: '/inspection', label: 'Inspection', phase: 3 },
   { route: '/master-material-status', label: 'Master Material Status', phase: 3 },
   { route: '/inventory', label: 'Inventory', phase: 4 },
+  { route: '/price-history', label: 'Price History', phase: 12 },
   { route: '/bom-builder', label: 'BoM Builder', phase: 6 },
   { route: '/work-orders', label: 'Work Orders', phase: 7 },
   { route: '/invoices', label: 'Invoices', phase: 5 },
@@ -29,6 +30,7 @@ const NAV_ITEMS = [
   // every module (this one included) is decided by navPermissions.js.
   { route: '/bill-payments', label: 'Bill Payments', phase: 10 },
   { route: '/material-dispatch', label: 'Material Dispatch', phase: 11 },
+  { route: '/stock-statement', label: 'Stock Statement', phase: 12 },
 ];
 
 const LOGO_SVG = (size) => `

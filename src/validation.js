@@ -168,13 +168,15 @@ export function validateInspectionForm(form) {
 /**
  * New Item form (Phase 4) — used both by the Inventory screen's own "+ New
  * Item" and PO Upload's inline quick-add. Only the name is required;
- * category/UoM/reorder level are optional everywhere they're collected.
- * @param {{ name?: string, reorderLevel?: string|number|null }} form
+ * category/UoM/reorder level/unit rate are optional everywhere they're
+ * collected — a rate isn't always known yet at creation (Phase 12), and
+ * can be added or changed later via validateRateForm below.
+ * @param {{ name?: string, reorderLevel?: string|number|null, unitRate?: string|number|null }} form
  */
 export function validateItemForm(form) {
   /** @type {Record<string, string>} */
   const errors = {};
-  const { name = '', reorderLevel = '' } = form || {};
+  const { name = '', reorderLevel = '', unitRate = '' } = form || {};
 
   if (!name.trim()) errors.name = 'Item name is required.';
   if (reorderLevel !== '' && reorderLevel !== null && reorderLevel !== undefined) {
@@ -183,6 +185,33 @@ export function validateItemForm(form) {
       errors.reorderLevel = 'Reorder level must be zero or a positive number.';
     }
   }
+  if (unitRate !== '' && unitRate !== null && unitRate !== undefined) {
+    const rateNum = Number(unitRate);
+    if (!Number.isFinite(rateNum) || rateNum < 0) {
+      errors.unitRate = 'Unit rate must be zero or a positive number.';
+    }
+  }
+
+  return { valid: Object.keys(errors).length === 0, errors };
+}
+
+/**
+ * Update Rate form (Phase 12) — adds a new item_price_history entry;
+ * unlike the reorder level/unit rate above, both fields are required here
+ * since this form exists specifically to record a rate, with a real date
+ * it took effect (not just "whenever this was clicked").
+ * @param {{ rate?: string|number, effectiveDate?: string }} form
+ */
+export function validateRateForm(form) {
+  /** @type {Record<string, string>} */
+  const errors = {};
+  const { rate = '', effectiveDate = '' } = form || {};
+
+  const rateNum = Number(rate);
+  if (rate === '' || rate === null || rate === undefined || !Number.isFinite(rateNum) || rateNum < 0) {
+    errors.rate = 'Enter a rate of zero or more.';
+  }
+  if (!effectiveDate) errors.effectiveDate = 'Effective date is required.';
 
   return { valid: Object.keys(errors).length === 0, errors };
 }

@@ -1332,3 +1332,97 @@ Verified locally in a real browser session with 60 rows (25 → 50 → 60
 across successive scrolls, confirmed via request logging) as well as
 the full test suite: lint, typecheck, 135 unit tests, all e2e tests,
 production build all green. No schema changes.
+
+## Phase 12: Item Unit Rates, Price History, and a printable Stock Statement
+
+Direct request: taking a Rs. value of stock in hand needs a price per
+item, which this app never had — items tracked quantity but no cost.
+Specified explicitly: a Unit Rate at item creation, editable later
+since a rate isn't always known up front or stays fixed, every past
+rate kept on record and shown in a filterable Price History form, and
+a standard, printable Stock Statement for bank submission.
+
+- `supabase/schema.sql`: `item_price_history` — an append-only ledger
+  (id, item_id, rate, effective_date, created_by, created_at), the
+  same discipline as `stock_movements`/`action_log`: a rate "change"
+  is always a new row, never an edit to an old one, so nothing here
+  has an update or delete policy at all. Insert is gated by
+  `can_manage_items` (admin/purchase/store) — the same role check
+  `items` itself already uses, since setting a rate is an Item Master
+  edit, not a stock movement (deliberately not `is_store_or_admin`,
+  which excludes purchase). Two new views do the read-side math:
+  `item_current_rate` (each item's most recent entry by
+  effective_date) and `stock_valuation` (`available_stock` joined
+  with that rate, `stock_value = current_qty × rate` — physically
+  on-hand quantity, not the reservation-netted "available" figure,
+  since stock held for a work order is still on the shelf for a bank
+  statement's purposes). A row with no rate ever recorded surfaces
+  with `rate`/`stock_value` as `null`, not `0` — silently valuing
+  unpriced stock at zero would understate the total without anyone
+  noticing.
+- `src/itemPricing.js` (new): `fetchCurrentRates`, `fetchPriceHistory`
+  (item/date-range filters), `setItemRate` (the one function behind
+  both "set a rate for the first time" and every later change),
+  `fetchStockValuation`.
+- `src/screens/inventory.js`: New Item gains an optional Unit Rate
+  field (creating an item with one now also writes its first
+  `item_price_history` entry, non-fatally — a failed second write
+  still leaves the item created). The stock table gains a Unit Rate
+  column, and each item's expandable panel gains a "Current Rate"
+  line plus, for store/admin, a New Rate + Effective Date + Update
+  Rate mini-form — same date-field conventions
+  (`skipDateSegmentsOnTab`/`onRealBlur`/`afterFocusSettles`) as every
+  other date input in the app, needed here for the same reason as
+  Invoices' Payment Terms: a live-repainting sibling field (New Rate)
+  next to a `'blur'`-driven one is exactly the combination that
+  caused that earlier infinite-repaint loop.
+- `src/screens/priceHistory.js` (new, `/price-history`, same viewers
+  as Inventory: admin/store/production): every rate ever recorded,
+  filterable by item and an effective-date range.
+- `src/screens/stockStatement.js` (new, `/stock-statement`,
+  admin/authorized — a finance document, not an operational stock
+  screen): a letterhead-style, printable valuation (company name, "As
+  on" date, item/category/UoM/qty/rate/value table, a total that
+  excludes and calls out any unpriced items rather than silently
+  treating them as zero, a Prepared By / Authorized Signatory
+  block) — a `Print` button plus `@media print` CSS hides the sidebar
+  and every other app-chrome element, leaving just the statement.
+  Deliberately not built from the app's usual `.card`/`.table`
+  classes, which lean on dark-theme CSS variables a print pipeline
+  has no reason to invert — every color/border on this one screen is
+  explicit and print-safe by construction instead.
+- `src/validation.js`: `validateItemForm` gains an optional
+  `unitRate` check; new `validateRateForm` (rate + effective date,
+  both required — unlike the optional one on New Item, this form
+  exists specifically to record a rate).
+- Small fix alongside, found while touching `src/actionLog.js`:
+  `material_dispatch`/`material_dispatch_line_items` were missed from
+  `TABLE_LABELS` when Phase 11 shipped, so those entries showed the
+  raw table name in Action Log — filled in now, along with a label
+  for the new `item_price_history` table.
+- `scripts/test-rls-item-pricing.mjs` (new, added to `npm run
+  test:integration`): create permissions (purchase/store/admin can,
+  production cannot), that a rate change never overwrites the
+  previous entry (both stay queryable, in order), that
+  `item_current_rate` always resolves to the latest by
+  `effective_date`, that `stock_valuation` computes `current_qty ×`
+  the resolved current rate, that an unpriced item's rate/value are
+  `null` not `0`, and that direct client updates/deletes on
+  `item_price_history` are rejected outright — no policy exists to
+  fall back on.
+- `e2e/phase4.spec.js` gained tests for the Unit Rate column, updating
+  a rate (verifying the RPC-equivalent insert body and the reload),
+  creating an item with vs. without a rate, and that production sees
+  the rate read-only. `e2e/phase12.spec.js` (new) covers both new
+  screens' route guards, Price History's filters (verifying query
+  params), and Stock Statement's rendering, total, unpriced-item
+  handling, and its Print button actually calling `window.print()`.
+
+Verified locally: lint, typecheck, 143 unit tests, full e2e suite (17
+new tests) all green; production build clean; both new screens and
+Inventory's rate editing checked visually in a real browser session,
+including the print view with the app chrome hidden. This changes
+`supabase/schema.sql`, so — same as every prior schema change in this
+project — it needs the migration applied manually to any live
+Supabase project before its own integration test (or Unit Rate/Price
+History/Stock Statement) will work there.

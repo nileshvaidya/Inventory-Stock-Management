@@ -15,9 +15,16 @@ export const MODULE_ROLES = {
   '/inspection': ['admin', 'inspector'],
   '/master-material-status': ['admin', 'purchase', 'store', 'inspector'],
   '/inventory': ['admin', 'store', 'production'],
+  // Same viewers as Inventory — a companion detail view of its own Unit
+  // Rate column, not a separate module with its own audience.
+  '/price-history': ['admin', 'store', 'production'],
   '/bom-builder': ['admin', 'production'],
   '/work-orders': ['admin', 'production', 'store'],
   '/invoices': ['admin', 'authorized'],
+  // A finance document (bank submission), not an operational stock
+  // screen — same role convention as Invoices/Bill Payments, not
+  // Inventory's broader admin/store/production audience.
+  '/stock-statement': ['admin', 'authorized'],
   '/reports': ['admin', 'authorized', 'production'],
   '/users': ['admin'],
   '/action-log': ['admin'],

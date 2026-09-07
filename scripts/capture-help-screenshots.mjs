@@ -310,6 +310,9 @@ async function run() {
         ]),
       })
     );
+    await page.route('**/rest/v1/item_current_rate**', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ item_id: 'i1', rate: 8.5, effective_date: '2026-08-01' }]) })
+    );
     await page.route('**/rest/v1/stock_movements**', (route) => {
       if (route.request().method() === 'GET') {
         return route.fulfill({
@@ -336,6 +339,7 @@ async function run() {
     await page.fill('#ni-name', 'Cable Gland 20mm');
     await page.fill('#ni-category', 'Electrical');
     await page.fill('#ni-reorder', '50');
+    await page.fill('#ni-unit-rate', '18.75');
     await shot(page, '11-inventory-new-item');
     await page.close();
   }
@@ -610,13 +614,69 @@ async function run() {
     await page.close();
   }
 
-  // 17. Mobile viewport — bottom tab bar
+  // 17. Price History — two rate changes for the same item, oldest first
+  {
+    const page = await browser.newPage({ viewport: VIEWPORT });
+    await mockLookups(page);
+    await page.route('**/rest/v1/item_price_history**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([
+          {
+            id: 'ph1',
+            item_id: 'i1',
+            rate: 12.5,
+            effective_date: '2026-09-01',
+            created_at: '2026-09-01T10:00:00Z',
+            item: { id: 'i1', name: 'M6 Hex Bolt' },
+            created_by_user: { id: 'demo-u1', name: 'Demo Admin' },
+          },
+          {
+            id: 'ph2',
+            item_id: 'i1',
+            rate: 10.75,
+            effective_date: '2026-05-01',
+            created_at: '2026-05-01T09:00:00Z',
+            item: { id: 'i1', name: 'M6 Hex Bolt' },
+            created_by_user: { id: 'demo-u1', name: 'Demo Admin' },
+          },
+        ]),
+      })
+    );
+    await page.goto(`${BASE_URL}/?demoRole=admin#/price-history`);
+    await page.waitForSelector('[data-screen="price-history"]');
+    await shot(page, '28-price-history');
+    await page.close();
+  }
+
+  // 18. Stock Statement — printable letterhead-style valuation
+  {
+    const page = await browser.newPage({ viewport: VIEWPORT });
+    await page.route('**/rest/v1/stock_valuation**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([
+          { item_id: 'i1', name: 'M6 Hex Bolt', category: 'Fasteners', unit_of_measure: 'Nos.', current_qty: 1240, reserved_qty: 320, available_qty: 920, rate: 12.5, rate_effective_date: '2026-09-01', stock_value: 15500 },
+          { item_id: 'i2', name: 'Terminal Block 12-way', category: 'Electrical', unit_of_measure: 'Nos.', current_qty: 40, reserved_qty: 40, available_qty: 0, rate: 145, rate_effective_date: '2026-07-15', stock_value: 5800 },
+          { item_id: 'i3', name: 'Enclosure Panel 300x200', category: 'Fabrication', unit_of_measure: 'Nos.', current_qty: 6, reserved_qty: 0, available_qty: 6, rate: null, rate_effective_date: null, stock_value: null },
+        ]),
+      })
+    );
+    await page.goto(`${BASE_URL}/?demoRole=admin#/stock-statement`);
+    await page.waitForSelector('[data-role="stock-statement-sheet"]');
+    await shot(page, '29-stock-statement');
+    await page.close();
+  }
+
+  // 19. Mobile viewport — bottom tab bar
   {
     const page = await browser.newPage({ viewport: MOBILE_VIEWPORT });
     await page.goto(`${BASE_URL}/?demoRole=admin#/dashboard`);
     await page.waitForSelector('[data-screen="dashboard"]');
     await page.waitForTimeout(300);
-    await shot(page, '27-mobile-dashboard');
+    await shot(page, '30-mobile-dashboard');
     await page.close();
   }
 

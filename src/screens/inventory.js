@@ -14,8 +14,11 @@ import { createStore } from '../state.js';
 import { canViewModule } from '../navPermissions.js';
 import { fetchAvailableStock, fetchMovementsForItem, createStockMovement } from '../inventory.js';
 import { createItem } from '../items.js';
-import { validateItemForm, validateStockMovementForm } from '../validation.js';
-import { repaintPreservingFocus } from '../domFocus.js';
+import { fetchCurrentRates, setItemRate } from '../itemPricing.js';
+import { validateItemForm, validateStockMovementForm, validateRateForm } from '../validation.js';
+import { repaintPreservingFocus, afterFocusSettles, skipDateSegmentsOnTab, onRealBlur } from '../domFocus.js';
+
+const todayISO = () => new Date().toISOString().slice(0, 10);
 
 function initialState() {
   return {
@@ -30,11 +33,15 @@ function initialState() {
     movementFormsByItem: {},
     savingMovementItemId: null,
     movementErrorByItem: {},
+    rateFormsByItem: {},
+    savingRateItemId: null,
+    rateErrorByItem: {},
     newItemMode: false,
     newItemName: '',
     newItemCategory: '',
     newItemUom: '',
     newItemReorderLevel: '',
+    newItemUnitRate: '',
     newItemError: null,
   };
 }
@@ -55,10 +62,27 @@ export async function render(container) {
   content.setAttribute('data-screen', 'inventory');
   const store = createStore(initialState());
 
+  // Shared by the initial load and by every action below that needs a
+  // fresh `stock` array (logging a movement, saving a rate) — merging
+  // rates back in every time keeps the Unit Rate column from reverting to
+  // blank the moment either action's own re-fetch replaces `stock`.
+  // fetchCurrentRates() is caught on its own: a rate is enrichment on top
+  // of the core quantity data, not something a transient failure fetching
+  // it should turn into "Couldn't load inventory" for the whole screen —
+  // same reasoning as the Dashboard's per-widget graceful degradation.
+  async function loadStock() {
+    const [stockRows, rates] = await Promise.all([fetchAvailableStock(), fetchCurrentRates().catch(() => [])]);
+    const rateByItemId = new Map(rates.map((r) => [r.item_id, r]));
+    return stockRows.map((row) => {
+      const rate = rateByItemId.get(row.item_id);
+      return { ...row, rate: rate ? Number(rate.rate) : null, rate_effective_date: rate?.effective_date ?? null };
+    });
+  }
+
   async function load() {
     store.setState({ loading: true, error: false });
     try {
-      const stock = await fetchAvailableStock();
+      const stock = await loadStock();
       store.setState({ stock, loading: false, error: false });
     } catch {
       store.setState({ loading: false, error: true });
@@ -68,7 +92,7 @@ export async function render(container) {
   function paint() {
     repaintPreservingFocus(content, () => {
       renderContent(content, store.getState(), canManageStock);
-      wireEvents(content, store, user, load, canManageStock);
+      wireEvents(content, store, user, load, loadStock, canManageStock);
     });
   }
 
@@ -132,8 +156,8 @@ function renderContent(container, state, canManageStock) {
               </div>`
             : rows.length === 0
               ? `<div style="padding:20px;font-size:13px;color:var(--color-neutral-500)">No items match these filters.</div>`
-              : `<table class="table" style="min-width:820px">
-                  <thead><tr><th>Item</th><th>Category</th><th>UoM</th><th>Current Stock</th><th>Reserved</th><th>Available</th><th>Reorder Level</th><th></th></tr></thead>
+              : `<table class="table" style="min-width:920px">
+                  <thead><tr><th>Item</th><th>Category</th><th>UoM</th><th>Current Stock</th><th>Reserved</th><th>Available</th><th>Reorder Level</th><th>Unit Rate (₹)</th><th></th></tr></thead>
                   <tbody>${rows.map((row) => renderRow(row, state, canManageStock)).join('')}</tbody>
                 </table>`
       }
@@ -158,6 +182,9 @@ function renderNewItemCard(state) {
         <div class="field"><label for="ni-reorder">Reorder Level (optional)</label>
           <input class="input" id="ni-reorder" type="text" inputmode="decimal" data-action="new-item-reorder" value="${escapeHtml(state.newItemReorderLevel)}" />
         </div>
+        <div class="field"><label for="ni-unit-rate">Unit Rate ₹ (optional)</label>
+          <input class="input" id="ni-unit-rate" type="text" inputmode="decimal" data-action="new-item-unit-rate" value="${escapeHtml(state.newItemUnitRate)}" placeholder="Leave blank if not known yet" />
+        </div>
       </div>
       ${state.newItemError ? `<p data-role="new-item-error" style="font-size:12px;color:var(--color-accent-2-200);margin-top:8px">${escapeHtml(state.newItemError)}</p>` : ''}
       <div style="margin-top:10px;display:flex;gap:8px">
@@ -180,6 +207,7 @@ function renderRow(row, state, canManageStock) {
       <td>${row.reserved_qty}</td>
       <td>${row.available_qty}${belowReorder ? ` <span class="tag tag-accent-2" data-role="below-reorder">Below reorder</span>` : ''}</td>
       <td>${row.reorder_level ?? '—'}</td>
+      <td data-role="unit-rate">${row.rate !== null ? Number(row.rate).toFixed(2) : '—'}</td>
       <td><button type="button" class="btn btn-ghost" data-action="toggle-item" data-id="${escapeHtml(row.item_id)}" style="padding:4px 10px;font-size:12px">${isOpen ? 'Hide' : 'Ledger'}</button></td>
     </tr>`,
   ];
@@ -187,8 +215,8 @@ function renderRow(row, state, canManageStock) {
   if (isOpen) {
     rows.push(`
       <tr data-ledger-row="${escapeHtml(row.item_id)}">
-        <td colspan="8" style="padding:12px 14px;border-top:1px solid var(--color-divider)">
-          ${renderLedger(row.item_id, state, canManageStock)}
+        <td colspan="9" style="padding:12px 14px;border-top:1px solid var(--color-divider)">
+          ${renderLedger(row, state, canManageStock)}
         </td>
       </tr>
     `);
@@ -197,12 +225,35 @@ function renderRow(row, state, canManageStock) {
   return rows.join('');
 }
 
-function renderLedger(itemId, state, canManageStock) {
+function renderLedger(row, state, canManageStock) {
+  const itemId = row.item_id;
   const movements = state.movementsByItem[itemId];
   const form = state.movementFormsByItem[itemId] || { movementType: 'in', quantity: '', notes: '' };
   const error = state.movementErrorByItem[itemId];
+  const rateForm = state.rateFormsByItem[itemId] || { rate: '', effectiveDate: todayISO() };
+  const rateError = state.rateErrorByItem[itemId];
+  const savingRate = state.savingRateItemId === itemId;
 
   return `
+    <div style="margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid var(--color-divider)">
+      <p style="font-size:13px;margin:0 0 8px" data-role="current-rate">
+        Current Rate: ${row.rate !== null ? `₹${Number(row.rate).toFixed(2)}${row.rate_effective_date ? ` (as of ${escapeHtml(new Date(row.rate_effective_date).toLocaleDateString())})` : ''}` : 'Not set'}
+      </p>
+      ${
+        canManageStock
+          ? `<div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap">
+              <div class="field" style="margin:0"><label>New Rate ₹</label>
+                <input class="input" type="text" inputmode="decimal" style="width:100px" data-action="rate-value" data-id="${escapeHtml(itemId)}" value="${escapeHtml(rateForm.rate)}" />
+              </div>
+              <div class="field" style="margin:0"><label>Effective Date</label>
+                <input class="input" type="date" data-action="rate-effective-date" data-id="${escapeHtml(itemId)}" value="${escapeHtml(rateForm.effectiveDate)}" />
+              </div>
+              <button type="button" class="btn btn-secondary" data-action="save-rate" data-id="${escapeHtml(itemId)}" style="padding:6px 14px;font-size:12px" ${savingRate ? 'disabled' : ''}>${savingRate ? 'Saving…' : 'Update Rate'}</button>
+            </div>
+            ${rateError ? `<p data-role="rate-error" style="font-size:12px;color:var(--color-accent-2-200);margin:8px 0 0">${escapeHtml(rateError)}</p>` : ''}`
+          : ''
+      }
+    </div>
     ${
       canManageStock
         ? `<div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap;margin-bottom:12px">
@@ -249,7 +300,7 @@ function renderLedger(itemId, state, canManageStock) {
   `;
 }
 
-function wireEvents(container, store, user, load, canManageStock) {
+function wireEvents(container, store, user, load, loadStock, canManageStock) {
   container.querySelector('[data-action="retry"]')?.addEventListener('click', load);
 
   container.querySelector('[data-action="filter-name"]')?.addEventListener('input', (e) => {
@@ -263,7 +314,7 @@ function wireEvents(container, store, user, load, canManageStock) {
   });
 
   container.querySelector('[data-action="new-item"]')?.addEventListener('click', () => {
-    store.setState({ newItemMode: true, newItemName: '', newItemCategory: '', newItemUom: '', newItemReorderLevel: '', newItemError: null });
+    store.setState({ newItemMode: true, newItemName: '', newItemCategory: '', newItemUom: '', newItemReorderLevel: '', newItemUnitRate: '', newItemError: null });
   });
   container.querySelector('[data-action="cancel-new-item"]')?.addEventListener('click', () => {
     store.setState({ newItemMode: false });
@@ -272,20 +323,33 @@ function wireEvents(container, store, user, load, canManageStock) {
   container.querySelector('[data-action="new-item-category"]')?.addEventListener('input', (e) => store.setState({ newItemCategory: e.target.value }));
   container.querySelector('[data-action="new-item-uom"]')?.addEventListener('input', (e) => store.setState({ newItemUom: e.target.value }));
   container.querySelector('[data-action="new-item-reorder"]')?.addEventListener('input', (e) => store.setState({ newItemReorderLevel: e.target.value }));
+  container.querySelector('[data-action="new-item-unit-rate"]')?.addEventListener('input', (e) => store.setState({ newItemUnitRate: e.target.value }));
   container.querySelector('[data-action="confirm-new-item"]')?.addEventListener('click', async () => {
     const state = store.getState();
-    const { valid, errors } = validateItemForm({ name: state.newItemName, reorderLevel: state.newItemReorderLevel });
+    const { valid, errors } = validateItemForm({ name: state.newItemName, reorderLevel: state.newItemReorderLevel, unitRate: state.newItemUnitRate });
     if (!valid) {
       store.setState({ newItemError: Object.values(errors)[0] });
       return;
     }
     try {
-      await createItem({
+      const item = await createItem({
         name: state.newItemName.trim(),
         category: state.newItemCategory,
         unitOfMeasure: state.newItemUom,
         reorderLevel: state.newItemReorderLevel === '' ? null : Number(state.newItemReorderLevel),
       });
+      // A rate isn't part of the items table itself (see itemPricing.js) —
+      // a second, separate write records the item's first price_history
+      // entry, only when one was actually given. A failure here still
+      // leaves the item created; the rate can always be set afterwards
+      // from its row, same as leaving it blank on purpose would.
+      if (state.newItemUnitRate !== '') {
+        try {
+          await setItemRate({ itemId: item.id, rate: Number(state.newItemUnitRate), effectiveDate: todayISO(), createdBy: user.id });
+        } catch {
+          // Non-fatal — see comment above.
+        }
+      }
       store.setState({ newItemMode: false });
       await load();
     } catch (err) {
@@ -346,7 +410,7 @@ function wireEvents(container, store, user, load, canManageStock) {
           notes: form.notes,
           createdBy: user.id,
         });
-        const [movements, stock] = await Promise.all([fetchMovementsForItem(itemId), fetchAvailableStock()]);
+        const [movements, stock] = await Promise.all([fetchMovementsForItem(itemId), loadStock()]);
         store.setState({
           savingMovementItemId: null,
           stock,
@@ -357,6 +421,58 @@ function wireEvents(container, store, user, load, canManageStock) {
         store.setState({
           savingMovementItemId: null,
           movementErrorByItem: { ...store.getState().movementErrorByItem, [itemId]: err.message || 'Could not log this movement.' },
+        });
+      }
+    });
+  });
+
+  const updateRateForm = (itemId, patch) => {
+    const state = store.getState();
+    const existing = state.rateFormsByItem[itemId] || { rate: '', effectiveDate: todayISO() };
+    store.setState({ rateFormsByItem: { ...state.rateFormsByItem, [itemId]: { ...existing, ...patch } } });
+  };
+  container.querySelectorAll('[data-action="rate-value"]').forEach((el) =>
+    el.addEventListener('input', () => updateRateForm(el.dataset.id, { rate: el.value }))
+  );
+  // Same 'blur' + skip-segments + defer-the-repaint pattern as every other
+  // date field in the app (see domFocus.js) — needed here in particular
+  // because this field sits right next to New Rate's own live 'input'
+  // handler above, the exact combination (a live-repainting sibling field
+  // plus a raw 'blur' listener) that caused the infinite-repaint loop
+  // found on Invoices' Payment Terms.
+  container.querySelectorAll('[data-action="rate-effective-date"]').forEach((input) => {
+    skipDateSegmentsOnTab(input);
+    onRealBlur(input, (e) => {
+      const value = e.target.value;
+      const itemId = input.dataset.id;
+      afterFocusSettles(() => updateRateForm(itemId, { effectiveDate: value }));
+    });
+  });
+
+  container.querySelectorAll('[data-action="save-rate"]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const itemId = btn.dataset.id;
+      const state = store.getState();
+      const form = state.rateFormsByItem[itemId] || { rate: '', effectiveDate: todayISO() };
+      const { valid, errors } = validateRateForm(form);
+      if (!valid) {
+        store.setState({ rateErrorByItem: { ...state.rateErrorByItem, [itemId]: Object.values(errors)[0] } });
+        return;
+      }
+
+      store.setState({ savingRateItemId: itemId, rateErrorByItem: { ...state.rateErrorByItem, [itemId]: null } });
+      try {
+        await setItemRate({ itemId, rate: Number(form.rate), effectiveDate: form.effectiveDate, createdBy: user.id });
+        const stock = await loadStock();
+        store.setState({
+          savingRateItemId: null,
+          stock,
+          rateFormsByItem: { ...store.getState().rateFormsByItem, [itemId]: { rate: '', effectiveDate: todayISO() } },
+        });
+      } catch (err) {
+        store.setState({
+          savingRateItemId: null,
+          rateErrorByItem: { ...store.getState().rateErrorByItem, [itemId]: err.message || 'Could not save this rate.' },
         });
       }
     });

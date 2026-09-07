@@ -120,6 +120,7 @@ function buildTopics(canSeeBillPayments) {
     { id: 'help-inspection', label: 'Inspection', render: renderInspection },
     { id: 'help-master-material-status', label: 'Master Material Status', render: renderMasterMaterialStatus },
     { id: 'help-inventory', label: 'Inventory', render: renderInventory },
+    { id: 'help-price-history', label: 'Price History', render: renderPriceHistory },
     { id: 'help-bom-builder', label: 'BoM Builder', render: renderBomBuilder },
     { id: 'help-work-orders', label: 'Work Orders', render: renderWorkOrders },
     { id: 'help-invoices', label: 'Invoices', render: renderInvoices },
@@ -131,6 +132,7 @@ function buildTopics(canSeeBillPayments) {
     topics.push({ id: 'help-bill-payments', label: 'Bill Payments', render: renderBillPayments });
   }
   topics.push({ id: 'help-material-dispatch', label: 'Material Dispatch', render: renderMaterialDispatch });
+  topics.push({ id: 'help-stock-statement', label: 'Stock Statement', render: renderStockStatement });
   topics.push(
     { id: 'help-faq', label: 'Frequently Asked Questions', render: () => renderFaq(canSeeBillPayments) },
     { id: 'help-troubleshooting', label: 'Troubleshooting', render: renderTroubleshooting }
@@ -177,7 +179,7 @@ function renderHelpShell(user, topics) {
 
 /** @param {boolean} canSeeBillPayments */
 function renderGettingStarted(canSeeBillPayments) {
-  const authorizedModules = canSeeBillPayments ? 'Invoices, Reports, Bill Payments' : 'Invoices, Reports';
+  const authorizedModules = canSeeBillPayments ? 'Invoices, Reports, Bill Payments, Stock Statement' : 'Invoices, Reports, Stock Statement';
   return section(
     'help-getting-started',
     'Getting Started',
@@ -204,7 +206,7 @@ function renderGettingStarted(canSeeBillPayments) {
     ${note(`A brand-new account has no role yet, so almost every screen is hidden until an admin assigns you one from ${jump('help-users-roles', 'Users & Roles')} — see the Dashboard below.`)}
 
     ${h3('What you see depends on your role')}
-    <p style="font-size:14px;color:var(--color-neutral-300);margin:0">The sidebar only ever shows the screens your role can use — nobody sees every menu item. The roles are: <strong>Admin</strong> (sees and manages everything), <strong>Purchase</strong> (PO Upload, Order Status), <strong>Store/Warehouse</strong> (Material Inward, Inventory, Work Orders, Material Dispatch), <strong>Inspector</strong> (Inspection), <strong>Accounts/Authorized</strong> (${authorizedModules}), and <strong>Production</strong> (Inventory, BoM Builder, Work Orders, Reports). If a screen you need is missing, ask an admin to check your role in ${jump('help-users-roles', 'Users & Roles')}.</p>
+    <p style="font-size:14px;color:var(--color-neutral-300);margin:0">The sidebar only ever shows the screens your role can use — nobody sees every menu item. The roles are: <strong>Admin</strong> (sees and manages everything), <strong>Purchase</strong> (PO Upload, Order Status), <strong>Store/Warehouse</strong> (Material Inward, Inventory, Price History, Work Orders, Material Dispatch), <strong>Inspector</strong> (Inspection), <strong>Accounts/Authorized</strong> (${authorizedModules}), and <strong>Production</strong> (Inventory, Price History, BoM Builder, Work Orders, Reports). If a screen you need is missing, ask an admin to check your role in ${jump('help-users-roles', 'Users & Roles')}.</p>
     `
   );
 }
@@ -384,11 +386,11 @@ function renderInventory() {
     <p style="font-size:14px;color:var(--color-neutral-300);margin-bottom:10px">Current stock for every item, including what's on hand, what's on hold for a Work Order, and what's actually free to use.</p>
 
     ${h3('Reading the table')}
-    <p style="font-size:14px;color:var(--color-neutral-300);margin:0 0 8px"><strong>Current Stock</strong> is everything physically in the warehouse. <strong>Reserved</strong> is stock a Work Order is holding (see ${jump('help-work-orders', 'Work Orders')}). <strong>Available</strong> is Current minus Reserved — the amount you can actually use right now. A red <strong>Below reorder</strong> tag appears when Available drops under an item's Reorder Level.</p>
+    <p style="font-size:14px;color:var(--color-neutral-300);margin:0 0 8px"><strong>Current Stock</strong> is everything physically in the warehouse. <strong>Reserved</strong> is stock a Work Order is holding (see ${jump('help-work-orders', 'Work Orders')}). <strong>Available</strong> is Current minus Reserved — the amount you can actually use right now. A red <strong>Below reorder</strong> tag appears when Available drops under an item's Reorder Level. <strong>Unit Rate</strong> is the item's current price per unit — "—" if none has been recorded yet.</p>
     ${ol([
       'Type in the <strong>Name</strong> box or pick a <strong>Category</strong> to narrow the list.',
       'Tick <strong>Below reorder level only</strong> to see just the items that need restocking.',
-      'Click <strong>Ledger</strong> on any row to see every stock movement (in/out) recorded for that item.',
+      'Click <strong>Ledger</strong> on any row to see every stock movement (in/out) recorded for that item, and its current rate.',
     ])}
     ${img('10-inventory.png', "An item's movement ledger expanded, with a manual stock-out movement being logged (Store/Admin only)")}
 
@@ -399,13 +401,51 @@ function renderInventory() {
       'Click <strong>Log Movement</strong>. Most stock actually moves automatically instead (an accepted inspection creates an "In" movement, recording BoM production creates "Out" movements) — use this only for corrections or cases nothing else covers.',
     ])}
 
+    ${h3('Setting or changing an item\'s Unit Rate (Store/Admin only)')}
+    <p style="font-size:14px;color:var(--color-neutral-300);margin:0 0 8px">A rate isn't always known when an item is first created — leave it blank and set it later the same way. Every rate you enter is kept permanently, never overwritten; see ${jump('help-price-history', 'Price History')} for the full record.</p>
+    ${ol([
+      'Expand a row\'s <strong>Ledger</strong> — its current rate (or "Not set") shows at the top.',
+      'Type the <strong>New Rate</strong> and pick the <strong>Effective Date</strong> it applies from (defaults to today).',
+      'Click <strong>Update Rate</strong>. This adds a new entry — it never edits or removes a previous one.',
+    ])}
+
     ${h3('Adding a new item')}
     ${ol([
       'Click <strong>+ New Item</strong> (Store/Admin only).',
-      'Fill in <strong>Name</strong> (required), and optionally <strong>Category</strong>, <strong>Unit of Measure</strong>, and <strong>Reorder Level</strong> (the point below which it should show as "Below reorder").',
+      'Fill in <strong>Name</strong> (required), and optionally <strong>Category</strong>, <strong>Unit of Measure</strong>, <strong>Reorder Level</strong> (the point below which it should show as "Below reorder"), and <strong>Unit Rate</strong> if you already know it.',
       'Click <strong>Add Item</strong>.',
     ])}
-    ${img('11-inventory-new-item.png', 'The New Item form with Name, Category, and Reorder Level filled in')}
+    ${img('11-inventory-new-item.png', 'The New Item form with Name, Category, Reorder Level, and Unit Rate filled in')}
+    `
+  );
+}
+
+function renderPriceHistory() {
+  return section(
+    'help-price-history',
+    'Price History',
+    `
+    <p style="font-size:14px;color:var(--color-neutral-300);margin-bottom:10px">Every rate ever recorded for every item, oldest to newest — nothing here is ever edited or deleted, so it's a complete record of what things cost and when that changed. Same viewers as ${jump('help-inventory', 'Inventory')}.</p>
+    ${img('28-price-history.png', 'Price History listing two rate changes for the same item, oldest first')}
+    ${ol([
+      'Pick an <strong>Item</strong> to see only its rate changes, or leave it on "All".',
+      'Use <strong>From</strong>/<strong>To</strong> to narrow to a date range — this filters by each entry\'s effective date, not when it was recorded.',
+    ])}
+    ${note(`To add a new entry, use ${jump('help-inventory', 'Inventory')}'s "Update Rate" — this screen is read-only.`)}
+    `
+  );
+}
+
+function renderStockStatement() {
+  return section(
+    'help-stock-statement',
+    'Stock Statement',
+    `
+    <p style="font-size:14px;color:var(--color-neutral-300);margin-bottom:10px">A printable Rs. valuation of stock in hand, in a standard letterhead format — built for handing to a bank. Admin/Accounts (Authorized) only.</p>
+    ${img('29-stock-statement.png', 'The Stock Statement showing the company letterhead, an item table with quantities/rates/values, a total, and a signature block')}
+    <p style="font-size:14px;color:var(--color-neutral-300);margin:0 0 8px">Every item's current quantity on hand is valued at its current Unit Rate (see ${jump('help-inventory', 'Inventory')}) — quantity on the shelf, not netted against what a Work Order has reserved, since reserved stock is still physically present. An item with no rate recorded yet shows "—" and is left out of the total, with a note naming how many were excluded, rather than being silently counted as worth nothing.</p>
+    ${ol(['Click <strong>Print</strong> — this opens your browser\'s normal print dialog, already showing just the statement (no sidebar or menus). Choose "Save as PDF" there if you need a file instead of a paper copy.'])}
+    ${note('The date on the statement is always today — there\'s no way to generate one for a past date.')}
     `
   );
 }
@@ -661,6 +701,14 @@ const FAQ = [
   {
     q: 'What does "Reserved" stock mean, and how do I free it up again?',
     a: 'It\'s stock a Work Order is holding for a planned production run — it\'s not consumed yet, just set aside so nothing else can use it. Cancel the work order (on the Work Orders screen) to release the hold.',
+  },
+  {
+    q: 'I changed an item\'s Unit Rate by mistake — can I undo it?',
+    a: 'Not directly — every rate you enter is kept permanently, it\'s never edited or deleted. Just enter the correct rate again on Inventory; the mistaken one stays visible in Price History as part of the record, but the new entry becomes the current rate going forward.',
+  },
+  {
+    q: 'An item shows "—" on the Stock Statement instead of a value — why?',
+    a: 'That item has no Unit Rate recorded yet, so there\'s nothing to multiply its quantity by. Set a rate for it on Inventory — the note below the statement\'s total always says how many items are currently excluded this way, so nothing is silently left out of the total without you knowing.',
   },
   {
     q: 'A Work Order shows a shortfall — what happens if I create/reserve it anyway?',

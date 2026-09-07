@@ -2016,3 +2016,94 @@ begin
     execute format('create trigger log_action after insert or update or delete on public.%I for each row execute function public.trg_log_action()', t);
   end loop;
 end $$;
+
+-- Phase 12: Item unit rates, price history, and a printable stock
+-- valuation ("Stock Statement", for bank submission). Direct user request:
+-- taking a Rs. value of stock in hand needs a price per item, which this
+-- app never had — items had quantity but no cost.
+--
+-- Deliberately NOT a column on items (e.g. items.unit_rate): a rate can
+-- become unavailable at creation and change any number of times later,
+-- and every prior value must stay on record ("historical prices should be
+-- maintained... displayed in a Price History form") — a single mutable
+-- column can't hold that. Instead item_price_history is an append-only
+-- ledger (never updated or deleted, same discipline as stock_movements/
+-- action_log) and item_current_rate below is a plain view picking each
+-- item's most recent entry, mirroring how current_stock nets
+-- stock_movements into one number without ever mutating a row.
+create table if not exists public.item_price_history (
+  id uuid primary key default gen_random_uuid(),
+  item_id uuid not null references public.items (id),
+  rate numeric not null check (rate >= 0),
+  effective_date date not null default current_date,
+  created_by uuid not null references public.users (id),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists item_price_history_item_id_idx on public.item_price_history (item_id);
+
+alter table public.item_price_history enable row level security;
+
+drop policy if exists "Authenticated users can view item price history" on public.item_price_history;
+create policy "Authenticated users can view item price history"
+  on public.item_price_history for select
+  to authenticated
+  using (true);
+
+-- Same role gate as items itself (can_manage_items: admin/purchase/store)
+-- — setting a rate is an Item Master edit, not a stock movement, so this
+-- deliberately does NOT reuse is_store_or_admin (stock_movements' gate,
+-- which excludes purchase). No update/delete policy at all: a rate
+-- "change" is always a new row, never an edit to an old one, or the
+-- history this whole table exists for could be quietly rewritten.
+drop policy if exists "Purchase/store/admin can add a price history entry" on public.item_price_history;
+create policy "Purchase/store/admin can add a price history entry"
+  on public.item_price_history for insert
+  to authenticated
+  with check (public.can_manage_items(auth.uid()) and created_by = auth.uid());
+
+-- Each item's most recent rate: highest effective_date, ties broken by
+-- the entry recorded last — a plain view (security invoker), inheriting
+-- the same company-wide read RLS already on item_price_history. An item
+-- with no rate ever recorded simply has no row here (left-joined as null
+-- everywhere this is used), not a zero.
+create or replace view public.item_current_rate as
+select distinct on (item_id)
+  item_id, rate, effective_date, created_at
+from public.item_price_history
+order by item_id, effective_date desc, created_at desc;
+
+grant select on public.item_current_rate to authenticated;
+
+-- Stock Statement's source view: available_stock (Phase 7) joined with
+-- each item's current rate. Deliberately values current_qty (physically
+-- on hand right now), not available_qty (current_qty minus what's held
+-- for a work order) — stock reserved for planned production is still
+-- physically in the warehouse, and a bank stock statement reports what's
+-- actually on the shelf, not what's free to plan with. Rows with no
+-- recorded rate still appear (rate/stock_value null) rather than being
+-- silently dropped, so the Stock Statement screen can flag them instead
+-- of quietly understating the total.
+create or replace view public.stock_valuation as
+select
+  a.item_id,
+  a.name,
+  a.category,
+  a.unit_of_measure,
+  a.reorder_level,
+  a.current_qty,
+  a.reserved_qty,
+  a.available_qty,
+  r.rate,
+  r.effective_date as rate_effective_date,
+  case when r.rate is not null then a.current_qty * r.rate else null end as stock_value
+from public.available_stock a
+left join public.item_current_rate r on r.item_id = a.item_id;
+
+grant select on public.stock_valuation to authenticated;
+
+do $$
+begin
+  execute format('drop trigger if exists log_action on public.%I', 'item_price_history');
+  execute format('create trigger log_action after insert or update or delete on public.%I for each row execute function public.trg_log_action()', 'item_price_history');
+end $$;
