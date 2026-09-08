@@ -1525,3 +1525,60 @@ print view. This changes `supabase/schema.sql` again, so it needs the
 migration applied manually to any live Supabase project before
 `stock_statement_for_range` (or its integration test) will work
 there.
+
+## Delete a user (Users & Roles)
+
+Direct request: remove two specific users from the app. There was no
+delete action at all — only Activate/Deactivate — so this adds one,
+but not as a true hard delete: nearly every table (`purchase_orders`,
+`invoices`, `stock_movements`, `action_log`, and more) has a
+`created_by`/`approved_by`/etc. column that's `not null references
+public.users (id)` with no `on delete` action, so actually deleting a
+user's row via `auth.admin.deleteUser` would either fail outright on
+the first such FK (for any real, used account — Action Log alone logs
+nearly every action anyone takes, so this is the common case, not an
+edge case) or require cascading away real business history to make it
+succeed. Soft-deleted instead, the same convention this schema already
+uses for anything with history (items/vendors/projects/purchase_orders
+all have their own `deleted_at`): the user's own row, and every record
+it's ever attributed to, stays exactly as it was.
+
+- `supabase/schema.sql`: `users` gains `deleted_at timestamptz null`.
+  New `soft_delete_user(target_id)` (`security definer`, admin-only via
+  `is_admin()`, same self-targeting guard as `set_user_role`/
+  `set_user_status` so an admin can't delete their own account and lock
+  everyone out) sets `deleted_at = now()` **and** `status = 'inactive'`
+  — reusing the sign-in block `src/auth.js` already has for inactive
+  users (covered by `e2e/phase0.spec.js`'s existing test) instead of
+  teaching it a second, separate check. Calling it again on an
+  already-deleted user raises "User not found" rather than silently
+  no-op-succeeding. `admin_list_users()` now excludes soft-deleted rows,
+  so a deleted user simply disappears from Users & Roles.
+- `src/admin.js`: `deleteUser(targetId)` wraps the new RPC, same
+  pattern as `setUserRole`/`setUserStatus`.
+- `src/screens/users.js`: each row gains a **Delete** button (disabled
+  for your own row, like Deactivate already was) behind a
+  `window.confirm` naming the user and explaining that their existing
+  records are unaffected — same confirm-before-destructive-action
+  pattern as archiving an invoice/PO or authorizing a dispatch.
+- `scripts/test-rls-users.mjs`: a non-admin cannot call
+  `soft_delete_user`, an admin cannot delete themselves, an admin can
+  delete another user (`deleted_at` and `status` both persist
+  correctly), `admin_list_users` excludes them afterward, and a second
+  delete on the same user errors instead of succeeding again.
+- `e2e/phase1.spec.js`: the self-row test now also checks Delete is
+  disabled; new tests cover confirming a delete (right RPC body, row
+  disappears from the list) and cancelling the confirm (RPC never
+  called, row stays).
+- `src/screens/help.js` and `public/help/screenshots/22-users-roles.png`
+  updated for the new Delete button and behavior, including that
+  there's no in-app undo — recovering a mistaken delete means fixing it
+  directly on the database, since the user's email stays reserved by
+  the deleted account and re-inviting won't work either.
+
+Verified locally: lint, typecheck, 143 unit tests, full e2e suite
+green; production build clean. This changes `supabase/schema.sql`
+again, so it needs the migration applied manually to any live Supabase
+project before `soft_delete_user` (or its integration test) will work
+there — after which the two users named in the original request can
+actually be deleted from the live Admin → Users & Roles screen.

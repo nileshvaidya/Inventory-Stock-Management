@@ -8,7 +8,7 @@ import { escapeHtml, initials } from '../components.js';
 import { createStore } from '../state.js';
 import { canViewModule } from '../navPermissions.js';
 import { ROLES } from '../roles.js';
-import { fetchAdminUsers, setUserRole, setUserStatus } from '../admin.js';
+import { fetchAdminUsers, setUserRole, setUserStatus, deleteUser } from '../admin.js';
 import { open as openAddUserDialog } from '../dialogs/addUserDialog.js';
 
 export async function render(container) {
@@ -91,9 +91,12 @@ function renderRow(u, viewer) {
         </select>
       </td>
       <td><span class="tag ${u.status === 'active' ? 'tag-accent' : 'tag-neutral'}">${u.status === 'active' ? 'Active' : 'Inactive'}</span></td>
-      <td>
+      <td style="white-space:nowrap">
         <button type="button" class="btn btn-secondary" data-action="toggle-status" data-user-id="${escapeHtml(u.id)}" style="padding:5px 12px;font-size:12px" ${isSelf ? 'disabled title="You cannot change your own status."' : ''}>
           ${u.status === 'active' ? 'Deactivate' : 'Activate'}
+        </button>
+        <button type="button" class="btn btn-secondary" data-action="delete-user" data-user-id="${escapeHtml(u.id)}" data-user-name="${escapeHtml(u.name)}" style="padding:5px 12px;font-size:12px;margin-left:6px" ${isSelf ? 'disabled title="You cannot delete your own account."' : ''}>
+          Delete
         </button>
       </td>
     </tr>`;
@@ -133,6 +136,21 @@ function wireEvents(container, store, viewer, load) {
         await load();
       } catch (err) {
         window.alert(err.message || 'Could not update status.');
+        await load();
+      }
+    });
+  });
+
+  container.querySelectorAll('[data-action="delete-user"]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const targetId = btn.dataset.userId;
+      const targetName = btn.dataset.userName;
+      if (!window.confirm(`Delete ${targetName}? They will no longer be able to sign in or appear here, but their existing records (invoices, purchase orders, Action Log entries, etc.) stay unchanged.`)) return;
+      try {
+        await deleteUser(targetId);
+        await load();
+      } catch (err) {
+        window.alert(err.message || 'Could not delete this user.');
         await load();
       }
     });

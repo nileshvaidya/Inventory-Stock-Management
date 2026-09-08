@@ -133,6 +133,27 @@ async function run() {
     console.log('\nset_user_status: an admin cannot deactivate themselves...');
     const { error: selfStatusErr } = await clientAdmin.rpc('set_user_status', { target_id: adminUser.id, new_status: 'inactive' });
     assert(!!selfStatusErr, 'admin cannot set their own status');
+
+    console.log('\nsoft_delete_user: a non-admin cannot call it, and an admin cannot delete themselves...');
+    const { error: storeSoftDeleteErr } = await clientStore.rpc('soft_delete_user', { target_id: adminUser.id });
+    assert(!!storeSoftDeleteErr, 'a non-admin cannot call soft_delete_user at all');
+    const { error: selfSoftDeleteErr } = await clientAdmin.rpc('soft_delete_user', { target_id: adminUser.id });
+    assert(!!selfSoftDeleteErr, 'admin cannot delete their own account');
+
+    console.log('\nsoft_delete_user: admin can delete the store user — deleted_at + status are set, but the row (and anything it created) is untouched...');
+    const { error: softDeleteErr } = await clientAdmin.rpc('soft_delete_user', { target_id: storeUser.id });
+    assert(!softDeleteErr, `admin can soft-delete the store user${softDeleteErr ? ` (${softDeleteErr.message})` : ''}`);
+    const { data: afterDelete } = await admin.from('users').select('deleted_at, status').eq('id', storeUser.id).single();
+    assert(afterDelete.deleted_at !== null, 'deleted_at is set after soft_delete_user');
+    assert(afterDelete.status === 'inactive', "status is forced to 'inactive' by soft_delete_user, same as set_user_status — sign-in stays blocked with no separate check needed");
+
+    console.log('\nadmin_list_users: the soft-deleted store user no longer appears, even to an admin...');
+    const { data: usersAfterDelete } = await clientAdmin.rpc('admin_list_users');
+    assert(!(usersAfterDelete ?? []).some((u) => u.id === storeUser.id), 'admin_list_users excludes the soft-deleted user');
+
+    console.log('\nsoft_delete_user: deleting an already-deleted user reports "not found" rather than silently succeeding again...');
+    const { error: alreadyDeletedErr } = await clientAdmin.rpc('soft_delete_user', { target_id: storeUser.id });
+    assert(!!alreadyDeletedErr, 'a second soft_delete_user call on the same user errors instead of no-op-succeeding');
   } finally {
     console.log('\nCleaning up test users...');
     await cleanup(userIds);

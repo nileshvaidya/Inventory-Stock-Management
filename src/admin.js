@@ -76,3 +76,18 @@ export async function setUserStatus(targetId, newStatus, client = supabase) {
   if (error) throw error;
   return data;
 }
+
+/**
+ * Soft-deletes a user (sets deleted_at + status='inactive' server-side —
+ * see soft_delete_user() in supabase/schema.sql). They stop appearing in
+ * fetchAdminUsers and can no longer sign in; every record they ever
+ * created elsewhere is untouched.
+ * @param {string} targetId
+ * @param {any} [client]
+ */
+export async function deleteUser(targetId, client = supabase) {
+  if (!client) throw new Error('Supabase is not configured.');
+  const { data, error } = await client.rpc('soft_delete_user', { target_id: targetId });
+  if (error) throw error;
+  return data;
+}

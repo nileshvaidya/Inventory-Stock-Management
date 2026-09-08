@@ -571,7 +571,7 @@ function renderUsersRoles() {
     'Users & Roles',
     `
     <p style="font-size:14px;color:var(--color-neutral-300);margin-bottom:10px">Admin-only: manage every user account and their role.</p>
-    ${img('22-users-roles.png', 'The Users & Roles table with Role dropdowns, Status tags, and Deactivate/Activate buttons per row')}
+    ${img('22-users-roles.png', 'The Users & Roles table with Role dropdowns, Status tags, and Deactivate/Activate/Delete buttons per row')}
 
     ${h3('Inviting a new user')}
     ${ol([
@@ -587,7 +587,14 @@ function renderUsersRoles() {
       'Click the <strong>Role</strong> dropdown next to a user and pick a new one to change it immediately.',
       'Click <strong>Deactivate</strong> to block someone from signing in; click <strong>Activate</strong> to let them back in.',
     ])}
-    ${note('You can\'t change your own role or your own status here — that\'s intentional, so nobody can accidentally lock themselves out. Ask another admin if you need your own account changed.')}
+    ${note('You can\'t change your own role, status, or delete your own account here — that\'s intentional, so nobody can accidentally lock themselves out. Ask another admin if you need your own account changed.')}
+
+    ${h3('Deleting a user')}
+    ${ol([
+      'Click <strong>Delete</strong> next to a user and confirm.',
+      'They immediately stop being able to sign in and disappear from this list.',
+    ])}
+    ${note('This doesn\'t touch anything they ever did — every purchase order, invoice, Action Log entry, and every other record they created stays exactly as it was, still showing their name. Deleting only removes the account itself, and there\'s no "undo" button in the app for it — since their email stays reserved by the deleted account, re-inviting them won\'t work either. If it was a mistake, it has to be reversed directly on the database by whoever administers the Supabase project.')}
     `
   );
 }

@@ -91,6 +91,68 @@ test.describe('Phase 1 — Users & Roles screen (admin)', () => {
     await expect(selfRow).toContainText('(you)');
     await expect(selfRow.locator('[data-action="role-select"]')).toBeDisabled();
     await expect(selfRow.locator('[data-action="toggle-status"]')).toBeDisabled();
+    await expect(selfRow.locator('[data-action="delete-user"]')).toBeDisabled();
+  });
+
+  test('deleting a user asks for confirmation, calls soft_delete_user, and removes them from the list', async ({ page }) => {
+    let listCallCount = 0;
+    await page.route('**/rest/v1/rpc/admin_list_users**', (route) => {
+      listCallCount += 1;
+      const body =
+        listCallCount === 1
+          ? [
+              { id: 'demo-u1', name: 'Demo Admin', email: 'admin@example.com', role: 'admin', status: 'active' },
+              { id: 'u2', name: 'Jane Store', email: 'jane@example.com', role: 'store', status: 'active' },
+            ]
+          : [{ id: 'demo-u1', name: 'Demo Admin', email: 'admin@example.com', role: 'admin', status: 'active' }];
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+    });
+    let deleteBody = null;
+    await page.route('**/rest/v1/rpc/soft_delete_user**', (route) => {
+      deleteBody = route.request().postDataJSON();
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 'u2', deleted_at: '2026-01-01T00:00:00Z' }) });
+    });
+
+    let confirmMessage = '';
+    page.once('dialog', (dialog) => {
+      confirmMessage = dialog.message();
+      dialog.accept();
+    });
+
+    await page.goto('/?demoRole=admin#/users');
+    const row = page.locator('[data-user-row="u2"]');
+    await expect(row).toBeVisible();
+    await row.locator('[data-action="delete-user"]').click();
+
+    expect(confirmMessage).toContain('Jane Store');
+    expect(deleteBody).toEqual({ target_id: 'u2' });
+    await expect(page.locator('[data-user-row="u2"]')).toHaveCount(0);
+  });
+
+  test('cancelling the delete confirmation never calls soft_delete_user', async ({ page }) => {
+    await page.route('**/rest/v1/rpc/admin_list_users**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([
+          { id: 'demo-u1', name: 'Demo Admin', email: 'admin@example.com', role: 'admin', status: 'active' },
+          { id: 'u2', name: 'Jane Store', email: 'jane@example.com', role: 'store', status: 'active' },
+        ]),
+      })
+    );
+    let deleteCalled = false;
+    await page.route('**/rest/v1/rpc/soft_delete_user**', (route) => {
+      deleteCalled = true;
+      route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    });
+
+    page.once('dialog', (dialog) => dialog.dismiss());
+
+    await page.goto('/?demoRole=admin#/users');
+    await page.locator('[data-user-row="u2"] [data-action="delete-user"]').click();
+
+    await expect(page.locator('[data-user-row="u2"]')).toBeVisible();
+    expect(deleteCalled).toBe(false);
   });
 
   test('the Add User dialog validates before calling the invite function', async ({ page }) => {

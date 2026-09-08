@@ -24,6 +24,19 @@ create table if not exists public.users (
   created_at timestamptz not null default now()
 );
 
+-- Removing a user (direct request): every other table's created_by/
+-- approved_by/etc. is `not null references public.users (id)` with no
+-- `on delete` action, so a true hard delete of any user who has ever
+-- created so much as one row anywhere (a PO, an invoice, an Action Log
+-- entry — nearly guaranteed for any real, used account) would either fail
+-- outright on the FK or require cascading away real business history.
+-- Soft delete instead, same convention this schema already uses for
+-- anything with history (items/vendors/projects/purchase_orders all have
+-- their own deleted_at): the row, and everything it's ever attributed to,
+-- stays exactly as it was — only sign-in and visibility in Users & Roles
+-- are affected. See soft_delete_user() below.
+alter table public.users add column if not exists deleted_at timestamptz null;
+
 -- `create table if not exists` above is a no-op against a `users` table
 -- that already exists from an earlier run — including one created with a
 -- different `role` definition than intended here. Observed in practice: a
@@ -80,7 +93,9 @@ $$;
 grant execute on function public.is_admin(uuid) to authenticated;
 
 -- Every user, for the Users & Roles table (P1-1, P1-3: admin-only — the
--- function itself enforces this, not just the calling UI).
+-- function itself enforces this, not just the calling UI). Excludes
+-- soft-deleted users — see soft_delete_user() below — so a removed user
+-- simply disappears from this list rather than showing up as a dead row.
 create or replace function public.admin_list_users()
 returns setof public.users
 language sql
@@ -89,7 +104,7 @@ security definer
 set search_path = public
 as $$
   select * from public.users
-  where public.is_admin(auth.uid())
+  where public.is_admin(auth.uid()) and deleted_at is null
   order by name;
 $$;
 
@@ -161,6 +176,44 @@ end;
 $$;
 
 grant execute on function public.set_user_status(uuid, text) to authenticated;
+
+-- Remove a user (direct request; see the deleted_at comment on the table
+-- above for why this is a soft delete, not auth.admin.deleteUser). Admin-
+-- only, same self-targeting guard as set_user_role/set_user_status — an
+-- admin can't delete their own account and lock everyone out that way
+-- either. Also forces status to 'inactive' so the existing sign-in check
+-- (src/auth.js, already exercised by e2e/phase0.spec.js's "inactive user
+-- is blocked at sign-in" test) blocks them immediately, with no separate
+-- deleted_at check needed anywhere else in the app. Every row this user
+-- ever created/approved/inspected elsewhere is untouched and still
+-- correctly attributed to their name.
+create or replace function public.soft_delete_user(target_id uuid)
+returns public.users
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  updated public.users;
+begin
+  if not public.is_admin(auth.uid()) then
+    raise exception 'Only an admin can delete a user.';
+  end if;
+  if target_id = auth.uid() then
+    raise exception 'You cannot delete your own account.';
+  end if;
+
+  update public.users set deleted_at = now(), status = 'inactive' where id = target_id and deleted_at is null
+  returning * into updated;
+
+  if updated.id is null then
+    raise exception 'User not found.';
+  end if;
+  return updated;
+end;
+$$;
+
+grant execute on function public.soft_delete_user(uuid) to authenticated;
 
 -- Phase 2: Purchase Orders (upload, parse, Project/Order link, Order
 -- Status), plus Vendor Master (build brief's "suggested additional
