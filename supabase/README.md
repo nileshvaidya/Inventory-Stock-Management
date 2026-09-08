@@ -41,6 +41,22 @@ separately). Everything else on the Users & Roles screen (role
 assignment, activate/deactivate) runs through plain Postgres RPCs in
 `schema.sql` and needs no separate deployment.
 
+**One-time backfill if you deleted anyone before `admin-delete-user`
+existed**: deploying the function only changes what happens on the
+*next* delete — anyone already soft-deleted under the old,
+RPC-only path still has their real email sitting on their (deleted)
+Supabase Auth account, so re-inviting or re-signing-up on that address
+still fails with "User already registered" even after you deploy.
+`scripts/free-deleted-user-emails.mjs` finds every soft-deleted user
+still holding their real email and frees it the same way the function
+now does automatically. Safe to run more than once (a second run is a
+no-op). Needs `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` in your
+local `.env`:
+
+```bash
+node scripts/free-deleted-user-emails.mjs
+```
+
 ## CI integration tests
 
 `scripts/test-rls-users.mjs` exercises the RLS policies and RPCs above

@@ -114,6 +114,9 @@ scripts/
   capture-help-screenshots.mjs                # one-off: captures every screen (demo mode, mocked network) into
                                                  # public/help/screenshots/ for the Help manual — rerun by hand
                                                  # whenever the UI changes enough to go stale, not part of CI
+  free-deleted-user-emails.mjs                # one-off backfill: frees the real email on any user soft-deleted
+                                                 # before admin-delete-user existed, so it can be reused — safe to
+                                                 # rerun, not part of CI (see supabase/README.md)
 supabase/
   schema.sql               # running source of truth for the DB schema + RLS
   README.md                  # Supabase project setup steps

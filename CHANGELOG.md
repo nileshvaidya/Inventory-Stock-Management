@@ -1644,3 +1644,37 @@ green. No `schema.sql` change this time — only the new Edge Function
 needs deploying (`supabase functions deploy admin-delete-user`) before
 a delete actually frees the email for reuse; `soft_delete_user` itself
 already works against the live project from the previous entry.
+
+## Backfill script: free the email on the two users deleted before the fix above
+
+Found immediately after deploying the previous entry's fix: re-inviting
+Lalit Hazare and Mayur Ahire still failed with "User already
+registered" (on both the Admin "Add User" invite and the public Sign
+Up form — same underlying `auth.users` email uniqueness either way).
+Root cause: deploying `admin-delete-user` only changes what happens on
+the *next* delete. These two were already soft-deleted under the old,
+RPC-only `soft_delete_user()` path before that function existed, so
+their Supabase Auth accounts were never renamed — deploying the fix
+doesn't retroactively touch rows it never ran against. And there's no
+way to "re-delete" them through the UI to pick up the new behavior:
+`admin_list_users()` already excludes soft-deleted rows, so Delete
+isn't even clickable for them anymore.
+
+- `scripts/free-deleted-user-emails.mjs` (new, one-off, not part of
+  `npm run test:integration`): finds every `users` row with
+  `deleted_at is not null` whose email doesn't already match the
+  `deleted+<uuid>@deleted.invalid` placeholder pattern, and renames it
+  in both `auth.users` (`auth.admin.updateUserById`, same Auth Admin
+  API call the Edge Function itself makes) and `public.users` — i.e.
+  runs the new function's email-freeing half against old data it
+  missed. Safe to run more than once: a user whose email already
+  matches the placeholder pattern is left alone, so a second run is a
+  no-op that fixes nothing and reports nothing to fix.
+- `supabase/README.md`: documents this as a one-time step for anyone
+  who deleted a user before deploying `admin-delete-user` — run once
+  against the live project, not something that needs repeating per
+  future delete (those go through the Edge Function now).
+
+Verified locally: lint, `node --check`. Not run against the live
+project from this session — needs `SUPABASE_SERVICE_ROLE_KEY`, which
+isn't available here; the user runs it themselves per the README.
