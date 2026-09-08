@@ -17,18 +17,27 @@
 `supabase/functions/admin-invite-user` handles "Add User" on the Users &
 Roles screen — it needs the Auth Admin API
 (`auth.admin.inviteUserByEmail`), which only ever works with the
-service-role key, so it can't run client-side. Deploy it once (and again
-after any change to `index.ts`):
+service-role key, so it can't run client-side.
+`supabase/functions/admin-delete-user` handles "Delete" on the same
+screen — the actual deletion is the plain `soft_delete_user()` RPC in
+`schema.sql`, but freeing the deleted user's email address for reuse
+(`auth.admin.updateUserById`) needs the same service-role-only Auth Admin
+API, so that one step has to go through this function too. Deploy both
+once (and again after any change to either `index.ts`):
 
 ```bash
 supabase link --project-ref <your-project-ref>   # one-time, if not already linked
 supabase functions deploy admin-invite-user
+supabase functions deploy admin-delete-user
 ```
 
 `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` are
 injected automatically for every deployed function — no manual secret
-configuration needed. Until this is deployed, "Add User" will fail with a
-network/404 error; everything else on the Users & Roles screen (role
+configuration needed. Until deployed, "Add User" fails with a
+network/404 error, and "Delete" fails the same way (its RPC-only half
+alone can't run — see the function's own comment for why the two steps
+are bundled together rather than deploying the email-freeing step
+separately). Everything else on the Users & Roles screen (role
 assignment, activate/deactivate) runs through plain Postgres RPCs in
 `schema.sql` and needs no separate deployment.
 

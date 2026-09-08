@@ -1,8 +1,9 @@
 // User & Role Management (Phase 1) data layer — thin wrappers around the
-// security-definer RPCs in supabase/schema.sql and the admin-invite-user
-// Edge Function. Every function here is a no-op (throws or returns an
-// error) for a non-admin caller — enforced server-side (is_admin() inside
-// each RPC/function), not just by the UI hiding the Users & Roles screen.
+// security-definer RPCs in supabase/schema.sql and the admin-invite-user/
+// admin-delete-user Edge Functions. Every function here is a no-op
+// (throws or returns an error) for a non-admin caller — enforced
+// server-side (is_admin() inside each RPC/function), not just by the UI
+// hiding the Users & Roles screen.
 import { supabase } from './api.js';
 
 /** @param {any} [client] */
@@ -29,7 +30,7 @@ export async function inviteUser(form, client = supabase) {
     body: form,
     headers: { Authorization: `Bearer ${token}` },
   });
-  if (error) return { data: null, error: { message: await extractFunctionErrorMessage(error) } };
+  if (error) return { data: null, error: { message: await extractFunctionErrorMessage(error, 'Could not send the invite.') } };
   if (data?.error) return { data: null, error: { message: data.error } };
   return { data, error: null };
 }
@@ -41,8 +42,9 @@ export async function inviteUser(form, client = supabase) {
  * reason (e.g. "Only an admin can invite users.") is on `error.context`,
  * the raw fetch Response, and has to be read out by hand.
  * @param {any} error
+ * @param {string} fallback
  */
-async function extractFunctionErrorMessage(error) {
+async function extractFunctionErrorMessage(error, fallback) {
   try {
     const body = await error.context?.json();
     if (body?.error) return body.error;
@@ -50,7 +52,7 @@ async function extractFunctionErrorMessage(error) {
     // context wasn't JSON (e.g. a network-level failure with no response
     // body at all) — fall through to the generic SDK message below.
   }
-  return error.message || 'Could not send the invite.';
+  return error.message || fallback;
 }
 
 /**
@@ -78,16 +80,30 @@ export async function setUserStatus(targetId, newStatus, client = supabase) {
 }
 
 /**
- * Soft-deletes a user (sets deleted_at + status='inactive' server-side —
- * see soft_delete_user() in supabase/schema.sql). They stop appearing in
- * fetchAdminUsers and can no longer sign in; every record they ever
- * created elsewhere is untouched.
+ * Soft-deletes a user via the admin-delete-user Edge Function: runs
+ * soft_delete_user() (deleted_at + status='inactive' — see
+ * supabase/schema.sql) plus a step that RPC can't do itself — freeing the
+ * email address for reuse. auth.admin.inviteUserByEmail rejects an email
+ * still registered to ANY auth.users row, deleted or not, so without
+ * this step a "deleted" user's email could never be given to a new
+ * account. Needs the service-role key (via auth.admin.updateUserById),
+ * same reason "Add User" has to be an Edge Function too. They stop
+ * appearing in fetchAdminUsers and can no longer sign in; every record
+ * they ever created elsewhere is untouched.
  * @param {string} targetId
  * @param {any} [client]
  */
 export async function deleteUser(targetId, client = supabase) {
   if (!client) throw new Error('Supabase is not configured.');
-  const { data, error } = await client.rpc('soft_delete_user', { target_id: targetId });
-  if (error) throw error;
+  const { data: sessionData } = await client.auth.getSession();
+  const token = sessionData?.session?.access_token;
+  if (!token) throw new Error('Not signed in.');
+
+  const { data, error } = await client.functions.invoke('admin-delete-user', {
+    body: { targetId },
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (error) throw new Error(await extractFunctionErrorMessage(error, 'Could not delete this user.'));
+  if (data?.error) throw new Error(data.error);
   return data;
 }

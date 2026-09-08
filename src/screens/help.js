@@ -594,7 +594,7 @@ function renderUsersRoles() {
       'Click <strong>Delete</strong> next to a user and confirm.',
       'They immediately stop being able to sign in and disappear from this list.',
     ])}
-    ${note('This doesn\'t touch anything they ever did — every purchase order, invoice, Action Log entry, and every other record they created stays exactly as it was, still showing their name. Deleting only removes the account itself, and there\'s no "undo" button in the app for it — since their email stays reserved by the deleted account, re-inviting them won\'t work either. If it was a mistake, it has to be reversed directly on the database by whoever administers the Supabase project.')}
+    ${note('This doesn\'t touch anything they ever did — every purchase order, invoice, Action Log entry, and every other record they created stays exactly as it was, still showing their name. Deleting only removes the account itself, and frees up their email address — a brand-new "Add User" invite can reuse it right away. There\'s no "undo" button in the app for a delete, though: if it was a mistake, ask another admin to invite them again as a new account (their old activity history stays attached to the deleted account, not the new one).')}
     `
   );
 }

@@ -1582,3 +1582,65 @@ again, so it needs the migration applied manually to any live Supabase
 project before `soft_delete_user` (or its integration test) will work
 there — after which the two users named in the original request can
 actually be deleted from the live Admin → Users & Roles screen.
+
+## Fix: a deleted user's email couldn't actually be reused
+
+Found immediately in practice: after deleting the two users above and
+trying to re-invite people on the same addresses, "Add User" failed.
+`soft_delete_user()` only ever touched `public.users` — the deleted
+user's Supabase Auth account (and the email registered to it) was left
+exactly as it was, and `auth.admin.inviteUserByEmail` rejects an email
+still registered to *any* `auth.users` row, deleted-in-this-app's-sense
+or not. So "deleted" never actually freed the identity the way it
+needed to. (The name half of the original report wasn't a real second
+issue — there's no uniqueness constraint on `users.name` anywhere,
+client or server; reusing a name always worked.)
+
+Freeing an email requires `auth.admin.updateUserById`, which — like
+`inviteUserByEmail` — only ever works with the service-role key, so it
+can't be a plain RPC.
+
+- `supabase/functions/admin-delete-user/index.ts` (new): mirrors
+  `admin-invite-user`'s shape. Runs `soft_delete_user()` through a
+  client scoped to the *caller's* own JWT — so that RPC's existing
+  `is_admin()`/no-self-delete guard is the single source of truth for
+  who can delete whom, not duplicated here — then, only once that
+  succeeds, uses the service-role client to rename the deleted user's
+  email to `deleted+<their-id>@deleted.invalid` in both `auth.users`
+  (`updateUserById`) and `public.users` (keeping the two in sync, and
+  freeing `public.users.email`'s own unique constraint too).
+  `.invalid` is the RFC 2606 domain reserved for exactly this — a
+  placeholder guaranteed to never resolve as a real address, and unique
+  per user by construction since it's keyed on their id.
+- `src/admin.js`: `deleteUser()` now calls this Edge Function (same
+  token-fetching/error-extraction pattern as `inviteUser()`) instead of
+  calling `soft_delete_user()` directly — `extractFunctionErrorMessage`
+  gained a `fallback` parameter so both functions can share it with
+  their own default error text.
+- `supabase/README.md` and `README.md`'s structure listing: document
+  deploying `admin-delete-user` alongside `admin-invite-user`.
+- `src/screens/help.js`: corrected the "no undo" note, which had
+  (accurately, for the state that shipped) said re-inviting a deleted
+  user's email wouldn't work — it does now, that's the whole point of
+  this fix.
+- `e2e/phase1.spec.js`: the delete tests now mock
+  `**/functions/v1/admin-delete-user**` instead of the RPC directly.
+  Rewrote them once it became clear demo mode can't actually exercise a
+  successful call here — `getSession()` never resolves a token in demo
+  mode (no real sign-in ever happens; same structural gap
+  `admin-invite-user` already had, which is why no e2e test anywhere in
+  this app has ever verified a *successful* invite either, only that
+  invalid input never reaches it). What demo mode CAN verify: the
+  confirm dialog names the right user, cancelling never calls the
+  function, and a failed attempt (which is what demo mode always
+  produces, for exactly that reason) surfaces via alert and leaves the
+  row in place. The real success path — `soft_delete_user`'s own
+  guard logic — is covered by `scripts/test-rls-users.mjs` against a
+  real signed-in session; the Edge-Function-only email-freeing step
+  has no automated coverage, same as invite's email-sending step.
+
+Verified locally: lint, typecheck, 143 unit tests, full e2e suite
+green. No `schema.sql` change this time — only the new Edge Function
+needs deploying (`supabase functions deploy admin-delete-user`) before
+a delete actually frees the email for reuse; `soft_delete_user` itself
+already works against the live project from the previous entry.

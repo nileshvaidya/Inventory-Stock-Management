@@ -119,6 +119,7 @@ supabase/
   README.md                  # Supabase project setup steps
   functions/
     admin-invite-user/       # Edge Function: creates the auth user + profile row for "Add User"
+    admin-delete-user/       # Edge Function: soft-deletes a user and frees their email for reuse
 .github/workflows/ci.yml   # lint → typecheck → unit → e2e → build, + a separate RLS integration job
 ```
 
