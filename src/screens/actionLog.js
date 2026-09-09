@@ -67,7 +67,7 @@ export async function render(container) {
     return;
   }
 
-  const content = renderShell(container, { activeRoute: '/action-log', user });
+  const content = await renderShell(container, { activeRoute: '/action-log', user });
   content.setAttribute('data-screen', 'action-log');
   const store = createStore(initialState());
 

@@ -120,6 +120,14 @@ test.describe('Phase 0 — sign out', () => {
   // meaningfully "sign out" by construction. A mocked real session (same
   // pattern as the inactive-user test above) doesn't have that problem.
   test('returns to the login screen and clears the session', async ({ page }) => {
+    // Roles & Rights addendum: the Dashboard landing page fetches this
+    // before its own shell/data-screen attribute is set (needed for the
+    // sidebar's first paint to reflect it, unlike widget data — see
+    // dashboard.js). Unmocked it still resolves via .catch(() => []), but
+    // a real sign-in flow already has more baseline latency than a demo-
+    // mode one, and the extra round trip to a nonexistent host was enough
+    // to push this test past its default assertion timeout.
+    await page.route('**/rest/v1/role_permissions**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
     await page.route('**/auth/v1/token**', (route) =>
       route.fulfill({
         status: 200,

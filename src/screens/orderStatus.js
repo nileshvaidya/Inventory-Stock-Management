@@ -13,6 +13,7 @@ import { fetchProjects } from '../projects.js';
 import { PO_STATUSES, poStatusLabel, poStatusTagClass } from '../poStatus.js';
 import { toCsv, downloadCsv } from '../csvExport.js';
 import { repaintPreservingFocus, afterFocusSettles, skipDateSegmentsOnTab, onRealBlur } from '../domFocus.js';
+import { fetchRolePermissions } from '../rolePermissions.js';
 
 export async function render(container) {
   const user = await getCurrentProfile();
@@ -20,13 +21,18 @@ export async function render(container) {
     window.location.hash = '#/login';
     return;
   }
-  if (!canViewModule('/order-status', user.role)) {
+  // Fetched before the guard (Roles & Rights addendum) — a role granted
+  // the matching right sees and can use this screen even though it's not
+  // in navPermissions.js's own fixed list, so the guard has to consult
+  // the same rows the sidebar link's own visibility does (canViewModule).
+  const rolePermissions = await fetchRolePermissions().catch(() => []);
+  if (!canViewModule('/order-status', user.role, rolePermissions)) {
     window.location.hash = '#/dashboard';
     return;
   }
   const canEdit = user.role === 'admin';
 
-  const content = renderShell(container, { activeRoute: '/order-status', user });
+  const content = await renderShell(container, { activeRoute: '/order-status', user, rolePermissions });
   content.setAttribute('data-screen', 'order-status');
   const store = createStore({
     orders: [],

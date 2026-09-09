@@ -11,6 +11,7 @@ import { fetchPurchaseOrders } from '../purchaseOrders.js';
 import { validateInvoiceForm } from '../validation.js';
 import { toCsv, downloadCsv } from '../csvExport.js';
 import { repaintPreservingFocus, afterFocusSettles, skipDateSegmentsOnTab, onRealBlur } from '../domFocus.js';
+import { fetchRolePermissions } from '../rolePermissions.js';
 import { extractPdfText, parseInvoiceNumber, parseInvoiceDate, parseInvoiceAmount } from '../pdfParser.js';
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
@@ -66,12 +67,17 @@ export async function render(container) {
     window.location.hash = '#/login';
     return;
   }
-  if (!canViewModule('/invoices', user.role)) {
+  // Fetched before the guard (Roles & Rights addendum) — a role granted
+  // the matching right sees and can use this screen even though it's not
+  // in navPermissions.js's own fixed list, so the guard has to consult
+  // the same rows the sidebar link's own visibility does (canViewModule).
+  const rolePermissions = await fetchRolePermissions().catch(() => []);
+  if (!canViewModule('/invoices', user.role, rolePermissions)) {
     window.location.hash = '#/dashboard';
     return;
   }
 
-  const content = renderShell(container, { activeRoute: '/invoices', user });
+  const content = await renderShell(container, { activeRoute: '/invoices', user, rolePermissions });
   content.setAttribute('data-screen', 'invoices');
   const store = createStore({
     invoices: [],

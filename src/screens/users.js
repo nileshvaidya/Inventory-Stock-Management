@@ -22,7 +22,7 @@ export async function render(container) {
     return;
   }
 
-  const content = renderShell(container, { activeRoute: '/users', user });
+  const content = await renderShell(container, { activeRoute: '/users', user });
   content.setAttribute('data-screen', 'users');
   const store = createStore({ users: [], loading: true, error: false });
 

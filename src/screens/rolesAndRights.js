@@ -26,7 +26,14 @@ export async function render(container) {
     return;
   }
 
-  const content = renderShell(container, { activeRoute: '/roles-and-rights', user });
+  // rolePermissions: [] — not a fetch avoided lazily, a real no-op: this
+  // screen's own guard above already restricts it to admin, and admin's
+  // sidebar visibility never depends on role_permissions at all (every
+  // route admin needs is already in MODULE_ROLES' static list). Passing
+  // an explicit empty array here is what stops renderShell from issuing
+  // its own redundant fetch for a screen already about to load and
+  // display the exact same table's full contents itself, right below.
+  const content = await renderShell(container, { activeRoute: '/roles-and-rights', user, rolePermissions: [] });
   content.setAttribute('data-screen', 'roles-and-rights');
   const store = createStore({ rows: [], loading: true, error: false });
 

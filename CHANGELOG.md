@@ -1755,3 +1755,71 @@ visually in a real browser session. This changes `supabase/schema.sql`,
 so it needs the migration applied manually to any live Supabase project
 before `role_permissions`/`admin_set_role_permission` (or the new
 integration test) will work there.
+
+## Fix: granting a right didn't reveal its screen — nav visibility now follows Roles & Rights
+
+Reported directly: granted Purchase the Finance right, but Invoices
+still didn't show up in the sidebar. Root cause: `navPermissions.js`'s
+`MODULE_ROLES` was still the *entire* answer to "can this role see this
+screen" — a completely separate, static list from the dynamic
+`role_permissions` table the previous entry just made editable.
+Granting a right and seeing its screen could go out of sync by design,
+not by bug — the two systems had never been connected.
+
+- `src/navPermissions.js`: new `MODULE_PERMISSIONS` (route -> the one
+  right that reveals it, for the ~10 routes with a real write action
+  tied to one of the 7 rights). `canViewModule(route, role,
+  rolePermissions)` now takes those rows as a third argument and
+  reveals a screen if the role holds the matching right, on top of —
+  never instead of — `MODULE_ROLES`' own fixed floor. A screen with no
+  entry (Dashboard, Help, Reports, Master Material Status, Users &
+  Roles, Roles & Rights, Action Log) is unaffected, since no right
+  corresponds to it. Bill Payments is deliberately excluded too, despite
+  sharing Invoices' `manage_finance` right — build brief §1's "authorized
+  only, not even admin" restriction stays absolute.
+- `src/layout.js`: `renderShell` is now async and fetches
+  `role_permissions` itself (or accepts an already-fetched copy from the
+  caller, to avoid fetching twice) so the sidebar's own filtering can
+  call the new 3-argument `canViewModule`. Every one of its ~19 call
+  sites already lived inside an `async function render()`, so this was
+  adding `await`, not restructuring.
+- The 11 screens whose own route guard is tied to a right (PO Upload,
+  Order Status, Material Inward, Inspection, Inventory, Price History,
+  BoM Builder, Work Orders, Invoices, Stock Statement, Material
+  Dispatch) now fetch `role_permissions` *before* the guard runs — the
+  guard has to consult the same rows the sidebar link's own visibility
+  does, or a role could see the link but get redirected away the moment
+  they click it. `dashboard.js`'s own KPI-widget selection (it has its
+  own parallel `canViewModule` calls, one per widget) got the same fix
+  for the same reason — a role granted Finance now also gets the
+  Overdue Invoices widget, not just the sidebar link.
+- `scripts/capture-help-screenshots.mjs` unaffected — every capture
+  already used an admin demo session, and admin's own visibility never
+  depends on `role_permissions` (it's already in every route's static
+  floor).
+- `src/navPermissions.test.js`: new cases for the reveal (Invoices via
+  `manage_finance`, Inventory/Price History via `manage_items`), that a
+  right for one screen never leaks into an unrelated one, that Bill
+  Payments stays excluded even with `manage_finance` granted, and that
+  a screen with no matching right is unaffected by any grant.
+  `e2e/rolesAndRights.spec.js` gained an end-to-end version of the exact
+  reported scenario: the sidebar link, direct navigation, the Bill
+  Payments exception, and the Item Master right revealing both
+  Inventory and Price History.
+- Fixed alongside, found while testing: `rolesAndRights.js` itself
+  wasn't passing its own already-fetched rows into `renderShell`, so it
+  triggered a second, independent `role_permissions` fetch on top of
+  its own — harmless in the app, but it broke two tests' call-counting
+  mocks. Fixed by passing `rolePermissions: []` explicitly (a genuine
+  no-op, not a lazy default: this screen is already admin-only, and
+  admin's sidebar never depends on `role_permissions` at all). Also
+  found: three existing tests (two in `dashboard.spec.js`, one in
+  `phase0.spec.js`) that reach Dashboard via a real (non-demo-mode)
+  sign-in were marginal enough that the one new network round trip
+  pushed them past their default 5s assertion timeout — fixed by mocking
+  `role_permissions` there too, same as everywhere else in this app's
+  e2e suite mocks the Supabase HTTP layer precisely.
+
+Verified locally: lint, typecheck, 148 unit tests, full e2e suite
+green; production build clean. No `schema.sql` change this time — pure
+client-side fix, nothing to migrate.

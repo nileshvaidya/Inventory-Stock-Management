@@ -99,13 +99,21 @@ export async function render(container) {
     window.location.hash = '#/login';
     return;
   }
-  if (!canViewModule('/material-dispatch', user.role)) {
+  // Fetched before the guard (Roles & Rights addendum) — a role granted
+  // the matching right sees and can use this screen even though it's not
+  // in navPermissions.js's own fixed list, so the guard has to consult
+  // the same rows the sidebar link's own visibility does (canViewModule).
+  // load() below fetches its own copy for the "+ New Dispatch" button's
+  // own gating — a second small fetch, not reused here, to keep this
+  // early check independent of that state-managed flow.
+  const rolePermissionsForGuard = await fetchRolePermissions().catch(() => []);
+  if (!canViewModule('/material-dispatch', user.role, rolePermissionsForGuard)) {
     window.location.hash = '#/dashboard';
     return;
   }
   const isAdmin = user.role === 'admin';
 
-  const content = renderShell(container, { activeRoute: '/material-dispatch', user });
+  const content = await renderShell(container, { activeRoute: '/material-dispatch', user, rolePermissions: rolePermissionsForGuard });
   content.setAttribute('data-screen', 'material-dispatch');
   const store = createStore(initialState());
 

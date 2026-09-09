@@ -48,7 +48,7 @@ export async function render(container) {
     return;
   }
 
-  const content = renderShell(container, { activeRoute: '/reports', user });
+  const content = await renderShell(container, { activeRoute: '/reports', user });
   content.setAttribute('data-screen', 'reports');
   const store = createStore(initialState());
 

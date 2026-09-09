@@ -22,7 +22,7 @@ export async function render(container) {
     return;
   }
 
-  const content = renderShell(container, { activeRoute: '/master-material-status', user });
+  const content = await renderShell(container, { activeRoute: '/master-material-status', user });
   content.setAttribute('data-screen', 'master-material-status');
   const store = createStore({
     rows: [],

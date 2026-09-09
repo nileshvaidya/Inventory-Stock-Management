@@ -42,7 +42,7 @@ export async function render(container) {
     return;
   }
 
-  const content = renderShell(container, { activeRoute: '/bill-payments', user });
+  const content = await renderShell(container, { activeRoute: '/bill-payments', user });
   content.setAttribute('data-screen', 'bill-payments');
   const store = createStore({
     invoices: [],

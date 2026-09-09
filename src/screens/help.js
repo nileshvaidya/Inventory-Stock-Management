@@ -36,7 +36,7 @@ export async function render(container) {
     return;
   }
 
-  const content = renderShell(container, { activeRoute: '/help', user });
+  const content = await renderShell(container, { activeRoute: '/help', user });
   content.setAttribute('data-screen', 'help');
 
   const canSeeBillPayments = canViewModule('/bill-payments', user.role);
@@ -207,7 +207,8 @@ function renderGettingStarted(canSeeBillPayments) {
     ${note(`A brand-new account has no role yet, so almost every screen is hidden until an admin assigns you one from ${jump('help-users-roles', 'Users & Roles')} — see the Dashboard below.`)}
 
     ${h3('What you see depends on your role')}
-    <p style="font-size:14px;color:var(--color-neutral-300);margin:0">The sidebar only ever shows the screens your role can use — nobody sees every menu item. The roles are: <strong>Admin</strong> (sees and manages everything), <strong>Purchase</strong> (PO Upload, Order Status), <strong>Store/Warehouse</strong> (Material Inward, Inventory, Price History, Work Orders, Material Dispatch), <strong>Inspector</strong> (Inspection), <strong>Accounts/Authorized</strong> (${authorizedModules}), and <strong>Production</strong> (Inventory, Price History, BoM Builder, Work Orders, Reports). If a screen you need is missing, ask an admin to check your role in ${jump('help-users-roles', 'Users & Roles')}.</p>
+    <p style="font-size:14px;color:var(--color-neutral-300);margin:0 0 8px">The sidebar only ever shows the screens your role can use — nobody sees every menu item. The roles are: <strong>Admin</strong> (sees and manages everything), <strong>Purchase</strong> (PO Upload, Order Status), <strong>Store/Warehouse</strong> (Material Inward, Inventory, Price History, Work Orders, Material Dispatch), <strong>Inspector</strong> (Inspection), <strong>Accounts/Authorized</strong> (${authorizedModules}), and <strong>Production</strong> (Inventory, Price History, BoM Builder, Work Orders, Reports). If a screen you need is missing, ask an admin to check your role in ${jump('help-users-roles', 'Users & Roles')}.</p>
+    <p style="font-size:14px;color:var(--color-neutral-300);margin:0">That's the starting point for every role, but it's not the whole picture: an admin can also grant your role one of the rights on ${jump('help-roles-and-rights', 'Roles & Rights')} (e.g. Finance, Item Master), which reveals that right's screen too, on top of the list above — Purchase granted the Finance right sees Invoices and Stock Statement, not just PO Upload and Order Status.</p>
     `
   );
 }
@@ -605,10 +606,11 @@ function renderRolesAndRights() {
     'help-roles-and-rights',
     'Roles & Rights',
     `
-    <p style="font-size:14px;color:var(--color-neutral-300);margin-bottom:10px">Admin-only: what each role can actually <em>do</em>, separate from which screens they can see (that's set per-user on ${jump('help-users-roles', 'Users & Roles')}). A checked box means that role can perform that action right now — unchecked means the server itself will reject the attempt, not just hide the button.</p>
+    <p style="font-size:14px;color:var(--color-neutral-300);margin-bottom:10px">Admin-only: what each role can actually <em>do</em> — create/edit/approve/delete, not just view. A checked box means that role can perform that action right now — unchecked means the server itself will reject the attempt, not just hide the button. Granting a right also reveals its screen in the sidebar to that role, on top of whatever ${jump('help-users-roles', 'Users & Roles')}'s per-user role already shows them — the two work together, this isn't a separate, unrelated setting.</p>
     ${img('27-roles-and-rights.png', 'The Roles & Rights matrix — 7 rights as rows, 6 roles as columns, with checkboxes and Admin\'s column checked and disabled')}
     <p style="font-size:14px;color:var(--color-neutral-300);margin:0 0 8px">The 7 rights: <strong>Purchasing</strong> (vendors/projects/purchase orders), <strong>Store Operations</strong> (material inward, stock movements, delivery challans, material dispatch), <strong>Inspections</strong>, <strong>Item Master</strong> (items, unit rates), <strong>Finance</strong> (invoices, bill documents), <strong>BoM Builder</strong>, and <strong>Work Orders</strong>.</p>
     ${ol(['Click any checkbox to grant or revoke that right for that role — it takes effect immediately, no save button.'])}
+    ${note('Bill Payments is the one exception: it stays visible to the Accounts/Authorized role only, even though it shares the Finance right with Invoices — a deliberate, built-in restriction that granting Finance elsewhere never reopens.')}
     ${note('Admin always has every right and that column can\'t be unchecked — this is intentional, the same "can\'t lock yourself out" protection as Users & Roles\' own role/status controls. If every admin somehow lost the ability to manage rights, nobody could ever fix it again.')}
     `
   );

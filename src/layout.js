@@ -8,6 +8,7 @@
 import { escapeHtml, renderIdentityBlock, initials } from './components.js';
 import { signOutUser } from './auth.js';
 import { canViewModule } from './navPermissions.js';
+import { fetchRolePermissions } from './rolePermissions.js';
 
 const NAV_ITEMS = [
   { route: '/dashboard', label: 'Dashboard', phase: 0 },
@@ -41,12 +42,21 @@ const LOGO_SVG = (size) => `
   </svg>`;
 
 /**
+ * Async because the sidebar itself now needs role_permissions (Roles &
+ * Rights addendum) to decide whether a role sees a screen it was only
+ * granted the matching write right for, not listed in its fixed floor —
+ * every one of this function's ~19 call sites already lives inside an
+ * `async function render()`, so this only ever meant adding `await`.
+ * Pass `rolePermissions` when the calling screen already fetched it for
+ * its own route guard (see e.g. invoices.js) to avoid fetching twice;
+ * omit it otherwise and this fetches its own copy.
  * @param {HTMLElement} container
- * @param {{ activeRoute: string, user: { id: string, name: string, email: string, role: string|null } }} opts
- * @returns {HTMLElement} the content mount point for the calling screen to render into
+ * @param {{ activeRoute: string, user: { id: string, name: string, email: string, role: string|null }, rolePermissions?: Array<{ role: string, permission: string }> }} opts
+ * @returns {Promise<HTMLElement>} the content mount point for the calling screen to render into
  */
-export function renderShell(container, { activeRoute, user }) {
-  const visibleNavItems = NAV_ITEMS.filter((item) => canViewModule(item.route, user.role));
+export async function renderShell(container, { activeRoute, user, rolePermissions }) {
+  const rows = rolePermissions ?? (await fetchRolePermissions().catch(() => []));
+  const visibleNavItems = NAV_ITEMS.filter((item) => canViewModule(item.route, user.role, rows));
 
   const navHtml = (mobile) =>
     visibleNavItems.map((item) => {
@@ -110,5 +120,5 @@ export function renderShell(container, { activeRoute, user }) {
     });
   });
 
-  return container.querySelector('[data-role="content"]');
+  return /** @type {HTMLElement} */ (container.querySelector('[data-role="content"]'));
 }

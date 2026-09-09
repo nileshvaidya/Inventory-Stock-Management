@@ -15,6 +15,7 @@ import { createPurchaseOrder } from '../purchaseOrders.js';
 import { fetchMappingForVendor, saveMappingForVendor } from '../importMappings.js';
 import { validatePurchaseOrderForm, validateLineItem } from '../validation.js';
 import { repaintPreservingFocus, afterFocusSettles, skipDateSegmentsOnTab, onRealBlur } from '../domFocus.js';
+import { fetchRolePermissions } from '../rolePermissions.js';
 
 const DOC_TYPE = 'purchase_order';
 
@@ -112,12 +113,17 @@ export async function render(container) {
     window.location.hash = '#/login';
     return;
   }
-  if (!canViewModule('/po-upload', user.role)) {
+  // Fetched before the guard (Roles & Rights addendum) — a role granted
+  // manage_purchasing sees and can use this screen even though it's not
+  // in navPermissions.js's own fixed list, so the guard has to consult
+  // the same rows the sidebar link's own visibility does (canViewModule).
+  const rolePermissions = await fetchRolePermissions().catch(() => []);
+  if (!canViewModule('/po-upload', user.role, rolePermissions)) {
     window.location.hash = '#/dashboard';
     return;
   }
 
-  const content = renderShell(container, { activeRoute: '/po-upload', user });
+  const content = await renderShell(container, { activeRoute: '/po-upload', user, rolePermissions });
   content.setAttribute('data-screen', 'po-upload');
   const store = createStore(initialState());
 

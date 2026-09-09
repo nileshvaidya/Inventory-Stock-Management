@@ -90,6 +90,15 @@ function mockAdminWidgetData(page) {
         ]),
       })
     ),
+    // Roles & Rights addendum: renderShell/canViewModule (dashboard.js's
+    // own widget gating, and — for the "links to its own screen" test —
+    // Inventory's own guard after navigating there) now fetch this on
+    // every authenticated screen. Unmocked, it still resolves via
+    // fetchRolePermissions().catch(() => []), but the extra round trip to
+    // a nonexistent host was enough to occasionally push an already-
+    // marginal test past its default 5s assertion timeout.
+    page.route('**/rest/v1/role_permissions**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })),
+    page.route('**/rest/v1/item_current_rate**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })),
   ]);
 }
 
@@ -122,6 +131,7 @@ test.describe('Dashboard — role-scoped KPI widgets', () => {
   });
 
   test('store sees only store-relevant widgets, and no admin-only recent activity', async ({ page }) => {
+    await page.route('**/rest/v1/role_permissions**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
     await page.route('**/rest/v1/items**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
     await page.route('**/rest/v1/available_stock**', (route) =>
       route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ item_id: 'i1', name: 'Widget', current_qty: 5, reserved_qty: 0, available_qty: 5, reorder_level: 10 }]) })
@@ -158,6 +168,7 @@ test.describe('Dashboard — role-scoped KPI widgets', () => {
   });
 
   test('a role with no widget-eligible modules sees a friendly empty state instead of nothing', async ({ page }) => {
+    await page.route('**/rest/v1/role_permissions**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
     await page.route('**/auth/v1/token**', (route) =>
       route.fulfill({
         status: 200,

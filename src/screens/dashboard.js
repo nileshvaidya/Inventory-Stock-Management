@@ -21,6 +21,7 @@ import { fetchWorkOrders } from '../workOrders.js';
 import { fetchInvoices } from '../invoices.js';
 import { fetchMaterialDispatches } from '../materialDispatch.js';
 import { fetchActionLog, describeAction } from '../actionLog.js';
+import { fetchRolePermissions } from '../rolePermissions.js';
 
 const OPEN_PO_STATUSES = ['to_be_received', 'partially_received'];
 const ACTIVE_WO_STATUSES = ['open', 'reserved'];
@@ -33,15 +34,19 @@ function belowReorderCount(stock) {
 /**
  * Which KPI cards this role gets, and how each fetches its own count —
  * same permission check as the sidebar (navPermissions.js), so a widget
- * only ever queries a table this role can actually read.
+ * only ever queries a table this role can actually read. rolePermissions
+ * (Roles & Rights addendum) makes this consistent with canViewModule's
+ * own dynamic reveal — a role granted a right sees the matching widget
+ * too, not just the sidebar link and the screen itself.
  * @param {string|null|undefined} role
+ * @param {Array<{ role: string, permission: string }>} rolePermissions
  */
-function buildWidgets(role) {
+function buildWidgets(role, rolePermissions) {
   const widgets = [];
-  if (canViewModule('/inventory', role)) {
+  if (canViewModule('/inventory', role, rolePermissions)) {
     widgets.push({ key: 'below-reorder', label: 'Items Below Reorder Level', href: '#/inventory', fetch: async () => belowReorderCount(await fetchAvailableStock()) });
   }
-  if (canViewModule('/order-status', role)) {
+  if (canViewModule('/order-status', role, rolePermissions)) {
     widgets.push({
       key: 'open-pos',
       label: 'Open Purchase Orders',
@@ -49,10 +54,10 @@ function buildWidgets(role) {
       fetch: async () => (await fetchPurchaseOrders()).filter((po) => OPEN_PO_STATUSES.includes(po.status)).length,
     });
   }
-  if (canViewModule('/inspection', role)) {
+  if (canViewModule('/inspection', role, rolePermissions)) {
     widgets.push({ key: 'pending-inspection', label: 'Pending Inspections', href: '#/inspection', fetch: async () => (await fetchPendingInspection()).length });
   }
-  if (canViewModule('/work-orders', role)) {
+  if (canViewModule('/work-orders', role, rolePermissions)) {
     widgets.push({
       key: 'active-work-orders',
       label: 'Active Work Orders',
@@ -61,10 +66,10 @@ function buildWidgets(role) {
     });
     widgets.push({ key: 'shortages', label: 'Component Shortages', href: '#/work-orders', fetch: async () => (await fetchShortages()).length });
   }
-  if (canViewModule('/invoices', role)) {
+  if (canViewModule('/invoices', role, rolePermissions)) {
     widgets.push({ key: 'overdue-invoices', label: 'Overdue Invoices', href: '#/invoices', fetch: async () => (await fetchInvoices({ status: 'overdue' })).length });
   }
-  if (canViewModule('/material-dispatch', role)) {
+  if (canViewModule('/material-dispatch', role, rolePermissions)) {
     widgets.push({
       key: 'pending-dispatch',
       label: 'Dispatches Awaiting Authorization',
@@ -86,11 +91,12 @@ export async function render(container) {
     return;
   }
 
-  const content = renderShell(container, { activeRoute: '/dashboard', user });
+  const rolePermissions = await fetchRolePermissions().catch(() => []);
+  const content = await renderShell(container, { activeRoute: '/dashboard', user, rolePermissions });
   content.setAttribute('data-screen', 'dashboard');
 
-  const widgetDefs = buildWidgets(user.role);
-  const canSeeActivity = canViewModule('/action-log', user.role);
+  const widgetDefs = buildWidgets(user.role, rolePermissions);
+  const canSeeActivity = canViewModule('/action-log', user.role, rolePermissions);
   const store = createStore(initialState());
 
   async function load() {
