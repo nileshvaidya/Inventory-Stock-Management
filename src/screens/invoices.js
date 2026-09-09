@@ -11,7 +11,7 @@ import { fetchPurchaseOrders } from '../purchaseOrders.js';
 import { validateInvoiceForm } from '../validation.js';
 import { toCsv, downloadCsv } from '../csvExport.js';
 import { repaintPreservingFocus, afterFocusSettles, skipDateSegmentsOnTab, onRealBlur } from '../domFocus.js';
-import { fetchRolePermissions } from '../rolePermissions.js';
+import { fetchRolePermissionsGuarded } from '../rolePermissions.js';
 import { extractPdfText, parseInvoiceNumber, parseInvoiceDate, parseInvoiceAmount } from '../pdfParser.js';
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
@@ -71,7 +71,7 @@ export async function render(container) {
   // the matching right sees and can use this screen even though it's not
   // in navPermissions.js's own fixed list, so the guard has to consult
   // the same rows the sidebar link's own visibility does (canViewModule).
-  const rolePermissions = await fetchRolePermissions().catch(() => []);
+  const rolePermissions = await fetchRolePermissionsGuarded();
   if (!canViewModule('/invoices', user.role, rolePermissions)) {
     window.location.hash = '#/dashboard';
     return;

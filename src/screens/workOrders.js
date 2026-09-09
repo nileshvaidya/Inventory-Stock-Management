@@ -30,7 +30,7 @@ import {
 import { fetchItems } from '../items.js';
 import { validateWorkOrderForm } from '../validation.js';
 import { repaintPreservingFocus } from '../domFocus.js';
-import { fetchRolePermissions, hasPermission } from '../rolePermissions.js';
+import { fetchRolePermissionsGuarded, hasPermission } from '../rolePermissions.js';
 
 const STATUS_LABELS = { open: 'Open', reserved: 'Reserved', completed: 'Completed', cancelled: 'Cancelled' };
 const STATUS_TAG_CLASSES = { open: 'tag-neutral', reserved: 'tag-accent', completed: 'tag-success', cancelled: 'tag-accent-2' };
@@ -76,7 +76,7 @@ export async function render(container) {
   // load() below fetches its own copy for the New/Reserve/Complete
   // buttons' own gating — a second small fetch, not reused here, to keep
   // this early check independent of that state-managed flow.
-  const rolePermissionsForGuard = await fetchRolePermissions().catch(() => []);
+  const rolePermissionsForGuard = await fetchRolePermissionsGuarded();
   if (!canViewModule('/work-orders', user.role, rolePermissionsForGuard)) {
     window.location.hash = '#/dashboard';
     return;
@@ -92,7 +92,7 @@ export async function render(container) {
       const [workOrders, items, rolePermissions] = await Promise.all([
         fetchWorkOrders(),
         fetchItems(),
-        fetchRolePermissions().catch(() => []),
+        fetchRolePermissionsGuarded(),
       ]);
       store.setState({ workOrders, items, rolePermissions, loading: false, error: false });
     } catch {

@@ -1823,3 +1823,65 @@ not by bug — the two systems had never been connected.
 Verified locally: lint, typecheck, 148 unit tests, full e2e suite
 green; production build clean. No `schema.sql` change this time — pure
 client-side fix, nothing to migrate.
+
+## Fix: bound the new `role_permissions` fetch to a timeout, so CI's slower network didn't fail dozens of unrelated tests
+
+Pushing the nav-follows-rights fix above turned CI's `build` job red with
+43 e2e failures across nine-plus spec files — dramatically more than the
+3 tests found and fixed locally beforehand. All 43 shared the same
+`element(s) not found` pattern after a 5s timeout, on screens that have
+nothing to do with Roles & Rights.
+
+Root cause: `role_permissions` is now fetched on nearly every
+authenticated screen's initial render (`renderShell`, the 11
+permission-tied screens' route guards, Dashboard's widget selection).
+Every one of those fetches is deliberately non-blocking on failure
+(`.catch(() => [])`), but *how fast* an unmocked request resolves to a
+catchable error depends entirely on the network it's running against —
+this sandbox's local dev environment fails those fast; GitHub Actions'
+network apparently doesn't, so screens/tests that never needed
+`role_permissions` mocked before now went past Playwright's default
+5000ms assertion timeout waiting on a request nobody was going to
+answer.
+
+Patching yet more individual tests' mocks (as done for the 3 local
+failures) doesn't scale to this and doesn't protect the next screen
+that reads `role_permissions` — the real fix is architectural: bound
+the fetch itself so it can never take longer than a fixed ceiling
+regardless of what the network does.
+
+- `src/rolePermissions.js`: added `fetchRolePermissionsGuarded(client,
+  timeoutMs = 2000)` — races `fetchRolePermissions()` against a timer
+  that resolves to `[]`, wrapped in try/catch so a real error also
+  resolves to `[]`. Same eventual behavior as
+  `fetchRolePermissions().catch(() => [])` on failure, just bounded to
+  2s instead of however long the network takes to actually reject.
+- Replaced `fetchRolePermissions().catch(() => [])` with
+  `fetchRolePermissionsGuarded()` at all 17 call sites across the 13
+  files that had it: `src/layout.js`, `src/screens/dashboard.js`, and
+  the 11 permission-tied screens' route guards (`poUpload.js`,
+  `orderStatus.js`, `materialInward.js`, `inspection.js`,
+  `priceHistory.js`, `invoices.js`, `stockStatement.js`,
+  `inventory.js`, `workOrders.js`, `bomBuilder.js`,
+  `materialDispatch.js` — the last four each had a second occurrence
+  for their own action-button-gating fetch, also replaced).
+- Deliberately left untouched: `rolesAndRights.js`'s own `load()`,
+  which still uses the plain `fetchRolePermissions()`. That screen's
+  whole point *is* this data — silently degrading to an empty matrix on
+  a slow network would hide a real problem behind what looks like "no
+  rights granted yet" instead of showing the existing Retry error
+  state.
+
+This is also a genuine production-resilience improvement beyond fixing
+CI: before this, an unreliable network could visibly delay every single
+navigation in the app by however long a failed request took to time
+out; now every screen's nav-visibility check settles within 2 seconds
+no matter what.
+
+Verified locally: lint, typecheck, 148 unit tests, full e2e suite
+(127/127, aside from one pre-existing, unrelated flaky assertion in
+`rolesAndRights.spec.js` that also fails intermittently on `main`
+before this change — a synchronous `expect(rpcBody)` immediately after
+`checkbox.click()` with no wait for the click's `change` handler to
+finish its network round trip); production build clean. No
+`schema.sql` change — pure client-side fix, nothing to migrate.

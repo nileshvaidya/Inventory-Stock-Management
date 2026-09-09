@@ -8,7 +8,7 @@ import { canViewModule } from '../navPermissions.js';
 import { fetchPendingInspection, recordInspection } from '../inspection.js';
 import { validateInspectionForm } from '../validation.js';
 import { repaintPreservingFocus } from '../domFocus.js';
-import { fetchRolePermissions } from '../rolePermissions.js';
+import { fetchRolePermissionsGuarded } from '../rolePermissions.js';
 
 function initialState() {
   return {
@@ -32,7 +32,7 @@ export async function render(container) {
   // the matching right sees and can use this screen even though it's not
   // in navPermissions.js's own fixed list, so the guard has to consult
   // the same rows the sidebar link's own visibility does (canViewModule).
-  const rolePermissions = await fetchRolePermissions().catch(() => []);
+  const rolePermissions = await fetchRolePermissionsGuarded();
   if (!canViewModule('/inspection', user.role, rolePermissions)) {
     window.location.hash = '#/dashboard';
     return;

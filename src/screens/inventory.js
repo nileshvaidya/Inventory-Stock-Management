@@ -22,7 +22,7 @@ import { fetchCurrentRates, setItemRate } from '../itemPricing.js';
 import { ITEM_TYPES, itemTypeLabel } from '../itemType.js';
 import { validateItemForm, validateStockMovementForm, validateRateForm } from '../validation.js';
 import { repaintPreservingFocus, afterFocusSettles, skipDateSegmentsOnTab, onRealBlur } from '../domFocus.js';
-import { fetchRolePermissions, hasPermission } from '../rolePermissions.js';
+import { fetchRolePermissionsGuarded, hasPermission } from '../rolePermissions.js';
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
@@ -70,7 +70,7 @@ export async function render(container) {
   // load() below fetches its own copy for the New Item/movement buttons'
   // own gating — a second small fetch, not reused here, to keep this
   // early check independent of that state-managed flow.
-  const rolePermissionsForGuard = await fetchRolePermissions().catch(() => []);
+  const rolePermissionsForGuard = await fetchRolePermissionsGuarded();
   if (!canViewModule('/inventory', user.role, rolePermissionsForGuard)) {
     window.location.hash = '#/dashboard';
     return;
@@ -103,7 +103,7 @@ export async function render(container) {
       // rolePermissions failing outright shouldn't block the whole screen
       // any more than fetchCurrentRates() failing does — canManageStock
       // just falls back to false (buttons hidden) until the next load.
-      const [stock, rolePermissions] = await Promise.all([loadStock(), fetchRolePermissions().catch(() => [])]);
+      const [stock, rolePermissions] = await Promise.all([loadStock(), fetchRolePermissionsGuarded()]);
       store.setState({ stock, rolePermissions, loading: false, error: false });
     } catch {
       store.setState({ loading: false, error: true });

@@ -24,7 +24,7 @@ import { canViewModule } from '../navPermissions.js';
 import { fetchStockStatement } from '../itemPricing.js';
 import { itemTypeLabel } from '../itemType.js';
 import { repaintPreservingFocus, afterFocusSettles, skipDateSegmentsOnTab, onRealBlur } from '../domFocus.js';
-import { fetchRolePermissions } from '../rolePermissions.js';
+import { fetchRolePermissionsGuarded } from '../rolePermissions.js';
 
 const COMPANY_NAME = 'ASK Info-Solutions LLP';
 
@@ -53,7 +53,7 @@ export async function render(container) {
   // the matching right sees and can use this screen even though it's not
   // in navPermissions.js's own fixed list, so the guard has to consult
   // the same rows the sidebar link's own visibility does (canViewModule).
-  const rolePermissions = await fetchRolePermissions().catch(() => []);
+  const rolePermissions = await fetchRolePermissionsGuarded();
   if (!canViewModule('/stock-statement', user.role, rolePermissions)) {
     window.location.hash = '#/dashboard';
     return;

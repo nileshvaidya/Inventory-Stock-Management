@@ -8,7 +8,7 @@
 import { escapeHtml, renderIdentityBlock, initials } from './components.js';
 import { signOutUser } from './auth.js';
 import { canViewModule } from './navPermissions.js';
-import { fetchRolePermissions } from './rolePermissions.js';
+import { fetchRolePermissionsGuarded } from './rolePermissions.js';
 
 const NAV_ITEMS = [
   { route: '/dashboard', label: 'Dashboard', phase: 0 },
@@ -55,7 +55,7 @@ const LOGO_SVG = (size) => `
  * @returns {Promise<HTMLElement>} the content mount point for the calling screen to render into
  */
 export async function renderShell(container, { activeRoute, user, rolePermissions }) {
-  const rows = rolePermissions ?? (await fetchRolePermissions().catch(() => []));
+  const rows = rolePermissions ?? (await fetchRolePermissionsGuarded());
   const visibleNavItems = NAV_ITEMS.filter((item) => canViewModule(item.route, user.role, rows));
 
   const navHtml = (mobile) =>

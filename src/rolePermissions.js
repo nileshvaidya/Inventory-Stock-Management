@@ -54,6 +54,31 @@ export async function fetchRolePermissions(client = supabase) {
 }
 
 /**
+ * Same data as fetchRolePermissions, but for callers where this is a UI-
+ * gating side concern (nav visibility, widget selection, action-button
+ * gating) rather than the point of the screen — never let a slow/unreliable
+ * network visibly stall navigation. Resolves to [] (same as today's
+ * `.catch(() => [])` failure behavior) on either a real error or a fetch
+ * that hasn't settled within `timeoutMs`, whichever comes first. Screens
+ * where role_permissions IS the actual content (Roles & Rights' own load())
+ * should keep using the plain, un-timed fetchRolePermissions instead, so a
+ * genuine failure surfaces as a real error rather than a silently-empty
+ * matrix.
+ * @param {any} [client]
+ * @param {number} [timeoutMs]
+ */
+export async function fetchRolePermissionsGuarded(client = supabase, timeoutMs = 2000) {
+  try {
+    return await Promise.race([
+      fetchRolePermissions(client),
+      new Promise((resolve) => setTimeout(() => resolve([]), timeoutMs)),
+    ]);
+  } catch {
+    return [];
+  }
+}
+
+/**
  * @param {{ role: string, permission: string, granted: boolean }} form
  * @param {any} [client]
  */

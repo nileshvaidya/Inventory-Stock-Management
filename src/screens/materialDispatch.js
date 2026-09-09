@@ -30,7 +30,7 @@ import { fetchItems } from '../items.js';
 import { validateMaterialDispatchForm } from '../validation.js';
 import { repaintPreservingFocus, afterFocusSettles, skipDateSegmentsOnTab, onRealBlur } from '../domFocus.js';
 import { extractPdfText, parseChallanText } from '../pdfParser.js';
-import { fetchRolePermissions, hasPermission } from '../rolePermissions.js';
+import { fetchRolePermissionsGuarded, hasPermission } from '../rolePermissions.js';
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
@@ -106,7 +106,7 @@ export async function render(container) {
   // load() below fetches its own copy for the "+ New Dispatch" button's
   // own gating — a second small fetch, not reused here, to keep this
   // early check independent of that state-managed flow.
-  const rolePermissionsForGuard = await fetchRolePermissions().catch(() => []);
+  const rolePermissionsForGuard = await fetchRolePermissionsGuarded();
   if (!canViewModule('/material-dispatch', user.role, rolePermissionsForGuard)) {
     window.location.hash = '#/dashboard';
     return;
@@ -123,7 +123,7 @@ export async function render(container) {
       const [dispatches, items, rolePermissions] = await Promise.all([
         fetchMaterialDispatches(),
         fetchItems(),
-        fetchRolePermissions().catch(() => []),
+        fetchRolePermissionsGuarded(),
       ]);
       store.setState({ dispatches, items, rolePermissions, loading: false, error: false });
     } catch {

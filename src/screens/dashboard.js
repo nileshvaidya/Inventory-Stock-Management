@@ -21,7 +21,7 @@ import { fetchWorkOrders } from '../workOrders.js';
 import { fetchInvoices } from '../invoices.js';
 import { fetchMaterialDispatches } from '../materialDispatch.js';
 import { fetchActionLog, describeAction } from '../actionLog.js';
-import { fetchRolePermissions } from '../rolePermissions.js';
+import { fetchRolePermissionsGuarded } from '../rolePermissions.js';
 
 const OPEN_PO_STATUSES = ['to_be_received', 'partially_received'];
 const ACTIVE_WO_STATUSES = ['open', 'reserved'];
@@ -91,7 +91,7 @@ export async function render(container) {
     return;
   }
 
-  const rolePermissions = await fetchRolePermissions().catch(() => []);
+  const rolePermissions = await fetchRolePermissionsGuarded();
   const content = await renderShell(container, { activeRoute: '/dashboard', user, rolePermissions });
   content.setAttribute('data-screen', 'dashboard');
 

@@ -21,7 +21,7 @@ import { fetchBoms, fetchProductionRuns, createBom, updateBom, archiveBom, recor
 import { fetchItems, createItem } from '../items.js';
 import { validateBomForm, validateItemForm, validateProductionForm } from '../validation.js';
 import { repaintPreservingFocus } from '../domFocus.js';
-import { fetchRolePermissions, hasPermission } from '../rolePermissions.js';
+import { fetchRolePermissionsGuarded, hasPermission } from '../rolePermissions.js';
 
 function emptyBomForm() {
   return { outputItemId: '', outputQty: '1', name: '', notes: '', components: [{ componentItemId: '', quantity: '' }] };
@@ -68,7 +68,7 @@ export async function render(container) {
   // load() below fetches its own copy for the New Recipe/production
   // buttons' own gating — a second small fetch, not reused here, to keep
   // this early check independent of that state-managed flow.
-  const rolePermissionsForGuard = await fetchRolePermissions().catch(() => []);
+  const rolePermissionsForGuard = await fetchRolePermissionsGuarded();
   if (!canViewModule('/bom-builder', user.role, rolePermissionsForGuard)) {
     window.location.hash = '#/dashboard';
     return;
@@ -81,7 +81,7 @@ export async function render(container) {
   async function load() {
     store.setState({ loading: true, error: false });
     try {
-      const [boms, items, rolePermissions] = await Promise.all([fetchBoms(), fetchItems(), fetchRolePermissions().catch(() => [])]);
+      const [boms, items, rolePermissions] = await Promise.all([fetchBoms(), fetchItems(), fetchRolePermissionsGuarded()]);
       store.setState({ boms, items, rolePermissions, loading: false, error: false });
     } catch {
       store.setState({ loading: false, error: true });
