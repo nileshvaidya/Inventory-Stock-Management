@@ -126,6 +126,7 @@ function buildTopics(canSeeBillPayments) {
     { id: 'help-invoices', label: 'Invoices', render: renderInvoices },
     { id: 'help-reports', label: 'Reports', render: renderReports },
     { id: 'help-users-roles', label: 'Users & Roles', render: renderUsersRoles },
+    { id: 'help-roles-and-rights', label: 'Roles & Rights', render: renderRolesAndRights },
     { id: 'help-action-log', label: 'Action Log', render: renderActionLog },
   ];
   if (canSeeBillPayments) {
@@ -595,6 +596,20 @@ function renderUsersRoles() {
       'They immediately stop being able to sign in and disappear from this list.',
     ])}
     ${note('This doesn\'t touch anything they ever did — every purchase order, invoice, Action Log entry, and every other record they created stays exactly as it was, still showing their name. Deleting only removes the account itself, and frees up their email address — a brand-new "Add User" invite can reuse it right away. There\'s no "undo" button in the app for a delete, though: if it was a mistake, ask another admin to invite them again as a new account (their old activity history stays attached to the deleted account, not the new one).')}
+    `
+  );
+}
+
+function renderRolesAndRights() {
+  return section(
+    'help-roles-and-rights',
+    'Roles & Rights',
+    `
+    <p style="font-size:14px;color:var(--color-neutral-300);margin-bottom:10px">Admin-only: what each role can actually <em>do</em>, separate from which screens they can see (that's set per-user on ${jump('help-users-roles', 'Users & Roles')}). A checked box means that role can perform that action right now — unchecked means the server itself will reject the attempt, not just hide the button.</p>
+    ${img('27-roles-and-rights.png', 'The Roles & Rights matrix — 7 rights as rows, 6 roles as columns, with checkboxes and Admin\'s column checked and disabled')}
+    <p style="font-size:14px;color:var(--color-neutral-300);margin:0 0 8px">The 7 rights: <strong>Purchasing</strong> (vendors/projects/purchase orders), <strong>Store Operations</strong> (material inward, stock movements, delivery challans, material dispatch), <strong>Inspections</strong>, <strong>Item Master</strong> (items, unit rates), <strong>Finance</strong> (invoices, bill documents), <strong>BoM Builder</strong>, and <strong>Work Orders</strong>.</p>
+    ${ol(['Click any checkbox to grant or revoke that right for that role — it takes effect immediately, no save button.'])}
+    ${note('Admin always has every right and that column can\'t be unchecked — this is intentional, the same "can\'t lock yourself out" protection as Users & Roles\' own role/status controls. If every admin somehow lost the ability to manage rights, nobody could ever fix it again.')}
     `
   );
 }

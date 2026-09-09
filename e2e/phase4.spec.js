@@ -4,8 +4,31 @@
 // is covered by scripts/test-rls-inventory.mjs.
 import { test, expect } from '@playwright/test';
 
+const DEFAULT_ROLE_PERMISSIONS = [
+  { role: 'purchase', permission: 'manage_purchasing' },
+  { role: 'store', permission: 'manage_store_operations' },
+  { role: 'inspector', permission: 'manage_inspections' },
+  { role: 'purchase', permission: 'manage_items' },
+  { role: 'store', permission: 'manage_items' },
+  { role: 'authorized', permission: 'manage_finance' },
+  { role: 'production', permission: 'manage_boms' },
+  { role: 'production', permission: 'manage_work_orders' },
+  { role: 'store', permission: 'manage_work_orders' },
+];
+// Roles & Rights addendum: every screen with its own manage/create action
+// now fetches role_permissions alongside its other data (see e.g.
+// inventory.js's load()) to decide button visibility dynamically instead
+// of a hardcoded role check — every test needs this mocked to the same
+// default seed schema.sql ships, or the relevant button never appears.
+function mockDefaultRolePermissions(page) {
+  return page.route('**/rest/v1/role_permissions**', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(DEFAULT_ROLE_PERMISSIONS) })
+  );
+}
+
 test.describe('Phase 4 — route guards', () => {
   test('a role without Inventory access is redirected to the dashboard', async ({ page }) => {
+    await mockDefaultRolePermissions(page);
     await page.goto('/?demoRole=authorized#/inventory');
     await expect(page).toHaveURL(/#\/dashboard$/);
   });
@@ -17,6 +40,7 @@ function mockNoRates(page) {
 
 test.describe('Phase 4 — Inventory', () => {
   test('lists current stock, flags a below-reorder item, and shows its movement ledger', async ({ page }) => {
+    await mockDefaultRolePermissions(page);
     await mockNoRates(page);
     await page.route('**/rest/v1/available_stock**', (route) =>
       route.fulfill({
@@ -73,6 +97,7 @@ test.describe('Phase 4 — Inventory', () => {
   });
 
   test('store role logs a manual stock movement', async ({ page }) => {
+    await mockDefaultRolePermissions(page);
     await mockNoRates(page);
     await page.route('**/rest/v1/available_stock**', (route) =>
       route.fulfill({
@@ -119,6 +144,7 @@ test.describe('Phase 4 — Inventory', () => {
   });
 
   test('production role can view Inventory but has no write affordances (read-only)', async ({ page }) => {
+    await mockDefaultRolePermissions(page);
     await mockNoRates(page);
     await page.route('**/rest/v1/available_stock**', (route) =>
       route.fulfill({
@@ -149,6 +175,7 @@ test.describe('Phase 4 — Inventory', () => {
   });
 
   test('creates a new item and it appears in the list after reload', async ({ page }) => {
+    await mockDefaultRolePermissions(page);
     await mockNoRates(page);
     let itemsCallCount = 0;
     await page.route('**/rest/v1/items**', (route) => {
@@ -174,6 +201,7 @@ test.describe('Phase 4 — Inventory', () => {
   });
 
   test('shows an empty state when no items match the filters', async ({ page }) => {
+    await mockDefaultRolePermissions(page);
     await mockNoRates(page);
     await page.route('**/rest/v1/available_stock**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
 
@@ -182,6 +210,7 @@ test.describe('Phase 4 — Inventory', () => {
   });
 
   test('shows an item\'s current rate, and store role updates it, recording a new price_history entry', async ({ page }) => {
+    await mockDefaultRolePermissions(page);
     let rateCallCount = 0;
     await page.route('**/rest/v1/item_current_rate**', (route) => {
       rateCallCount += 1;
@@ -225,6 +254,7 @@ test.describe('Phase 4 — Inventory', () => {
   });
 
   test('creating a new item with a unit rate also records its first price_history entry', async ({ page }) => {
+    await mockDefaultRolePermissions(page);
     await mockNoRates(page);
     await page.route('**/rest/v1/available_stock**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
     await page.route('**/rest/v1/items**', (route) => {
@@ -250,6 +280,7 @@ test.describe('Phase 4 — Inventory', () => {
   });
 
   test('creating a new item without a unit rate never touches item_price_history', async ({ page }) => {
+    await mockDefaultRolePermissions(page);
     await mockNoRates(page);
     await page.route('**/rest/v1/available_stock**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
     await page.route('**/rest/v1/items**', (route) => {
@@ -274,6 +305,7 @@ test.describe('Phase 4 — Inventory', () => {
   });
 
   test('creating a new item with Item Code/Type/Source/Location fills them in on the insert', async ({ page }) => {
+    await mockDefaultRolePermissions(page);
     await mockNoRates(page);
     await page.route('**/rest/v1/available_stock**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
     let insertBody = null;
@@ -299,6 +331,7 @@ test.describe('Phase 4 — Inventory', () => {
   });
 
   test('production role sees the rate but not the Update Rate form (read-only)', async ({ page }) => {
+    await mockDefaultRolePermissions(page);
     await page.route('**/rest/v1/item_current_rate**', (route) =>
       route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ item_id: 'item-1', rate: 10, effective_date: '2026-01-01' }]) })
     );

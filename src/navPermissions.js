@@ -27,6 +27,7 @@ export const MODULE_ROLES = {
   '/stock-statement': ['admin', 'authorized'],
   '/reports': ['admin', 'authorized', 'production'],
   '/users': ['admin'],
+  '/roles-and-rights': ['admin'],
   '/action-log': ['admin'],
   '/bill-payments': ['authorized'],
   '/material-dispatch': ['admin', 'store'],

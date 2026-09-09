@@ -1,7 +1,11 @@
 // Inventory (Phase 4): current stock by item, filterable by name/category/
-// below-reorder, with a per-item movement ledger. Admin/Store/Production —
-// Production is read-only in practice (manual movements are store/admin
-// only server-side via RLS; the button is simply not shown to Production).
+// below-reorder, with a per-item movement ledger. Admin/Store/Production
+// can all view it; whether a given viewer can also log movements/create
+// items/set rates is now the dynamic manage_items right (Roles & Rights
+// addendum — see rolePermissions.js/schema.sql's can_manage_items) rather
+// than a hardcoded role check, so the button only shows up when the
+// server would actually accept the action. Defaults to store/purchase/
+// admin, same as before this became editable.
 //
 // Reads available_stock (Phase 7), not the plain current_stock view — the
 // same rows plus reserved_qty/available_qty netted against active work
@@ -18,12 +22,14 @@ import { fetchCurrentRates, setItemRate } from '../itemPricing.js';
 import { ITEM_TYPES, itemTypeLabel } from '../itemType.js';
 import { validateItemForm, validateStockMovementForm, validateRateForm } from '../validation.js';
 import { repaintPreservingFocus, afterFocusSettles, skipDateSegmentsOnTab, onRealBlur } from '../domFocus.js';
+import { fetchRolePermissions, hasPermission } from '../rolePermissions.js';
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
 function initialState() {
   return {
     stock: [],
+    rolePermissions: [],
     loading: true,
     error: false,
     nameFilter: '',
@@ -61,7 +67,6 @@ export async function render(container) {
     window.location.hash = '#/dashboard';
     return;
   }
-  const canManageStock = user.role === 'admin' || user.role === 'store';
 
   const content = renderShell(container, { activeRoute: '/inventory', user });
   content.setAttribute('data-screen', 'inventory');
@@ -87,14 +92,18 @@ export async function render(container) {
   async function load() {
     store.setState({ loading: true, error: false });
     try {
-      const stock = await loadStock();
-      store.setState({ stock, loading: false, error: false });
+      // rolePermissions failing outright shouldn't block the whole screen
+      // any more than fetchCurrentRates() failing does — canManageStock
+      // just falls back to false (buttons hidden) until the next load.
+      const [stock, rolePermissions] = await Promise.all([loadStock(), fetchRolePermissions().catch(() => [])]);
+      store.setState({ stock, rolePermissions, loading: false, error: false });
     } catch {
       store.setState({ loading: false, error: true });
     }
   }
 
   function paint() {
+    const canManageStock = hasPermission(store.getState().rolePermissions, user.role, 'manage_items');
     repaintPreservingFocus(content, () => {
       renderContent(content, store.getState(), canManageStock);
       wireEvents(content, store, user, load, loadStock, canManageStock);

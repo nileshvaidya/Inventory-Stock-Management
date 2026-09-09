@@ -528,6 +528,32 @@ async function run() {
     await page.close();
   }
 
+  // 13b. Roles & Rights — the role x permission matrix
+  {
+    const page = await browser.newPage({ viewport: VIEWPORT });
+    await page.route('**/rest/v1/role_permissions**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([
+          { role: 'purchase', permission: 'manage_purchasing' },
+          { role: 'store', permission: 'manage_store_operations' },
+          { role: 'inspector', permission: 'manage_inspections' },
+          { role: 'purchase', permission: 'manage_items' },
+          { role: 'store', permission: 'manage_items' },
+          { role: 'authorized', permission: 'manage_finance' },
+          { role: 'production', permission: 'manage_boms' },
+          { role: 'production', permission: 'manage_work_orders' },
+          { role: 'store', permission: 'manage_work_orders' },
+        ]),
+      })
+    );
+    await page.goto(`${BASE_URL}/?demoRole=admin#/roles-and-rights`);
+    await page.waitForSelector('[data-screen="roles-and-rights"]');
+    await shot(page, '27-roles-and-rights');
+    await page.close();
+  }
+
   // 14. Action Log — list with one row's before/after detail expanded
   {
     const page = await browser.newPage({ viewport: VIEWPORT });

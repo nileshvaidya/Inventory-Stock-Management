@@ -2,12 +2,17 @@
 // challan (or enter by hand) to pick what's being dispatched, same
 // upload-and-scan pattern as Material Inward/PO Upload/Invoices, including
 // the OCR fallback for a scanned/photographed challan. Store/admin can
-// create a dispatch record, but it never moves stock by itself — only an
+// create a dispatch record by default — now the dynamic
+// manage_store_operations right (Roles & Rights addendum — see
+// rolePermissions.js/schema.sql's is_store_or_admin) rather than a
+// hardcoded role check — but it never moves stock by itself — only an
 // admin authorizing it does (authorize_material_dispatch(), atomically
 // deducting every line item — see supabase/schema.sql), matching the
 // direct request that inventory deduction wait for admin sign-off.
 // Payment tracking (received/received date) is admin-only, both to view
-// and to act on.
+// and to act on — is_admin() itself stays a fixed, unconditional check
+// (see role_permissions's own comment in schema.sql), so this half is
+// unaffected by Roles & Rights.
 import { getCurrentProfile } from '../auth.js';
 import { renderShell } from '../layout.js';
 import { escapeHtml } from '../components.js';
@@ -25,6 +30,7 @@ import { fetchItems } from '../items.js';
 import { validateMaterialDispatchForm } from '../validation.js';
 import { repaintPreservingFocus, afterFocusSettles, skipDateSegmentsOnTab, onRealBlur } from '../domFocus.js';
 import { extractPdfText, parseChallanText } from '../pdfParser.js';
+import { fetchRolePermissions, hasPermission } from '../rolePermissions.js';
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
@@ -61,6 +67,7 @@ function initialState() {
     markingPaymentId: null,
     paymentErrorByDispatch: {},
     fileActionError: null,
+    rolePermissions: [],
   };
 }
 
@@ -96,7 +103,6 @@ export async function render(container) {
     window.location.hash = '#/dashboard';
     return;
   }
-  const canCreate = user.role === 'admin' || user.role === 'store';
   const isAdmin = user.role === 'admin';
 
   const content = renderShell(container, { activeRoute: '/material-dispatch', user });
@@ -106,14 +112,19 @@ export async function render(container) {
   async function load() {
     store.setState({ loading: true, error: false });
     try {
-      const [dispatches, items] = await Promise.all([fetchMaterialDispatches(), fetchItems()]);
-      store.setState({ dispatches, items, loading: false, error: false });
+      const [dispatches, items, rolePermissions] = await Promise.all([
+        fetchMaterialDispatches(),
+        fetchItems(),
+        fetchRolePermissions().catch(() => []),
+      ]);
+      store.setState({ dispatches, items, rolePermissions, loading: false, error: false });
     } catch {
       store.setState({ loading: false, error: true });
     }
   }
 
   function paint() {
+    const canCreate = hasPermission(store.getState().rolePermissions, user.role, 'manage_store_operations');
     repaintPreservingFocus(content, () => {
       renderContent(content, store.getState(), canCreate, isAdmin);
       wireEvents(content, store, user, load, canCreate, isAdmin);

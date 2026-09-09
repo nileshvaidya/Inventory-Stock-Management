@@ -5,6 +5,28 @@
 // scripts/test-rls-material-dispatch.mjs against a real database.
 import { test, expect } from '@playwright/test';
 
+const DEFAULT_ROLE_PERMISSIONS = [
+  { role: 'purchase', permission: 'manage_purchasing' },
+  { role: 'store', permission: 'manage_store_operations' },
+  { role: 'inspector', permission: 'manage_inspections' },
+  { role: 'purchase', permission: 'manage_items' },
+  { role: 'store', permission: 'manage_items' },
+  { role: 'authorized', permission: 'manage_finance' },
+  { role: 'production', permission: 'manage_boms' },
+  { role: 'production', permission: 'manage_work_orders' },
+  { role: 'store', permission: 'manage_work_orders' },
+];
+// Roles & Rights addendum: every screen with its own manage/create action
+// now fetches role_permissions alongside its other data (see e.g.
+// inventory.js's load()) to decide button visibility dynamically instead
+// of a hardcoded role check — every test needs this mocked to the same
+// default seed schema.sql ships, or the relevant button never appears.
+function mockDefaultRolePermissions(page) {
+  return page.route('**/rest/v1/role_permissions**', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(DEFAULT_ROLE_PERMISSIONS) })
+  );
+}
+
 const ITEMS = [{ id: 'item-widget', name: 'Widget', category: null, unit_of_measure: 'Nos.', reorder_level: null, deleted_at: null }];
 
 function mockItems(page) {
@@ -18,6 +40,7 @@ function mockItems(page) {
 
 test.describe('Phase 11 — route guards', () => {
   test('a role without Material Dispatch access is redirected to the dashboard', async ({ page }) => {
+    await mockDefaultRolePermissions(page);
     await page.goto('/?demoRole=authorized#/material-dispatch');
     await expect(page).toHaveURL(/#\/dashboard$/);
   });
@@ -25,6 +48,7 @@ test.describe('Phase 11 — route guards', () => {
 
 test.describe('Phase 11 — Material Dispatch — create', () => {
   test('creates a dispatch record by manual entry (no stock deducted, awaiting authorization)', async ({ page }) => {
+    await mockDefaultRolePermissions(page);
     await mockItems(page);
 
     let dispatchInsertBody = null;
@@ -60,6 +84,7 @@ test.describe('Phase 11 — Material Dispatch — create', () => {
   });
 
   test('saving without picking an item shows an error and never calls Supabase', async ({ page }) => {
+    await mockDefaultRolePermissions(page);
     await mockItems(page);
     let insertCalled = false;
     await page.route('**/rest/v1/material_dispatch*', (route) => {
@@ -76,6 +101,7 @@ test.describe('Phase 11 — Material Dispatch — create', () => {
   });
 
   test('uploading a non-PDF delivery challan that OCR cannot read falls back to manual entry', async ({ page }) => {
+    await mockDefaultRolePermissions(page);
     // Same reasoning as Material Inward's own equivalent test: a file whose
     // type isn't application/pdf skips PDF text extraction, and since it
     // isn't a real image either, the OCR fallback also comes up empty.
@@ -112,6 +138,7 @@ test.describe('Phase 11 — Material Dispatch — admin authorization & payment'
   };
 
   test('store role sees a dispatch pending authorization but no Authorize button or Payment column', async ({ page }) => {
+    await mockDefaultRolePermissions(page);
     await mockItems(page);
     await page.route('**/rest/v1/material_dispatch**', (route) =>
       route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([DISPATCH_UNAUTHORIZED]) })
@@ -124,6 +151,7 @@ test.describe('Phase 11 — Material Dispatch — admin authorization & payment'
   });
 
   test('admin authorizes a dispatch, deducting inventory server-side', async ({ page }) => {
+    await mockDefaultRolePermissions(page);
     await mockItems(page);
     let requestCount = 0;
     await page.route('**/rest/v1/material_dispatch**', (route) => {
@@ -149,6 +177,7 @@ test.describe('Phase 11 — Material Dispatch — admin authorization & payment'
   });
 
   test('shows the server-side shortfall message when authorization is blocked', async ({ page }) => {
+    await mockDefaultRolePermissions(page);
     await mockItems(page);
     await page.route('**/rest/v1/material_dispatch**', (route) =>
       route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([DISPATCH_UNAUTHORIZED]) })
@@ -170,6 +199,7 @@ test.describe('Phase 11 — Material Dispatch — admin authorization & payment'
   });
 
   test('admin marks payment received on an authorized dispatch; the button and field are admin-only', async ({ page }) => {
+    await mockDefaultRolePermissions(page);
     await mockItems(page);
     const AUTHORIZED = { ...DISPATCH_UNAUTHORIZED, authorized_by: 'admin-1', authorized_at: '2026-01-16T00:00:00Z' };
     let requestCount = 0;
@@ -194,6 +224,7 @@ test.describe('Phase 11 — Material Dispatch — admin authorization & payment'
   });
 
   test('store role never sees the Payment column, even on an authorized dispatch', async ({ page }) => {
+    await mockDefaultRolePermissions(page);
     await mockItems(page);
     const AUTHORIZED = { ...DISPATCH_UNAUTHORIZED, authorized_by: 'admin-1', authorized_at: '2026-01-16T00:00:00Z' };
     await page.route('**/rest/v1/material_dispatch**', (route) =>

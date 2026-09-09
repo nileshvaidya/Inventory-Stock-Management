@@ -215,6 +215,105 @@ $$;
 
 grant execute on function public.soft_delete_user(uuid) to authenticated;
 
+-- Roles & Rights (direct request): every non-admin role's actual write
+-- permissions — which of the ~7 distinct capability areas below they can
+-- exercise — used to be a hardcoded role list baked into each of
+-- is_purchase_or_admin/is_store_or_admin/is_inspector_or_admin/
+-- can_manage_items/is_authorized_or_admin/can_manage_boms/
+-- can_manage_work_orders (each defined further down, right where its
+-- phase first needs it). This table is now the single source of truth
+-- those functions consult instead — every one of their ~70 existing call
+-- sites (RLS policies and RPCs alike) is unchanged, since they only ever
+-- call the function by name, never touch this table directly.
+--
+-- `admin` is deliberately NOT represented as rows here and can never be
+-- edited (see admin_set_role_permission below) — it stays a hardcoded,
+-- unconditional check inside every one of those functions (`u.role =
+-- 'admin' or exists (...)`), the same "can't lock yourself/everyone out"
+-- invariant already behind set_user_role/set_user_status/
+-- soft_delete_user's self-targeting guards. Without that floor, a
+-- misconfigured permissions table could brick the app with nobody able
+-- to fix it back.
+create table if not exists public.role_permissions (
+  role text not null,
+  permission text not null check (
+    permission in (
+      'manage_purchasing', 'manage_store_operations', 'manage_inspections',
+      'manage_items', 'manage_finance', 'manage_boms', 'manage_work_orders'
+    )
+  ),
+  primary key (role, permission)
+);
+
+alter table public.role_permissions enable row level security;
+
+-- Company-wide read: every signed-in user's own screen needs to know
+-- their own role's permissions to decide button visibility client-side
+-- (e.g. Inventory's "+ New Item"), the same "everyone can read, only
+-- admin can write" shape as most other reference-ish tables in this app.
+-- No direct insert/update/delete policy at all — every change goes
+-- through admin_set_role_permission() below, which re-validates
+-- role/permission and rejects touching 'admin'.
+drop policy if exists "Authenticated users can view role permissions" on public.role_permissions;
+create policy "Authenticated users can view role permissions"
+  on public.role_permissions for select
+  to authenticated
+  using (true);
+
+-- Seeds today's existing hardcoded mapping exactly, so deploying this
+-- changes nothing behaviorally until an admin actually edits something
+-- from the new Roles & Rights screen. Mirrors each function's role list
+-- below 1:1 (can_manage_items's ('purchase','store'), etc.) — 'admin' is
+-- never a row, per the comment above.
+insert into public.role_permissions (role, permission) values
+  ('purchase', 'manage_purchasing'),
+  ('store', 'manage_store_operations'),
+  ('inspector', 'manage_inspections'),
+  ('purchase', 'manage_items'),
+  ('store', 'manage_items'),
+  ('authorized', 'manage_finance'),
+  ('production', 'manage_boms'),
+  ('production', 'manage_work_orders'),
+  ('store', 'manage_work_orders')
+on conflict (role, permission) do nothing;
+
+-- Grant/revoke one role's one permission (the only way role_permissions
+-- ever changes). Admin-only, and 'admin' itself can never be targeted —
+-- same rationale as the table comment above.
+create or replace function public.admin_set_role_permission(target_role text, target_permission text, granted boolean)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not public.is_admin(auth.uid()) then
+    raise exception 'Only an admin can edit role permissions.';
+  end if;
+  if target_role = 'admin' then
+    raise exception 'Admin always has every permission — this cannot be changed.';
+  end if;
+  if target_role not in ('purchase', 'store', 'inspector', 'authorized', 'production') then
+    raise exception 'Invalid role: %', target_role;
+  end if;
+  if target_permission not in (
+    'manage_purchasing', 'manage_store_operations', 'manage_inspections',
+    'manage_items', 'manage_finance', 'manage_boms', 'manage_work_orders'
+  ) then
+    raise exception 'Invalid permission: %', target_permission;
+  end if;
+
+  if granted then
+    insert into public.role_permissions (role, permission) values (target_role, target_permission)
+    on conflict (role, permission) do nothing;
+  else
+    delete from public.role_permissions where role = target_role and permission = target_permission;
+  end if;
+end;
+$$;
+
+grant execute on function public.admin_set_role_permission(text, text, boolean) to authenticated;
+
 -- Phase 2: Purchase Orders (upload, parse, Project/Order link, Order
 -- Status), plus Vendor Master (build brief's "suggested additional
 -- features" — confirmed in scope, feeds PO forms instead of free text).
@@ -222,6 +321,11 @@ grant execute on function public.soft_delete_user(uuid) to authenticated;
 -- is_purchase_or_admin mirrors is_admin's security-definer rationale: a
 -- plain subquery on public.users inside a policy runs under the *calling*
 -- user's own RLS, which only grants visibility into their own row.
+-- Body rewritten by the Roles & Rights addendum (see role_permissions,
+-- defined earlier in Phase 1's section above) to consult a dynamic table
+-- instead of a hardcoded role list — every call site (RLS policies and
+-- RPCs alike) is untouched, since they only ever call this function by
+-- name.
 create or replace function public.is_purchase_or_admin(uid uuid)
 returns boolean
 language sql
@@ -230,8 +334,11 @@ security definer
 set search_path = public
 as $$
   select exists (
-    select 1 from public.users
-    where id = uid and role in ('admin', 'purchase') and status = 'active'
+    select 1 from public.users u
+    where u.id = uid and u.status = 'active'
+      and (u.role = 'admin' or exists (
+        select 1 from public.role_permissions rp where rp.role = u.role and rp.permission = 'manage_purchasing'
+      ))
   );
 $$;
 
@@ -434,6 +541,8 @@ create policy "Purchase/admin can update import field mappings"
 -- a partial rejection still shows 'received_inspected' (Master Material
 -- Status is where the exact accepted/rejected/pending split per item
 -- lives, not the one-word PO status).
+-- Body rewritten by the Roles & Rights addendum — see the comment on
+-- is_purchase_or_admin above and on role_permissions in Phase 1's section.
 create or replace function public.is_store_or_admin(uid uuid)
 returns boolean
 language sql
@@ -442,13 +551,18 @@ security definer
 set search_path = public
 as $$
   select exists (
-    select 1 from public.users
-    where id = uid and role in ('admin', 'store') and status = 'active'
+    select 1 from public.users u
+    where u.id = uid and u.status = 'active'
+      and (u.role = 'admin' or exists (
+        select 1 from public.role_permissions rp where rp.role = u.role and rp.permission = 'manage_store_operations'
+      ))
   );
 $$;
 
 grant execute on function public.is_store_or_admin(uuid) to authenticated;
 
+-- Body rewritten by the Roles & Rights addendum — see the comment on
+-- is_purchase_or_admin above and on role_permissions in Phase 1's section.
 create or replace function public.is_inspector_or_admin(uid uuid)
 returns boolean
 language sql
@@ -457,8 +571,11 @@ security definer
 set search_path = public
 as $$
   select exists (
-    select 1 from public.users
-    where id = uid and role in ('admin', 'inspector') and status = 'active'
+    select 1 from public.users u
+    where u.id = uid and u.status = 'active'
+      and (u.role = 'admin' or exists (
+        select 1 from public.role_permissions rp where rp.role = u.role and rp.permission = 'manage_inspections'
+      ))
   );
 $$;
 
@@ -726,6 +843,8 @@ grant select on public.master_material_status to authenticated;
 -- free-text item_name and simply don't feed the ledger), and accepted
 -- inspections auto-create an inbound stock movement — so "current stock"
 -- reflects real receiving activity without a separate manual re-entry step.
+-- Body rewritten by the Roles & Rights addendum — see the comment on
+-- is_purchase_or_admin above and on role_permissions in Phase 1's section.
 create or replace function public.can_manage_items(uid uuid)
 returns boolean
 language sql
@@ -734,8 +853,11 @@ security definer
 set search_path = public
 as $$
   select exists (
-    select 1 from public.users
-    where id = uid and role in ('admin', 'purchase', 'store') and status = 'active'
+    select 1 from public.users u
+    where u.id = uid and u.status = 'active'
+      and (u.role = 'admin' or exists (
+        select 1 from public.role_permissions rp where rp.role = u.role and rp.permission = 'manage_items'
+      ))
   );
 $$;
 
@@ -870,6 +992,8 @@ grant select on public.current_stock to authenticated;
 -- src/navPermissions.js) with no other role needing visibility, so RLS
 -- here is scoped to that same pair rather than company-wide read — the
 -- first module in this schema where that's the case.
+-- Body rewritten by the Roles & Rights addendum — see the comment on
+-- is_purchase_or_admin above and on role_permissions in Phase 1's section.
 create or replace function public.is_authorized_or_admin(uid uuid)
 returns boolean
 language sql
@@ -878,8 +1002,11 @@ security definer
 set search_path = public
 as $$
   select exists (
-    select 1 from public.users
-    where id = uid and role in ('admin', 'authorized') and status = 'active'
+    select 1 from public.users u
+    where u.id = uid and u.status = 'active'
+      and (u.role = 'admin' or exists (
+        select 1 from public.role_permissions rp where rp.role = u.role and rp.permission = 'manage_finance'
+      ))
   );
 $$;
 
@@ -983,6 +1110,8 @@ create policy "Authorized/admin can delete invoice PO links"
 -- with its own BoM) so Phase 7 has something to explode; a trigger below
 -- blocks both direct self-reference and any deeper circular reference at
 -- write time, not just at explosion time.
+-- Body rewritten by the Roles & Rights addendum — see the comment on
+-- is_purchase_or_admin above and on role_permissions in Phase 1's section.
 create or replace function public.can_manage_boms(uid uuid)
 returns boolean
 language sql
@@ -991,8 +1120,11 @@ security definer
 set search_path = public
 as $$
   select exists (
-    select 1 from public.users
-    where id = uid and role in ('admin', 'production') and status = 'active'
+    select 1 from public.users u
+    where u.id = uid and u.status = 'active'
+      and (u.role = 'admin' or exists (
+        select 1 from public.role_permissions rp where rp.role = u.role and rp.permission = 'manage_boms'
+      ))
   );
 $$;
 
@@ -1244,6 +1376,8 @@ grant execute on function public.record_bom_production(uuid, numeric, text) to a
 --     through BoM Builder at all, it's a self-contained production event
 --     tied to this work order specifically (reference_type/reference_id
 --     point at it, not at a bom_production_runs row).
+-- Body rewritten by the Roles & Rights addendum — see the comment on
+-- is_purchase_or_admin above and on role_permissions in Phase 1's section.
 create or replace function public.can_manage_work_orders(uid uuid)
 returns boolean
 language sql
@@ -1252,8 +1386,11 @@ security definer
 set search_path = public
 as $$
   select exists (
-    select 1 from public.users
-    where id = uid and role in ('admin', 'production', 'store') and status = 'active'
+    select 1 from public.users u
+    where u.id = uid and u.status = 'active'
+      and (u.role = 'admin' or exists (
+        select 1 from public.role_permissions rp where rp.role = u.role and rp.permission = 'manage_work_orders'
+      ))
   );
 $$;
 

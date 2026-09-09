@@ -23,6 +23,7 @@ const NAV_ITEMS = [
   { route: '/invoices', label: 'Invoices', phase: 5 },
   { route: '/reports', label: 'Reports', phase: 8 },
   { route: '/users', label: 'Users & Roles', phase: 1 },
+  { route: '/roles-and-rights', label: 'Roles & Rights', phase: 1 },
   { route: '/action-log', label: 'Action Log', phase: 9 },
   // Restricted module (build brief §1): must not appear in the sidebar for
   // any role other than 'authorized' — never just CSS-hidden, filtered out

@@ -20,6 +20,7 @@ export const routes = {
   '/invoices': () => import('./screens/invoices.js'),
   '/reports': () => import('./screens/reports.js'),
   '/users': () => import('./screens/users.js'),
+  '/roles-and-rights': () => import('./screens/rolesAndRights.js'),
   '/action-log': () => import('./screens/actionLog.js'),
   '/bill-payments': () => import('./screens/billPayments.js'),
   '/material-dispatch': () => import('./screens/materialDispatch.js'),

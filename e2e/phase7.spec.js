@@ -5,6 +5,28 @@
 // scripts/test-rls-work-orders.mjs.
 import { test, expect } from '@playwright/test';
 
+const DEFAULT_ROLE_PERMISSIONS = [
+  { role: 'purchase', permission: 'manage_purchasing' },
+  { role: 'store', permission: 'manage_store_operations' },
+  { role: 'inspector', permission: 'manage_inspections' },
+  { role: 'purchase', permission: 'manage_items' },
+  { role: 'store', permission: 'manage_items' },
+  { role: 'authorized', permission: 'manage_finance' },
+  { role: 'production', permission: 'manage_boms' },
+  { role: 'production', permission: 'manage_work_orders' },
+  { role: 'store', permission: 'manage_work_orders' },
+];
+// Roles & Rights addendum: every screen with its own manage/create action
+// now fetches role_permissions alongside its other data (see e.g.
+// inventory.js's load()) to decide button visibility dynamically instead
+// of a hardcoded role check — every test needs this mocked to the same
+// default seed schema.sql ships, or the relevant button never appears.
+function mockDefaultRolePermissions(page) {
+  return page.route('**/rest/v1/role_permissions**', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(DEFAULT_ROLE_PERMISSIONS) })
+  );
+}
+
 const ITEMS = [
   { id: 'item-widget', name: 'Widget', category: null, unit_of_measure: 'Nos.', reorder_level: null, deleted_at: null },
   { id: 'item-bolt', name: 'Bolt', category: null, unit_of_measure: 'Nos.', reorder_level: null, deleted_at: null },
@@ -21,6 +43,7 @@ function mockItems(page) {
 
 test.describe('Phase 7 — route guards', () => {
   test('a role without Work Orders access is redirected to the dashboard', async ({ page }) => {
+    await mockDefaultRolePermissions(page);
     await page.goto('/?demoRole=authorized#/work-orders');
     await expect(page).toHaveURL(/#\/dashboard$/);
   });
@@ -28,6 +51,7 @@ test.describe('Phase 7 — route guards', () => {
 
 test.describe('Phase 7 — Work Orders', () => {
   test('previews an explosion, then creates a work order', async ({ page }) => {
+    await mockDefaultRolePermissions(page);
     await mockItems(page);
     await page.route('**/rest/v1/work_orders**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
 
@@ -71,6 +95,7 @@ test.describe('Phase 7 — Work Orders', () => {
   });
 
   test('saving without selecting an item shows an error and never calls Supabase', async ({ page }) => {
+    await mockDefaultRolePermissions(page);
     await mockItems(page);
     await page.route('**/rest/v1/work_orders**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
     let createCalled = false;
@@ -89,6 +114,7 @@ test.describe('Phase 7 — Work Orders', () => {
   });
 
   test('shows a work order’s requirements and reserves stock for it', async ({ page }) => {
+    await mockDefaultRolePermissions(page);
     await mockItems(page);
     let requestCount = 0;
     await page.route('**/rest/v1/work_orders**', (route) => {
@@ -142,6 +168,7 @@ test.describe('Phase 7 — Work Orders', () => {
   });
 
   test('completes a reserved work order, deducting components and adding finished stock', async ({ page }) => {
+    await mockDefaultRolePermissions(page);
     await mockItems(page);
     let requestCount = 0;
     await page.route('**/rest/v1/work_orders**', (route) => {
@@ -197,6 +224,7 @@ test.describe('Phase 7 — Work Orders', () => {
   });
 
   test('shows the server-side shortfall message when reserving is blocked', async ({ page }) => {
+    await mockDefaultRolePermissions(page);
     await mockItems(page);
     await page.route('**/rest/v1/work_orders**', (route) =>
       route.fulfill({
@@ -232,6 +260,7 @@ test.describe('Phase 7 — Work Orders', () => {
   });
 
   test('cancels a work order', async ({ page }) => {
+    await mockDefaultRolePermissions(page);
     await mockItems(page);
     await page.route('**/rest/v1/work_order_requirements**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
 
@@ -270,6 +299,7 @@ test.describe('Phase 7 — Work Orders', () => {
   });
 
   test('shows an empty state when no work orders exist', async ({ page }) => {
+    await mockDefaultRolePermissions(page);
     await mockItems(page);
     await page.route('**/rest/v1/work_orders**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
 

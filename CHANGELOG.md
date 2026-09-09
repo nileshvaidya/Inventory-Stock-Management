@@ -1678,3 +1678,80 @@ isn't even clickable for them anymore.
 Verified locally: lint, `node --check`. Not run against the live
 project from this session — needs `SUPABASE_SERVICE_ROLE_KEY`, which
 isn't available here; the user runs it themselves per the README.
+
+## Roles & Rights: which category of users has which rights, editable by admin
+
+Direct request: display which roles can do what, and let an admin edit
+it. Deliberately scoped to actual write permissions (create/edit/
+approve/delete), not screen visibility — Users & Roles already covers
+who can see which screens per-user, and screen visibility was always
+just a UX nicety, not the real security boundary. Real permissions were
+a genuinely different thing: `is_purchase_or_admin`/`is_store_or_admin`/
+`is_inspector_or_admin`/`can_manage_items`/`is_authorized_or_admin`/
+`can_manage_boms`/`can_manage_work_orders` — 8 functions (7 here, plus
+`is_admin` itself) that every RLS policy and RPC in the app funnels
+through for its actual write-gating, each a hardcoded role list baked
+directly into SQL. Making that editable meant converting the functions
+themselves, not adding a parallel system on top.
+
+- `supabase/schema.sql`: new `role_permissions(role, permission)` table
+  (company-wide readable — every screen needs to know its own viewer's
+  rights to decide button visibility — writable only through the new
+  RPC below), seeded with today's exact hardcoded mapping so deploying
+  this changes nothing until an admin edits something. `admin`
+  deliberately has no rows and can't be granted/revoked at all (new
+  `admin_set_role_permission()` rejects targeting it) — it stays a
+  hardcoded, unconditional right inside all 7 functions, the same
+  "can't lock yourself/everyone out" floor already behind
+  `set_user_role`/`set_user_status`/`soft_delete_user`'s self-targeting
+  guards. Rewrote all 7 non-admin gate functions' bodies to consult the
+  table instead of a role list — every one of their ~70 existing call
+  sites across every phase's RLS policies and RPCs is completely
+  unchanged, since they only ever call the function by name.
+- `src/rolePermissions.js` (new): `PERMISSIONS` (the 7 rights' labels/
+  descriptions, kept in sync with the table's check constraint by hand,
+  same convention as `roles.js`/`users_role_check`), `fetchRolePermissions`,
+  `setRolePermission` (wraps the RPC), `hasPermission(rows, role, permission)`
+  (`role === 'admin'` short-circuits true, otherwise checks the rows) —
+  the exact same logic the rewritten SQL functions apply server-side, so
+  client-side button visibility matches what the server will actually
+  allow.
+- `src/screens/rolesAndRights.js` (new, `/roles-and-rights`, admin-only):
+  a 7-rows-by-6-columns matrix — one row per right with a plain-English
+  description, one column per role, Admin's column permanently
+  checked-and-disabled. Every other cell is a live checkbox: toggling it
+  calls `admin_set_role_permission` immediately, no save button, and
+  reverts itself with an alert if the call fails.
+- Four existing screens whose "+ New"/manage buttons were gated on a
+  hardcoded role check now fetch `role_permissions` alongside their
+  other data and compute that gate dynamically instead, so what's
+  clickable actually matches what Roles & Rights says: `inventory.js`
+  (`manage_items`), `workOrders.js` (`manage_work_orders`),
+  `bomBuilder.js` (`manage_boms`), `materialDispatch.js`
+  (`manage_store_operations` — its separate, still admin-only payment-
+  tracking gate is untouched, since `is_admin` itself isn't editable).
+- `scripts/test-rls-role-permissions.mjs` (new, added to `npm run
+  test:integration`): non-admin can't call the RPC, admin can't target
+  `'admin'`, an invalid role/permission is rejected, and — the part that
+  actually matters — granting `inspector` the `manage_items` right
+  changes what `items`' own RLS insert policy allows in real time (an
+  insert that was rejected before the grant succeeds after it, and is
+  rejected again after revoking), proving the dynamic behavior
+  propagates all the way through, not just into a table.
+- `e2e/rolesAndRights.spec.js` (new): route guard, sidebar link admin-
+  only, the matrix rendering the seeded rows correctly including Admin
+  always checked-and-disabled, granting/revoking calling the RPC with
+  the right body and updating the checkbox, and a failed toggle
+  reverting itself with an alert. `e2e/phase4.spec.js`/`phase6.spec.js`/
+  `phase7.spec.js`/`phase11.spec.js` all needed a
+  `mockDefaultRolePermissions` helper added to every test, now that
+  those four screens fetch `role_permissions` too.
+- `src/screens/help.js` and `public/help/screenshots/27-roles-and-rights.png`
+  (new topic, right after Users & Roles).
+
+Verified locally: lint, typecheck, 143 unit tests, full e2e suite
+green; production build clean; the matrix and its live toggling checked
+visually in a real browser session. This changes `supabase/schema.sql`,
+so it needs the migration applied manually to any live Supabase project
+before `role_permissions`/`admin_set_role_permission` (or the new
+integration test) will work there.

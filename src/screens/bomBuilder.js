@@ -1,8 +1,11 @@
 // BoM Builder (Phase 6): nested bills of materials + recording production.
-// Admin/Production only, per navPermissions.js — everyone who can even
-// see this screen already has manage rights, but action buttons are still
-// gated on canManage here too (not just by RLS), matching this app's
-// consistent double-enforcement pattern in case that ever changes.
+// Admin/Production by default, per navPermissions.js — everyone who can
+// even see this screen already has manage rights by default, but action
+// buttons are still gated on canManage here too (not just by RLS), now
+// the dynamic manage_boms right (Roles & Rights addendum — see
+// rolePermissions.js/schema.sql's can_manage_boms) rather than a
+// hardcoded role check, matching this app's consistent double-enforcement
+// pattern.
 //
 // Recording production consumes only a recipe's own direct components —
 // confirmed with the user before building — leaving multi-level BoM
@@ -18,6 +21,7 @@ import { fetchBoms, fetchProductionRuns, createBom, updateBom, archiveBom, recor
 import { fetchItems, createItem } from '../items.js';
 import { validateBomForm, validateItemForm, validateProductionForm } from '../validation.js';
 import { repaintPreservingFocus } from '../domFocus.js';
+import { fetchRolePermissions, hasPermission } from '../rolePermissions.js';
 
 function emptyBomForm() {
   return { outputItemId: '', outputQty: '1', name: '', notes: '', components: [{ componentItemId: '', quantity: '' }] };
@@ -47,6 +51,7 @@ function initialState() {
     productionSuccessByBom: {},
     savingProductionBomId: null,
     archivingBomId: null,
+    rolePermissions: [],
   };
 }
 
@@ -60,7 +65,6 @@ export async function render(container) {
     window.location.hash = '#/dashboard';
     return;
   }
-  const canManage = user.role === 'admin' || user.role === 'production';
 
   const content = renderShell(container, { activeRoute: '/bom-builder', user });
   content.setAttribute('data-screen', 'bom-builder');
@@ -69,14 +73,15 @@ export async function render(container) {
   async function load() {
     store.setState({ loading: true, error: false });
     try {
-      const [boms, items] = await Promise.all([fetchBoms(), fetchItems()]);
-      store.setState({ boms, items, loading: false, error: false });
+      const [boms, items, rolePermissions] = await Promise.all([fetchBoms(), fetchItems(), fetchRolePermissions().catch(() => [])]);
+      store.setState({ boms, items, rolePermissions, loading: false, error: false });
     } catch {
       store.setState({ loading: false, error: true });
     }
   }
 
   function paint() {
+    const canManage = hasPermission(store.getState().rolePermissions, user.role, 'manage_boms');
     repaintPreservingFocus(content, () => {
       renderContent(content, store.getState(), canManage);
       wireEvents(content, store, user, load, canManage);

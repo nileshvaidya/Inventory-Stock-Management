@@ -5,6 +5,28 @@
 // by scripts/test-rls-boms.mjs.
 import { test, expect } from '@playwright/test';
 
+const DEFAULT_ROLE_PERMISSIONS = [
+  { role: 'purchase', permission: 'manage_purchasing' },
+  { role: 'store', permission: 'manage_store_operations' },
+  { role: 'inspector', permission: 'manage_inspections' },
+  { role: 'purchase', permission: 'manage_items' },
+  { role: 'store', permission: 'manage_items' },
+  { role: 'authorized', permission: 'manage_finance' },
+  { role: 'production', permission: 'manage_boms' },
+  { role: 'production', permission: 'manage_work_orders' },
+  { role: 'store', permission: 'manage_work_orders' },
+];
+// Roles & Rights addendum: every screen with its own manage/create action
+// now fetches role_permissions alongside its other data (see e.g.
+// inventory.js's load()) to decide button visibility dynamically instead
+// of a hardcoded role check — every test needs this mocked to the same
+// default seed schema.sql ships, or the relevant button never appears.
+function mockDefaultRolePermissions(page) {
+  return page.route('**/rest/v1/role_permissions**', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(DEFAULT_ROLE_PERMISSIONS) })
+  );
+}
+
 const ITEMS = [
   { id: 'item-widget', name: 'Widget', category: null, unit_of_measure: 'Nos.', reorder_level: null, deleted_at: null },
   { id: 'item-bolt', name: 'Bolt', category: null, unit_of_measure: 'Nos.', reorder_level: null, deleted_at: null },
@@ -22,6 +44,7 @@ function mockItems(page) {
 
 test.describe('Phase 6 — route guards', () => {
   test('a role without BoM Builder access is redirected to the dashboard', async ({ page }) => {
+    await mockDefaultRolePermissions(page);
     await page.goto('/?demoRole=authorized#/bom-builder');
     await expect(page).toHaveURL(/#\/dashboard$/);
   });
@@ -29,6 +52,7 @@ test.describe('Phase 6 — route guards', () => {
 
 test.describe('Phase 6 — BoM Builder', () => {
   test('creates a recipe with two components', async ({ page }) => {
+    await mockDefaultRolePermissions(page);
     await mockItems(page);
     await page.route('**/rest/v1/bom_production_runs**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
 
@@ -78,6 +102,7 @@ test.describe('Phase 6 — BoM Builder', () => {
   });
 
   test('saving with a component matching the output item shows an error and never calls Supabase', async ({ page }) => {
+    await mockDefaultRolePermissions(page);
     await mockItems(page);
     await page.route('**/rest/v1/bom_production_runs**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
     let insertCalled = false;
@@ -99,6 +124,7 @@ test.describe('Phase 6 — BoM Builder', () => {
   });
 
   test('shows a recipe’s components, records production, and refreshes its history', async ({ page }) => {
+    await mockDefaultRolePermissions(page);
     await mockItems(page);
     await page.route('**/rest/v1/boms**', (route) =>
       route.fulfill({
@@ -153,6 +179,7 @@ test.describe('Phase 6 — BoM Builder', () => {
   });
 
   test('shows the server-side shortfall message when production is blocked', async ({ page }) => {
+    await mockDefaultRolePermissions(page);
     await mockItems(page);
     await page.route('**/rest/v1/boms**', (route) =>
       route.fulfill({
@@ -189,6 +216,7 @@ test.describe('Phase 6 — BoM Builder', () => {
   });
 
   test('archives a recipe', async ({ page }) => {
+    await mockDefaultRolePermissions(page);
     await mockItems(page);
     await page.route('**/rest/v1/bom_production_runs**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
 
@@ -227,6 +255,7 @@ test.describe('Phase 6 — BoM Builder', () => {
   });
 
   test('shows an empty state when no recipes exist', async ({ page }) => {
+    await mockDefaultRolePermissions(page);
     await mockItems(page);
     await page.route('**/rest/v1/boms**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
 

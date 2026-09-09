@@ -4,9 +4,11 @@
 // hand for it, and finally complete it — converting the reservation into
 // an actual production run (components deducted, output item added to
 // stock). Admin/Production/Store, per navPermissions.js — every visitor
-// of this screen already has manage rights (same situation as BoM
-// Builder), but action buttons are still gated on that role check locally
-// too, matching this app's usual double-enforcement.
+// of this screen already has manage rights by default (same situation as
+// BoM Builder), but action buttons are still gated locally too, on the
+// dynamic manage_work_orders right (Roles & Rights addendum — see
+// rolePermissions.js/schema.sql's can_manage_work_orders) rather than a
+// hardcoded role check, matching this app's usual double-enforcement.
 //
 // Cancel only ever releases the hold (never touches stock_movements);
 // Complete is the one action that actually moves stock, and only from
@@ -28,6 +30,7 @@ import {
 import { fetchItems } from '../items.js';
 import { validateWorkOrderForm } from '../validation.js';
 import { repaintPreservingFocus } from '../domFocus.js';
+import { fetchRolePermissions, hasPermission } from '../rolePermissions.js';
 
 const STATUS_LABELS = { open: 'Open', reserved: 'Reserved', completed: 'Completed', cancelled: 'Cancelled' };
 const STATUS_TAG_CLASSES = { open: 'tag-neutral', reserved: 'tag-accent', completed: 'tag-success', cancelled: 'tag-accent-2' };
@@ -56,6 +59,7 @@ function initialState() {
     cancellingId: null,
     completingId: null,
     completeErrorByWorkOrder: {},
+    rolePermissions: [],
   };
 }
 
@@ -69,7 +73,6 @@ export async function render(container) {
     window.location.hash = '#/dashboard';
     return;
   }
-  const canManage = user.role === 'admin' || user.role === 'production' || user.role === 'store';
 
   const content = renderShell(container, { activeRoute: '/work-orders', user });
   content.setAttribute('data-screen', 'work-orders');
@@ -78,14 +81,19 @@ export async function render(container) {
   async function load() {
     store.setState({ loading: true, error: false });
     try {
-      const [workOrders, items] = await Promise.all([fetchWorkOrders(), fetchItems()]);
-      store.setState({ workOrders, items, loading: false, error: false });
+      const [workOrders, items, rolePermissions] = await Promise.all([
+        fetchWorkOrders(),
+        fetchItems(),
+        fetchRolePermissions().catch(() => []),
+      ]);
+      store.setState({ workOrders, items, rolePermissions, loading: false, error: false });
     } catch {
       store.setState({ loading: false, error: true });
     }
   }
 
   function paint() {
+    const canManage = hasPermission(store.getState().rolePermissions, user.role, 'manage_work_orders');
     repaintPreservingFocus(content, () => {
       renderContent(content, store.getState(), canManage);
       wireEvents(content, store, load, canManage);
