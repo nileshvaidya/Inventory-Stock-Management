@@ -33,6 +33,7 @@ const NAV_ITEMS = [
   { route: '/bill-payments', label: 'Bill Payments', phase: 10 },
   { route: '/material-dispatch', label: 'Material Dispatch', phase: 11 },
   { route: '/stock-statement', label: 'Stock Statement', phase: 12 },
+  { route: '/delivery-challans', label: 'Delivery Challans', phase: 13 },
 ];
 
 const LOGO_SVG = (size) => `

@@ -16,6 +16,8 @@ import {
   validateProductionForm,
   validateWorkOrderForm,
   validateRateForm,
+  validateMaterialDispatchLineItem,
+  validateMaterialDispatchForm,
 } from './validation.js';
 
 describe('validateSignupForm', () => {
@@ -418,5 +420,56 @@ describe('validateWorkOrderForm', () => {
     expect(validateWorkOrderForm({ outputItemId: 'item-1', quantity: -1 }).valid).toBe(false);
     expect(validateWorkOrderForm({ outputItemId: 'item-1', quantity: 'abc' }).valid).toBe(false);
     expect(validateWorkOrderForm({ outputItemId: 'item-1', quantity: '' }).valid).toBe(false);
+  });
+});
+
+describe('validateMaterialDispatchLineItem', () => {
+  it('accepts a valid row, including a zero rate', () => {
+    expect(validateMaterialDispatchLineItem({ itemId: 'item-1', quantity: 5, rate: 10 }).valid).toBe(true);
+    expect(validateMaterialDispatchLineItem({ itemId: 'item-1', quantity: 5, rate: 0 }).valid).toBe(true);
+  });
+
+  it('rejects a missing item', () => {
+    const { valid, errors } = validateMaterialDispatchLineItem({ quantity: 5, rate: 10 });
+    expect(valid).toBe(false);
+    expect(errors.itemId).toBeTruthy();
+  });
+
+  it('rejects a zero, negative, non-numeric, or empty quantity', () => {
+    expect(validateMaterialDispatchLineItem({ itemId: 'item-1', quantity: 0, rate: 10 }).valid).toBe(false);
+    expect(validateMaterialDispatchLineItem({ itemId: 'item-1', quantity: -1, rate: 10 }).valid).toBe(false);
+    expect(validateMaterialDispatchLineItem({ itemId: 'item-1', quantity: 'abc', rate: 10 }).valid).toBe(false);
+    expect(validateMaterialDispatchLineItem({ itemId: 'item-1', quantity: '', rate: 10 }).valid).toBe(false);
+  });
+
+  it('rejects a negative, non-numeric, or empty rate', () => {
+    const { valid, errors } = validateMaterialDispatchLineItem({ itemId: 'item-1', quantity: 5, rate: -1 });
+    expect(valid).toBe(false);
+    expect(errors.rate).toBeTruthy();
+    expect(validateMaterialDispatchLineItem({ itemId: 'item-1', quantity: 5, rate: 'abc' }).valid).toBe(false);
+    expect(validateMaterialDispatchLineItem({ itemId: 'item-1', quantity: 5, rate: '' }).valid).toBe(false);
+  });
+});
+
+describe('validateMaterialDispatchForm', () => {
+  const validRow = { itemId: 'item-1', quantity: 5, rate: 10 };
+
+  it('accepts a valid form', () => {
+    expect(validateMaterialDispatchForm({ dispatchDate: '2026-01-15', dcNumber: 'DC-1', party: 'Acme Corp', lineItems: [validRow] }).valid).toBe(true);
+  });
+
+  it('rejects a missing dispatch date, DC number, or party', () => {
+    const base = { dispatchDate: '2026-01-15', dcNumber: 'DC-1', party: 'Acme Corp', lineItems: [validRow] };
+    expect(validateMaterialDispatchForm({ ...base, dispatchDate: '' }).valid).toBe(false);
+    expect(validateMaterialDispatchForm({ ...base, dcNumber: '' }).valid).toBe(false);
+    expect(validateMaterialDispatchForm({ ...base, dcNumber: '   ' }).valid).toBe(false);
+    expect(validateMaterialDispatchForm({ ...base, party: '' }).valid).toBe(false);
+    expect(validateMaterialDispatchForm({ ...base, party: '   ' }).valid).toBe(false);
+  });
+
+  it('rejects an empty line item list, or one with an invalid row', () => {
+    const base = { dispatchDate: '2026-01-15', dcNumber: 'DC-1', party: 'Acme Corp' };
+    expect(validateMaterialDispatchForm({ ...base, lineItems: [] }).valid).toBe(false);
+    expect(validateMaterialDispatchForm({ ...base, lineItems: [{ itemId: '', quantity: '', rate: '' }] }).valid).toBe(false);
   });
 });

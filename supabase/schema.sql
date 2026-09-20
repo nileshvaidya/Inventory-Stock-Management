@@ -2404,3 +2404,117 @@ as $$
 $$;
 
 grant execute on function public.stock_statement_for_range(date, date) to authenticated;
+
+-- Phase 13: Delivery Challan / client PO tracking for Material Dispatch
+-- (direct request). Material Dispatch already recorded what left the
+-- warehouse and when an admin authorized it; this adds what's needed to
+-- treat a dispatch record as a real, billable Delivery Challan: a DC
+-- number and the party (customer) it went to, the client's own PO number
+-- it was raised against (admin-only to set — unlike the challan details
+-- themselves, the PO register isn't something a store user should be
+-- able to type in), an optional invoice number once billed, and a
+-- per-line rate so a line amount (and a dispatch total) can actually be
+-- computed. Payment tracking (already admin-only) now also takes an
+-- explicit payment date rather than always stamping "now" — the date
+-- something was actually paid is rarely the day it's recorded.
+alter table public.material_dispatch add column if not exists dc_number text null;
+alter table public.material_dispatch add column if not exists client_po_number text null;
+alter table public.material_dispatch add column if not exists our_invoice_number text null;
+alter table public.material_dispatch add column if not exists payment_date date null;
+
+alter table public.material_dispatch_line_items add column if not exists rate numeric null check (rate >= 0);
+
+-- Only admin may set client_po_number, even at insert time — a store user
+-- creating the dispatch leaves it null; admin can set it then, or add it
+-- later via admin_update_dispatch_billing below. Every other column on
+-- this table keeps the same store/admin insert policy as before.
+drop policy if exists "Store/admin can create material dispatch" on public.material_dispatch;
+create policy "Store/admin can create material dispatch"
+  on public.material_dispatch for insert
+  to authenticated
+  with check (
+    public.is_store_or_admin(auth.uid())
+    and created_by = auth.uid()
+    and (client_po_number is null or public.is_admin(auth.uid()))
+  );
+
+-- Admin-only edit path for the two billing fields that can legitimately
+-- need setting after the dispatch already exists (the client PO is
+-- deliberately admin-only to enter at all; "our" invoice number is
+-- usually only known once the invoice is actually raised, which can be
+-- well after the goods went out) — same "the RPC is the only way in"
+-- discipline as every other mutable column on this table (see the
+-- no-update-policy comment further up).
+create or replace function public.admin_update_dispatch_billing(target_dispatch_id uuid, po_number_in text, invoice_number_in text)
+returns public.material_dispatch
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  updated_row public.material_dispatch%rowtype;
+begin
+  if not public.is_admin(auth.uid()) then
+    raise exception 'Not authorized to update this dispatch''s PO/invoice details.';
+  end if;
+
+  update public.material_dispatch
+  set client_po_number = nullif(trim(po_number_in), ''), our_invoice_number = nullif(trim(invoice_number_in), '')
+  where id = target_dispatch_id
+  returning * into updated_row;
+
+  if not found then
+    raise exception 'Material dispatch record not found.';
+  end if;
+
+  return updated_row;
+end;
+$$;
+
+grant execute on function public.admin_update_dispatch_billing(uuid, text, text) to authenticated;
+
+-- mark_dispatch_payment_received now takes the actual date payment was
+-- received (entered by the admin, not assumed to be "today"). Dropped
+-- and recreated rather than a plain create-or-replace since the
+-- parameter list is changing — Postgres treats that as a new overload
+-- otherwise, leaving the old zero-arg version callable forever.
+drop function if exists public.mark_dispatch_payment_received(uuid);
+
+create or replace function public.mark_dispatch_payment_received(target_dispatch_id uuid, payment_date_in date)
+returns public.material_dispatch
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  dispatch_row public.material_dispatch%rowtype;
+  updated_row public.material_dispatch%rowtype;
+begin
+  if not public.is_admin(auth.uid()) then
+    raise exception 'Not authorized to mark payment received.';
+  end if;
+  if payment_date_in is null then
+    raise exception 'Payment date is required.';
+  end if;
+
+  select * into dispatch_row from public.material_dispatch where id = target_dispatch_id;
+  if not found then
+    raise exception 'Material dispatch record not found.';
+  end if;
+  if dispatch_row.authorized_at is null then
+    raise exception 'Cannot mark payment received before this dispatch is authorized.';
+  end if;
+  if dispatch_row.payment_received_at is not null then
+    raise exception 'Payment has already been marked received for this dispatch.';
+  end if;
+
+  update public.material_dispatch
+  set payment_received_by = auth.uid(), payment_received_at = now(), payment_date = payment_date_in
+  where id = target_dispatch_id
+  returning * into updated_row;
+
+  return updated_row;
+end;
+$$;
+
+grant execute on function public.mark_dispatch_payment_received(uuid, date) to authenticated;

@@ -375,43 +375,55 @@ export function validatePurchaseOrderForm(form) {
 }
 
 /**
- * A single Material Dispatch line item (Phase 11): an Item selected and a
- * positive quantity — no "pending" cap the way Material Inward's receipt
- * lines have, since dispatch isn't fulfilling a PO, just picking from
- * whatever's currently in stock (the shortfall check itself only happens
- * server-side, atomically, at authorize_material_dispatch() time — see
- * supabase/schema.sql).
- * @param {{ itemId?: string, quantity?: string|number }} row
+ * A single Material Dispatch line item (Phase 11, +rate in the Phase 13
+ * addendum): an Item selected, a positive quantity, and a rate (zero
+ * allowed — a free-of-cost replacement/warranty line is a legitimate
+ * case) so a line amount can be computed — no "pending" cap the way
+ * Material Inward's receipt lines have, since dispatch isn't fulfilling a
+ * PO, just picking from whatever's currently in stock (the shortfall
+ * check itself only happens server-side, atomically, at
+ * authorize_material_dispatch() time — see supabase/schema.sql).
+ * @param {{ itemId?: string, quantity?: string|number, rate?: string|number }} row
  */
 export function validateMaterialDispatchLineItem(row) {
   /** @type {Record<string, string>} */
   const errors = {};
-  const { itemId = '', quantity = '' } = row || {};
+  const { itemId = '', quantity = '', rate = '' } = row || {};
   const qtyNum = Number(quantity);
+  const rateNum = Number(rate);
 
   if (!itemId) errors.itemId = 'Select an item.';
   if (quantity === '' || !Number.isFinite(qtyNum) || qtyNum <= 0) {
     errors.quantity = 'Enter a positive quantity.';
+  }
+  if (rate === '' || !Number.isFinite(rateNum) || rateNum < 0) {
+    errors.rate = 'Rate must be zero or a positive number.';
   }
 
   return { valid: Object.keys(errors).length === 0, errors };
 }
 
 /**
- * The Material Dispatch form as a whole (Phase 11): a dispatch date and at
- * least one valid line item.
- * @param {{ dispatchDate?: string, lineItems?: { itemId?: string, quantity?: string|number }[] }} form
+ * The Material Dispatch form as a whole (Phase 11, +DC No./Party in the
+ * Phase 13 addendum): a dispatch date, a DC number, a party, and at least
+ * one valid line item. Client PO number is deliberately never validated
+ * here — it's admin-only to set at all (see schema.sql), and simply
+ * omitted from the form entirely for anyone else.
+ * @param {{ dispatchDate?: string, dcNumber?: string, party?: string,
+ *   lineItems?: { itemId?: string, quantity?: string|number, rate?: string|number }[] }} form
  */
 export function validateMaterialDispatchForm(form) {
   /** @type {Record<string, string>} */
   const errors = {};
-  const { dispatchDate = '', lineItems = [] } = form || {};
+  const { dispatchDate = '', dcNumber = '', party = '', lineItems = [] } = form || {};
 
   if (!dispatchDate) errors.dispatchDate = 'Dispatch date is required.';
+  if (!dcNumber.trim()) errors.dcNumber = 'DC No. is required.';
+  if (!party.trim()) errors.party = 'Party is required.';
   if (lineItems.length === 0) {
     errors.lineItems = 'Add at least one item to dispatch.';
   } else if (lineItems.some((row) => !validateMaterialDispatchLineItem(row).valid)) {
-    errors.lineItems = 'Fix the highlighted item/quantity before saving.';
+    errors.lineItems = 'Fix the highlighted item/quantity/rate before saving.';
   }
 
   return { valid: Object.keys(errors).length === 0, errors };

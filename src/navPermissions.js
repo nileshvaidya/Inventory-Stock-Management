@@ -46,6 +46,12 @@ export const MODULE_ROLES = {
   // never reopens this specific exception.
   '/bill-payments': ['authorized'],
   '/material-dispatch': ['admin', 'store'],
+  // Admin-only, no exceptions — same convention as Users & Roles/Roles &
+  // Rights/Action Log: the PO/invoice/payment data shown here is a
+  // superset of what Material Dispatch already shows, deliberately never
+  // reopened to a granted right (see its own absence from
+  // MODULE_PERMISSIONS below).
+  '/delivery-challans': ['admin'],
   '/help': null, // every signed-in user
 };
 

@@ -33,8 +33,13 @@ export async function fetchMaterialDispatches(client = supabase) {
  * Two-step insert (dispatch header, then its line items) — same
  * no-nested-insert caveat as createInward in materialInward.js. Creating
  * a dispatch never moves stock by itself; only authorizing it does.
- * @param {{ dispatchDate: string, reference?: string|null, notes?: string|null, createdBy: string,
- *   lineItems: { itemId: string, quantity: number }[] }} form
+ * clientPoNumber is only ever actually persisted when the caller is
+ * admin — schema.sql's insert policy enforces this server-side too, so a
+ * non-admin passing one here (there's no UI path that does) is silently
+ * rejected by RLS rather than relying on the client to have hidden it.
+ * @param {{ dispatchDate: string, dcNumber?: string|null, party?: string|null, notes?: string|null,
+ *   clientPoNumber?: string|null, ourInvoiceNumber?: string|null, createdBy: string,
+ *   lineItems: { itemId: string, quantity: number, rate: number }[] }} form
  * @param {any} [client]
  */
 export async function createMaterialDispatch(form, client = supabase) {
@@ -44,8 +49,11 @@ export async function createMaterialDispatch(form, client = supabase) {
     .from('material_dispatch')
     .insert({
       dispatch_date: form.dispatchDate,
-      reference: form.reference || null,
+      dc_number: form.dcNumber || null,
+      reference: form.party || null,
       notes: form.notes || null,
+      client_po_number: form.clientPoNumber || null,
+      our_invoice_number: form.ourInvoiceNumber || null,
       created_by: form.createdBy,
     })
     .select()
@@ -54,7 +62,7 @@ export async function createMaterialDispatch(form, client = supabase) {
 
   const rows = form.lineItems
     .filter((li) => Number(li.quantity) > 0)
-    .map((li) => ({ dispatch_id: dispatch.id, item_id: li.itemId, quantity: Number(li.quantity) }));
+    .map((li) => ({ dispatch_id: dispatch.id, item_id: li.itemId, quantity: Number(li.quantity), rate: Number(li.rate) }));
 
   if (rows.length > 0) {
     const { error: itemsError } = await client.from('material_dispatch_line_items').insert(rows);
@@ -62,6 +70,26 @@ export async function createMaterialDispatch(form, client = supabase) {
   }
 
   return dispatch;
+}
+
+/**
+ * Admin only, server-side. Sets/edits the client PO number and/or "our"
+ * invoice number on an existing dispatch — the one edit path this table
+ * has beyond its initial insert, alongside authorize/payment below (see
+ * this file's own top comment on the no-update-policy discipline).
+ * @param {string} dispatchId
+ * @param {{ clientPoNumber?: string|null, ourInvoiceNumber?: string|null }} form
+ * @param {any} [client]
+ */
+export async function updateDispatchBilling(dispatchId, form, client = supabase) {
+  if (!client) throw new Error('Supabase is not configured.');
+  const { data, error } = await client.rpc('admin_update_dispatch_billing', {
+    target_dispatch_id: dispatchId,
+    po_number_in: form.clientPoNumber || null,
+    invoice_number_in: form.ourInvoiceNumber || null,
+  });
+  if (error) throw error;
+  return data;
 }
 
 /**
@@ -98,13 +126,18 @@ export async function authorizeMaterialDispatch(dispatchId, client = supabase) {
 
 /**
  * Admin only, server-side. No stock side effect — just records that
- * payment for this dispatch has come in.
+ * payment for this dispatch has come in, on the date the admin says it
+ * actually did (not assumed to be "today").
  * @param {string} dispatchId
+ * @param {string} paymentDate
  * @param {any} [client]
  */
-export async function markDispatchPaymentReceived(dispatchId, client = supabase) {
+export async function markDispatchPaymentReceived(dispatchId, paymentDate, client = supabase) {
   if (!client) throw new Error('Supabase is not configured.');
-  const { data, error } = await client.rpc('mark_dispatch_payment_received', { target_dispatch_id: dispatchId });
+  const { data, error } = await client.rpc('mark_dispatch_payment_received', {
+    target_dispatch_id: dispatchId,
+    payment_date_in: paymentDate,
+  });
   if (error) throw error;
   return data;
 }

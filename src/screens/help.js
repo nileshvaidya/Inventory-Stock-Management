@@ -40,7 +40,8 @@ export async function render(container) {
   content.setAttribute('data-screen', 'help');
 
   const canSeeBillPayments = canViewModule('/bill-payments', user.role);
-  const topics = buildTopics(canSeeBillPayments);
+  const canSeeDeliveryChallans = canViewModule('/delivery-challans', user.role);
+  const topics = buildTopics(canSeeBillPayments, canSeeDeliveryChallans);
 
   content.innerHTML = renderHelpShell(user, topics);
 
@@ -109,8 +110,11 @@ function jump(id, label) {
   return `<a href="#" data-help-nav="${id}" style="color:var(--color-accent)">${escapeHtml(label)}</a>`;
 }
 
-/** @param {boolean} canSeeBillPayments */
-function buildTopics(canSeeBillPayments) {
+/**
+ * @param {boolean} canSeeBillPayments
+ * @param {boolean} canSeeDeliveryChallans
+ */
+function buildTopics(canSeeBillPayments, canSeeDeliveryChallans) {
   const topics = [
     { id: 'help-getting-started', label: 'Getting Started', render: () => renderGettingStarted(canSeeBillPayments) },
     { id: 'help-dashboard', label: 'Dashboard', render: renderDashboard },
@@ -134,6 +138,9 @@ function buildTopics(canSeeBillPayments) {
   }
   topics.push({ id: 'help-material-dispatch', label: 'Material Dispatch', render: renderMaterialDispatch });
   topics.push({ id: 'help-stock-statement', label: 'Stock Statement', render: renderStockStatement });
+  if (canSeeDeliveryChallans) {
+    topics.push({ id: 'help-delivery-challans', label: 'Delivery Challans', render: renderDeliveryChallans });
+  }
   topics.push(
     { id: 'help-faq', label: 'Frequently Asked Questions', render: () => renderFaq(canSeeBillPayments) },
     { id: 'help-troubleshooting', label: 'Troubleshooting', render: renderTroubleshooting }
@@ -664,15 +671,18 @@ function renderMaterialDispatch() {
     'Material Dispatch',
     `
     <p style="font-size:14px;color:var(--color-neutral-300);margin-bottom:10px">Records material going <em>out</em> — to a customer or site — the counterpart to ${jump('help-material-inward', 'Material Inward')}'s receiving flow. Store or Admin can create a dispatch record, but it never removes anything from stock by itself: only an Admin authorizing it does that.</p>
-    ${img('26-material-dispatch.png', 'Material Dispatch listing one dispatch pending authorization and one already authorized, with the admin-only Payment column visible')}
+    ${img('26-material-dispatch.png', 'Material Dispatch listing one dispatch pending authorization and one already authorized')}
 
     ${h3('Creating a dispatch')}
     ${ol([
       'Click <strong>+ New Dispatch</strong>.',
       'Optionally upload the delivery challan — like Material Inward, item/quantity rows are read automatically where possible (including from a scanned or photographed document), but always review every row before saving.',
-      'Pick the Dispatch Date, and add a row (item + quantity) for everything going out — use <strong>+ Add Row</strong> for more than one item.',
+      'Pick the Dispatch Date, and fill in DC No. and Party (both required) — these identify the delivery challan itself and who it went to.',
+      'Add a row (item, quantity, and rate) for everything going out — use <strong>+ Add Row</strong> for more than one item. Rate is prefilled from that item\'s current Unit Rate where one exists, but always review it.',
+      'Admin only: a PO No. (Client) field also appears, for the client\'s own PO this dispatch fulfills — see the note below.',
       'Click <strong>Save Dispatch</strong>. The record appears immediately, tagged <strong>Pending Authorization</strong> — stock is untouched at this point.',
     ])}
+    ${note('The client PO number is deliberately Admin-only to enter — a non-admin creating a dispatch never sees that field at all. If a non-admin created the record, an Admin can still add or edit its PO No. (and Our Invoice #) afterward from ' + jump('help-delivery-challans', 'Delivery Challans') + '.')}
 
     ${h3('Authorizing a dispatch (Admin only)')}
     <p style="font-size:14px;color:var(--color-neutral-300);margin-bottom:8px">This is the one step that actually deducts inventory — deliberately restricted so a dispatch someone picked can be double-checked before stock leaves the books.</p>
@@ -681,10 +691,29 @@ function renderMaterialDispatch() {
       'Every line item is deducted from stock at once. If any item doesn\'t have enough on hand, the whole authorization is blocked with a message naming exactly what\'s short — nothing is deducted until every item can be.',
       'Once authorized, the tag changes to <strong>Authorized</strong> and the Authorize button disappears — this can\'t be undone from the app.',
     ])}
+    ${note('Click <strong>Details</strong> on any row to see its full item list and notes. If a scanned challan was attached, click <strong>View</strong> to open it. Payment tracking for a dispatch now lives on the admin-only ' + jump('help-delivery-challans', 'Delivery Challans') + ' screen, not here.')}
+    `
+  );
+}
 
-    ${h3('Payment tracking (Admin only)')}
-    <p style="font-size:14px;color:var(--color-neutral-300)">Only an Admin sees the <strong>Payment</strong> column. Once a dispatch is authorized, click <strong>Mark Payment Received</strong> on its row when payment comes in — it records who marked it and when, right on that row. Payment can only be marked once a dispatch is authorized.</p>
-    ${note('Click <strong>Details</strong> on any row to see its full item list and notes. If a scanned challan was attached, click <strong>View</strong> to open it.')}
+function renderDeliveryChallans() {
+  return section(
+    'help-delivery-challans',
+    'Delivery Challans',
+    `
+    <p style="font-size:14px;color:var(--color-neutral-300);margin-bottom:10px">Admin-only. The billing view of every ${jump('help-material-dispatch', 'Material Dispatch')} record, reframed as a Delivery Challan register — DC No., dispatch date, Party, the client's PO number, Our Invoice #, total amount, and payment status, all in one list.</p>
+
+    ${h3('The list')}
+    <p style="font-size:14px;color:var(--color-neutral-300)">A dispatch not yet authorized shows <strong>Pending Authorization</strong> here too — payment can't be tracked on a challan that hasn't actually gone out yet. Total Amount is the sum of quantity × rate across every line item.</p>
+
+    ${h3('Item breakdown')}
+    <p style="font-size:14px;color:var(--color-neutral-300)">Click <strong>Details</strong> on any row to see its items, each with quantity, rate, and amount, plus the challan's total.</p>
+
+    ${h3('Editing PO No. / Our Invoice #')}
+    <p style="font-size:14px;color:var(--color-neutral-300)">Inside a challan's Details, click <strong>Edit PO / Invoice #</strong> to add or correct either field — useful when a non-admin created the dispatch (and so never saw the PO field at all), or once an invoice number is assigned after the fact.</p>
+
+    ${h3('Marking payment received')}
+    <p style="font-size:14px;color:var(--color-neutral-300)">Once a dispatch is authorized, its Status cell shows a Pending/Paid selector. Switching it to <strong>Paid</strong> reveals a payment date field (defaulting to today, editable) — enter the actual date payment came in and click <strong>Save</strong>. There's no way to switch a challan back to Pending from the app once it's marked Paid, same as authorizing a dispatch.</p>
     `
   );
 }
@@ -751,8 +780,12 @@ const FAQ = [
     a: 'That\'s expected — creating a dispatch never moves stock by itself. Only an Admin clicking Authorize on that record actually deducts inventory, a deliberate check so someone can confirm what\'s dispatched before it leaves the books.',
   },
   {
-    q: 'Why don\'t I see a Payment column or a Mark Payment Received button on Material Dispatch?',
-    a: 'Payment tracking on Material Dispatch is visible to the Admin role only — everyone else sees the dispatch record itself, just not that column.',
+    q: 'Where did the Payment column go on Material Dispatch?',
+    a: 'It moved to the admin-only Delivery Challans screen, alongside each challan\'s PO No. and Our Invoice #, once a dispatch is authorized.',
+  },
+  {
+    q: 'Why can\'t I enter a PO No. when creating a Material Dispatch?',
+    a: 'That field is deliberately Admin-only — it\'s only ever shown when you\'re signed in as Admin. If you\'re not an Admin, ask one to add the client PO number afterward from Delivery Challans.',
   },
   {
     q: 'How do I get data out of the app for Excel?',

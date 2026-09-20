@@ -9,10 +9,17 @@
 // admin authorizing it does (authorize_material_dispatch(), atomically
 // deducting every line item — see supabase/schema.sql), matching the
 // direct request that inventory deduction wait for admin sign-off.
-// Payment tracking (received/received date) is admin-only, both to view
-// and to act on — is_admin() itself stays a fixed, unconditional check
-// (see role_permissions's own comment in schema.sql), so this half is
-// unaffected by Roles & Rights.
+//
+// Phase 13 addendum (direct request): every dispatch is now also a real,
+// billable Delivery Challan — a DC number, the party (customer) it went
+// to, and a per-line rate so an amount can be computed. The client's own
+// PO number this dispatch fulfills is admin-only to enter (this screen
+// only ever shows that field to an admin; schema.sql's insert policy
+// enforces the same rule server-side, so it's not just a UI nicety), and
+// can also be added/edited later by admin from the Delivery Challans
+// screen if a store user created the record. That new screen (admin-only)
+// is also where the DC-level Paid/Pending payment status now lives —
+// this screen stays focused on creating and authorizing dispatches.
 import { getCurrentProfile } from '../auth.js';
 import { renderShell } from '../layout.js';
 import { escapeHtml } from '../components.js';
@@ -24,9 +31,9 @@ import {
   uploadDispatchChallanFile,
   getDispatchChallanFileUrl,
   authorizeMaterialDispatch,
-  markDispatchPaymentReceived,
 } from '../materialDispatch.js';
 import { fetchItems } from '../items.js';
+import { fetchCurrentRates } from '../itemPricing.js';
 import { validateMaterialDispatchForm } from '../validation.js';
 import { repaintPreservingFocus, afterFocusSettles, skipDateSegmentsOnTab, onRealBlur } from '../domFocus.js';
 import { extractPdfText, parseChallanText } from '../pdfParser.js';
@@ -35,13 +42,16 @@ import { fetchRolePermissionsGuarded, hasPermission } from '../rolePermissions.j
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
 function emptyLineItem() {
-  return { itemId: '', quantity: '' };
+  return { itemId: '', quantity: '', rate: '' };
 }
 
 function emptyForm() {
   return {
     dispatchDate: todayISO(),
-    reference: '',
+    dcNumber: '',
+    party: '',
+    ourInvoiceNumber: '',
+    clientPoNumber: '',
     notes: '',
     lineItems: [emptyLineItem()],
     challanFile: null,
@@ -55,6 +65,7 @@ function initialState() {
   return {
     dispatches: [],
     items: [],
+    currentRates: [],
     loading: true,
     error: false,
     formMode: false,
@@ -64,8 +75,6 @@ function initialState() {
     openDispatchId: null,
     authorizingId: null,
     authorizeErrorByDispatch: {},
-    markingPaymentId: null,
-    paymentErrorByDispatch: {},
     fileActionError: null,
     rolePermissions: [],
   };
@@ -76,17 +85,23 @@ function initialState() {
  * by (trimmed, case-insensitive) name — same matching discipline as
  * Material Inward's matchChallanToLineItems, just against the whole Item
  * Master here instead of one PO's line items, since a dispatch isn't
- * fulfilling any particular PO.
+ * fulfilling any particular PO. A matched row's rate is prefilled from
+ * the item's current rate where one exists (same "prefill, never
+ * force" spirit as the item-select handler below) — still just a
+ * starting point the user must review, like every other OCR-derived
+ * field on this form.
  * @param {{ itemName: string, quantity: number }[]} parsedRows
  * @param {{ id: string, name: string }[]} items
+ * @param {{ item_id: string, rate: number }[]} currentRates
  */
-function matchChallanToItems(parsedRows, items) {
+function matchChallanToItems(parsedRows, items, currentRates) {
   const matchedLineItems = [];
   let matchedCount = 0;
   for (const row of parsedRows) {
     const target = items.find((it) => it.name.trim().toLowerCase() === row.itemName.trim().toLowerCase());
     if (target) {
-      matchedLineItems.push({ itemId: target.id, quantity: String(row.quantity) });
+      const currentRate = currentRates.find((r) => r.item_id === target.id);
+      matchedLineItems.push({ itemId: target.id, quantity: String(row.quantity), rate: currentRate ? String(currentRate.rate) : '' });
       matchedCount += 1;
     }
   }
@@ -120,12 +135,13 @@ export async function render(container) {
   async function load() {
     store.setState({ loading: true, error: false });
     try {
-      const [dispatches, items, rolePermissions] = await Promise.all([
+      const [dispatches, items, currentRates, rolePermissions] = await Promise.all([
         fetchMaterialDispatches(),
         fetchItems(),
+        fetchCurrentRates(),
         fetchRolePermissionsGuarded(),
       ]);
-      store.setState({ dispatches, items, rolePermissions, loading: false, error: false });
+      store.setState({ dispatches, items, currentRates, rolePermissions, loading: false, error: false });
     } catch {
       store.setState({ loading: false, error: true });
     }
@@ -153,7 +169,7 @@ function renderContent(container, state, canCreate, isAdmin) {
 
     ${state.fileActionError ? `<p data-role="file-action-error" style="font-size:13px;color:var(--color-accent-2-200);background:var(--color-accent-2-900);border:1px solid var(--color-accent-2-700);border-radius:var(--radius-md);padding:8px 12px;margin-bottom:14px">${escapeHtml(state.fileActionError)}</p>` : ''}
 
-    ${state.formMode ? renderForm(state) : ''}
+    ${state.formMode ? renderForm(state, isAdmin) : ''}
 
     <div class="card elev-sm" style="padding:0;overflow-x:auto">
       ${
@@ -166,8 +182,8 @@ function renderContent(container, state, canCreate, isAdmin) {
               </div>`
             : state.dispatches.length === 0
               ? `<div style="padding:20px;font-size:13px;color:var(--color-neutral-500)">No material dispatch records yet.</div>`
-              : `<table class="table" style="min-width:${isAdmin ? '860' : '680'}px">
-                  <thead><tr><th>Date</th><th>Reference</th><th>Items</th><th>Status</th><th>File</th>${isAdmin ? '<th>Payment</th>' : ''}<th></th></tr></thead>
+              : `<table class="table" style="min-width:820px">
+                  <thead><tr><th>Date</th><th>DC No.</th><th>Party</th><th>Items</th><th>Status</th><th>File</th><th></th></tr></thead>
                   <tbody>${state.dispatches.map((d) => renderDispatchRow(d, state, isAdmin)).join('')}</tbody>
                 </table>`
       }
@@ -175,7 +191,7 @@ function renderContent(container, state, canCreate, isAdmin) {
   `;
 }
 
-function renderForm(state) {
+function renderForm(state, isAdmin) {
   const { form } = state;
   return `
     <div class="card elev-sm" style="margin-bottom:16px" data-role="dispatch-form">
@@ -194,9 +210,22 @@ function renderForm(state) {
         <div class="field"><label for="md-date">Dispatch Date</label>
           <input class="input" id="md-date" type="date" data-action="form-dispatch-date" value="${escapeHtml(form.dispatchDate)}" />
         </div>
-        <div class="field"><label for="md-reference">Reference (optional)</label>
-          <input class="input" id="md-reference" data-action="form-reference" value="${escapeHtml(form.reference)}" placeholder="Customer, site, project…" />
+        <div class="field"><label for="md-dc-number">DC No.</label>
+          <input class="input" id="md-dc-number" data-action="form-dc-number" value="${escapeHtml(form.dcNumber)}" placeholder="Delivery challan number" />
         </div>
+        <div class="field"><label for="md-party">Party</label>
+          <input class="input" id="md-party" data-action="form-party" value="${escapeHtml(form.party)}" placeholder="Customer this is dispatched to" />
+        </div>
+        <div class="field"><label for="md-invoice-number">Our Invoice # (optional)</label>
+          <input class="input" id="md-invoice-number" data-action="form-invoice-number" value="${escapeHtml(form.ourInvoiceNumber)}" />
+        </div>
+        ${
+          isAdmin
+            ? `<div class="field"><label for="md-client-po">PO No. (Client, optional)</label>
+                <input class="input" id="md-client-po" data-action="form-client-po" value="${escapeHtml(form.clientPoNumber)}" placeholder="Client's PO this dispatch fulfills" />
+              </div>`
+            : ''
+        }
         <div class="field"><label for="md-notes">Notes (optional)</label>
           <input class="input" id="md-notes" data-action="form-notes" value="${escapeHtml(form.notes)}" />
         </div>
@@ -207,8 +236,8 @@ function renderForm(state) {
           <label style="font-size:13px;font-weight:500">Items Dispatched</label>
           <button type="button" class="btn btn-secondary" data-action="add-row" style="padding:5px 12px;font-size:12px">+ Add Row</button>
         </div>
-        <table class="table" style="min-width:420px;margin-top:8px">
-          <thead><tr><th>Item</th><th>Quantity</th><th></th></tr></thead>
+        <table class="table" style="min-width:560px;margin-top:8px">
+          <thead><tr><th>Item</th><th>Quantity</th><th>Rate</th><th>Amount</th><th></th></tr></thead>
           <tbody>${form.lineItems.map((row, i) => renderLineItemRow(row, i, state.items)).join('')}</tbody>
         </table>
       </div>
@@ -224,6 +253,9 @@ function renderForm(state) {
 
 function renderLineItemRow(row, index, items) {
   const { valid, errors } = validateMaterialDispatchLineItemLocal(row);
+  const qtyNum = Number(row.quantity);
+  const rateNum = Number(row.rate);
+  const amount = row.quantity !== '' && row.rate !== '' && Number.isFinite(qtyNum) && Number.isFinite(rateNum) ? (qtyNum * rateNum).toFixed(2) : '—';
   return `
     <tr data-dispatch-line-row="${index}">
       <td>
@@ -233,9 +265,11 @@ function renderLineItemRow(row, index, items) {
         </select>
       </td>
       <td><input class="input" data-action="line-quantity" data-index="${index}" type="text" inputmode="decimal" value="${escapeHtml(row.quantity)}" style="width:100px;${errors.quantity ? 'border-color:var(--color-accent-2)' : ''}" /></td>
+      <td><input class="input" data-action="line-rate" data-index="${index}" type="text" inputmode="decimal" value="${escapeHtml(row.rate)}" style="width:100px;${errors.rate ? 'border-color:var(--color-accent-2)' : ''}" /></td>
+      <td data-role="line-amount">${amount}</td>
       <td><button type="button" class="btn btn-ghost" data-action="remove-row" data-index="${index}" aria-label="Remove row">🗑</button></td>
     </tr>
-    ${!valid ? `<tr><td colspan="3" style="padding:0 8px 8px;font-size:11px;color:var(--color-accent-2-200)">${escapeHtml(Object.values(errors)[0])}</td></tr>` : ''}
+    ${!valid ? `<tr><td colspan="5" style="padding:0 8px 8px;font-size:11px;color:var(--color-accent-2-200)">${escapeHtml(Object.values(errors)[0])}</td></tr>` : ''}
   `;
 }
 
@@ -243,11 +277,13 @@ function renderLineItemRow(row, index, items) {
 // blank row (the default single starting row, or a freshly added one)
 // shouldn't show an error before the user has done anything with it.
 function validateMaterialDispatchLineItemLocal(row) {
-  if (!row.itemId && String(row.quantity).trim() === '') return { valid: true, errors: {} };
+  if (!row.itemId && String(row.quantity).trim() === '' && String(row.rate).trim() === '') return { valid: true, errors: {} };
   const errors = {};
   if (!row.itemId) errors.itemId = 'Select an item.';
   const qtyNum = Number(row.quantity);
   if (row.quantity === '' || !Number.isFinite(qtyNum) || qtyNum <= 0) errors.quantity = 'Enter a positive quantity.';
+  const rateNum = Number(row.rate);
+  if (row.rate === '' || !Number.isFinite(rateNum) || rateNum < 0) errors.rate = 'Enter a rate (0 or more).';
   return { valid: Object.keys(errors).length === 0, errors };
 }
 
@@ -263,28 +299,15 @@ function renderDispatchRow(dispatch, state, isAdmin) {
   const authorized = Boolean(dispatch.authorized_at);
   const hasFile = Boolean(dispatch.challan_file_path);
   const authorizeError = state.authorizeErrorByDispatch[dispatch.id];
-  const paymentError = state.paymentErrorByDispatch[dispatch.id];
 
   const rows = [
     `<tr data-dispatch-row="${escapeHtml(dispatch.id)}">
       <td>${escapeHtml(dispatch.dispatch_date)}</td>
+      <td>${escapeHtml(dispatch.dc_number || '—')}</td>
       <td>${escapeHtml(dispatch.reference || '—')}</td>
       <td>${itemsSummary}</td>
       <td><span class="tag ${authorized ? 'tag-success' : 'tag-neutral'}" data-role="dispatch-status">${authorized ? 'Authorized' : 'Pending Authorization'}</span></td>
       <td>${hasFile ? `<button type="button" class="btn btn-ghost" data-action="view-dispatch-file" data-path="${escapeHtml(dispatch.challan_file_path)}" style="padding:4px 10px;font-size:12px">View</button>` : '—'}</td>
-      ${
-        isAdmin
-          ? `<td data-role="payment-cell">
-              ${
-                dispatch.payment_received_at
-                  ? `<span class="tag tag-success">Received ${escapeHtml(new Date(dispatch.payment_received_at).toLocaleDateString())}</span>`
-                  : authorized
-                    ? `<button type="button" class="btn btn-secondary" data-action="mark-payment" data-id="${escapeHtml(dispatch.id)}" style="padding:4px 10px;font-size:12px" ${state.markingPaymentId === dispatch.id ? 'disabled' : ''}>${state.markingPaymentId === dispatch.id ? 'Marking…' : 'Mark Payment Received'}</button>`
-                    : '—'
-              }
-            </td>`
-          : ''
-      }
       <td style="white-space:nowrap">
         <button type="button" class="btn btn-ghost" data-action="toggle-dispatch" data-id="${escapeHtml(dispatch.id)}" style="padding:4px 10px;font-size:12px">${isOpen ? 'Hide' : 'Details'}</button>
         ${
@@ -299,7 +322,7 @@ function renderDispatchRow(dispatch, state, isAdmin) {
   if (isOpen) {
     rows.push(`
       <tr data-dispatch-detail-row="${escapeHtml(dispatch.id)}">
-        <td colspan="${isAdmin ? 7 : 6}" style="padding:12px 14px;border-top:1px solid var(--color-divider)">
+        <td colspan="7" style="padding:12px 14px;border-top:1px solid var(--color-divider)">
           ${dispatch.notes ? `<p style="font-size:12px;color:var(--color-neutral-500);margin:0 0 10px">${escapeHtml(dispatch.notes)}</p>` : ''}
           ${
             lineItems.length === 0
@@ -314,7 +337,6 @@ function renderDispatchRow(dispatch, state, isAdmin) {
                 </table>`
           }
           ${authorizeError ? `<p data-role="authorize-error" data-id="${escapeHtml(dispatch.id)}" style="font-size:12px;color:var(--color-accent-2-200);margin-top:10px">${escapeHtml(authorizeError)}</p>` : ''}
-          ${paymentError ? `<p data-role="payment-error" data-id="${escapeHtml(dispatch.id)}" style="font-size:12px;color:var(--color-accent-2-200);margin-top:10px">${escapeHtml(paymentError)}</p>` : ''}
         </td>
       </tr>
     `);
@@ -364,24 +386,6 @@ function wireEvents(container, store, user, load, canCreate, isAdmin) {
         }
       });
     });
-
-    container.querySelectorAll('[data-action="mark-payment"]').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        const id = btn.dataset.id;
-        const state = store.getState();
-        store.setState({ markingPaymentId: id, paymentErrorByDispatch: { ...state.paymentErrorByDispatch, [id]: null } });
-        try {
-          await markDispatchPaymentReceived(id);
-          await load();
-          store.setState({ markingPaymentId: null });
-        } catch (err) {
-          store.setState({
-            markingPaymentId: null,
-            paymentErrorByDispatch: { ...store.getState().paymentErrorByDispatch, [id]: err.message || 'Could not mark payment received.' },
-          });
-        }
-      });
-    });
   }
 
   if (!canCreate) return;
@@ -408,9 +412,21 @@ function wireEvents(container, store, user, load, canCreate, isAdmin) {
       });
     });
   }
-  container.querySelector('[data-action="form-reference"]')?.addEventListener('input', (e) => {
+  container.querySelector('[data-action="form-dc-number"]')?.addEventListener('input', (e) => {
     const state = store.getState();
-    store.setState({ form: { ...state.form, reference: e.target.value } });
+    store.setState({ form: { ...state.form, dcNumber: e.target.value } });
+  });
+  container.querySelector('[data-action="form-party"]')?.addEventListener('input', (e) => {
+    const state = store.getState();
+    store.setState({ form: { ...state.form, party: e.target.value } });
+  });
+  container.querySelector('[data-action="form-invoice-number"]')?.addEventListener('input', (e) => {
+    const state = store.getState();
+    store.setState({ form: { ...state.form, ourInvoiceNumber: e.target.value } });
+  });
+  container.querySelector('[data-action="form-client-po"]')?.addEventListener('input', (e) => {
+    const state = store.getState();
+    store.setState({ form: { ...state.form, clientPoNumber: e.target.value } });
   });
   container.querySelector('[data-action="form-notes"]')?.addEventListener('input', (e) => {
     const state = store.getState();
@@ -434,10 +450,21 @@ function wireEvents(container, store, user, load, canCreate, isAdmin) {
     store.setState({ form: { ...state.form, lineItems } });
   };
   container.querySelectorAll('[data-action="line-item"]').forEach((el) =>
-    el.addEventListener('change', () => updateLineItem(Number(el.dataset.index), { itemId: el.value }))
+    el.addEventListener('change', () => {
+      const state = store.getState();
+      const row = state.form.lineItems[Number(el.dataset.index)];
+      // Only prefills an untouched rate field — never overwrites a rate
+      // the user already typed, e.g. after changing their mind about
+      // which item a row is for.
+      const currentRate = row && row.rate === '' ? state.currentRates.find((r) => r.item_id === el.value) : null;
+      updateLineItem(Number(el.dataset.index), currentRate ? { itemId: el.value, rate: String(currentRate.rate) } : { itemId: el.value });
+    })
   );
   container.querySelectorAll('[data-action="line-quantity"]').forEach((el) =>
     el.addEventListener('input', () => updateLineItem(Number(el.dataset.index), { quantity: el.value }))
+  );
+  container.querySelectorAll('[data-action="line-rate"]').forEach((el) =>
+    el.addEventListener('input', () => updateLineItem(Number(el.dataset.index), { rate: el.value }))
   );
 
   container.querySelector('[data-action="challan-file"]')?.addEventListener('change', async (e) => {
@@ -486,7 +513,7 @@ function wireEvents(container, store, user, load, canCreate, isAdmin) {
     }
 
     const currentState = store.getState();
-    const { matchedLineItems, matchedCount, totalParsed } = matchChallanToItems(parsedRows, currentState.items);
+    const { matchedLineItems, matchedCount, totalParsed } = matchChallanToItems(parsedRows, currentState.items, currentState.currentRates);
     const existingRows = currentState.form.lineItems.filter((row) => row.itemId || String(row.quantity).trim() !== '');
     store.setState({
       form: {
@@ -511,12 +538,19 @@ function wireEvents(container, store, user, load, canCreate, isAdmin) {
     try {
       const dispatch = await createMaterialDispatch({
         dispatchDate: state.form.dispatchDate,
-        reference: state.form.reference,
+        dcNumber: state.form.dcNumber,
+        party: state.form.party,
+        ourInvoiceNumber: state.form.ourInvoiceNumber,
+        // clientPoNumber is simply never in state.form for a non-admin —
+        // the field itself is never rendered for them (see renderForm) —
+        // so this is a no-op for anyone but admin, matching what the
+        // insert policy would enforce server-side anyway.
+        clientPoNumber: isAdmin ? state.form.clientPoNumber : '',
         notes: state.form.notes,
         createdBy: user.id,
         lineItems: state.form.lineItems
-          .filter((row) => row.itemId && String(row.quantity).trim() !== '')
-          .map((row) => ({ itemId: row.itemId, quantity: Number(row.quantity) })),
+          .filter((row) => row.itemId && String(row.quantity).trim() !== '' && String(row.rate).trim() !== '')
+          .map((row) => ({ itemId: row.itemId, quantity: Number(row.quantity), rate: Number(row.rate) })),
       });
       if (state.form.challanFile) {
         try {

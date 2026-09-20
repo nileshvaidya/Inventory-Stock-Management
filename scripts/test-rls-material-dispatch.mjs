@@ -6,6 +6,11 @@
 // direct update policy at all (every mutation beyond the initial insert
 // goes through its own security-definer RPC) and that authorization is
 // atomically blocked when stock is short.
+//
+// Phase 13 addendum: also covers that client_po_number can only ever be
+// set by admin (even at insert time), admin_update_dispatch_billing being
+// admin-only, and mark_dispatch_payment_received's new payment_date_in
+// argument.
 import 'dotenv/config';
 import { createClient } from '@supabase/supabase-js';
 
@@ -95,9 +100,15 @@ async function run() {
     const { error: productionInsertErr } = await clientProduction.from('material_dispatch').insert({ dispatch_date: '2026-01-15', created_by: productionUser.id });
     assert(!!productionInsertErr, 'production role cannot create a material dispatch record (insert policy is store/admin only)');
 
+    console.log('\nclient_po_number is admin-only, even at insert time...');
+    const { error: storeInsertWithPoErr } = await clientStore
+      .from('material_dispatch')
+      .insert({ dispatch_date: '2026-01-15', reference: 'RLS Test', client_po_number: 'PO-NOT-ALLOWED', created_by: storeUser.id });
+    assert(!!storeInsertWithPoErr, 'store role cannot set client_po_number, even on its own insert');
+
     const { data: dispatch, error: dispatchErr } = await clientStore
       .from('material_dispatch')
-      .insert({ dispatch_date: '2026-01-15', reference: 'RLS Test', created_by: storeUser.id })
+      .insert({ dispatch_date: '2026-01-15', dc_number: 'DC-RLS-1', reference: 'RLS Test', created_by: storeUser.id })
       .select()
       .single();
     assert(!dispatchErr, `store role can create a material dispatch record${dispatchErr ? ` (${dispatchErr.message})` : ''}`);
@@ -106,8 +117,33 @@ async function run() {
     if (!dispatch) {
       assert(false, 'skipped all downstream checks — creating the dispatch record failed, see its message');
     } else {
-      const { error: lineItemErr } = await clientStore.from('material_dispatch_line_items').insert({ dispatch_id: dispatch.id, item_id: gadget.id, quantity: 30 });
+      const { error: lineItemErr } = await clientStore.from('material_dispatch_line_items').insert({ dispatch_id: dispatch.id, item_id: gadget.id, quantity: 30, rate: 12.5 });
       assert(!lineItemErr, `store role can add a line item to its dispatch${lineItemErr ? ` (${lineItemErr.message})` : ''}`);
+
+      console.log('\nadmin_update_dispatch_billing: store/production cannot, admin can (on the store-created dispatch)...');
+      const { error: storeBillingErr } = await clientStore.rpc('admin_update_dispatch_billing', {
+        target_dispatch_id: dispatch.id,
+        po_number_in: 'PO-NOT-ALLOWED',
+        invoice_number_in: null,
+      });
+      assert(!!storeBillingErr, 'store role cannot call admin_update_dispatch_billing');
+      const { error: productionBillingErr } = await clientProduction.rpc('admin_update_dispatch_billing', {
+        target_dispatch_id: dispatch.id,
+        po_number_in: 'PO-NOT-ALLOWED',
+        invoice_number_in: null,
+      });
+      assert(!!productionBillingErr, 'production role cannot call admin_update_dispatch_billing');
+
+      const { data: billed, error: billingErr } = await clientAdmin.rpc('admin_update_dispatch_billing', {
+        target_dispatch_id: dispatch.id,
+        po_number_in: 'PO-CLIENT-RLS',
+        invoice_number_in: 'INV-RLS-1',
+      });
+      assert(!billingErr, `admin role can call admin_update_dispatch_billing${billingErr ? ` (${billingErr.message})` : ''}`);
+      if (billed) {
+        assert(billed.client_po_number === 'PO-CLIENT-RLS', 'client_po_number was set by admin_update_dispatch_billing');
+        assert(billed.our_invoice_number === 'INV-RLS-1', 'our_invoice_number was set by admin_update_dispatch_billing');
+      }
 
       console.log('\nattach_dispatch_challan_file: store/admin can, production cannot...');
       const { error: productionAttachErr } = await clientProduction.rpc('attach_dispatch_challan_file', {
@@ -157,21 +193,25 @@ async function run() {
         const { error: reAuthorizeErr } = await clientAdmin.rpc('authorize_material_dispatch', { target_dispatch_id: dispatch.id });
         assert(!!reAuthorizeErr, 'authorizing a dispatch that is already authorized fails');
 
-        console.log('\nmark_dispatch_payment_received: store/production cannot, admin can...');
-        const { error: storePaymentErr } = await clientStore.rpc('mark_dispatch_payment_received', { target_dispatch_id: dispatch.id });
+        console.log('\nmark_dispatch_payment_received: store/production cannot, admin can, and requires a payment date...');
+        const { error: storePaymentErr } = await clientStore.rpc('mark_dispatch_payment_received', { target_dispatch_id: dispatch.id, payment_date_in: '2026-01-20' });
         assert(!!storePaymentErr, 'store role cannot mark payment received');
-        const { error: productionPaymentErr } = await clientProduction.rpc('mark_dispatch_payment_received', { target_dispatch_id: dispatch.id });
+        const { error: productionPaymentErr } = await clientProduction.rpc('mark_dispatch_payment_received', { target_dispatch_id: dispatch.id, payment_date_in: '2026-01-20' });
         assert(!!productionPaymentErr, 'production role cannot mark payment received');
 
-        const { data: paid, error: paymentErr } = await clientAdmin.rpc('mark_dispatch_payment_received', { target_dispatch_id: dispatch.id });
+        const { error: noDateErr } = await clientAdmin.rpc('mark_dispatch_payment_received', { target_dispatch_id: dispatch.id, payment_date_in: null });
+        assert(!!noDateErr, 'admin role cannot mark payment received without a payment date');
+
+        const { data: paid, error: paymentErr } = await clientAdmin.rpc('mark_dispatch_payment_received', { target_dispatch_id: dispatch.id, payment_date_in: '2026-01-20' });
         assert(!paymentErr, `admin role can mark payment received${paymentErr ? ` (${paymentErr.message})` : ''}`);
         if (paid) {
           assert(paid.payment_received_at !== null, 'payment_received_at was stamped');
           assert(paid.payment_received_by === adminUser.id, 'payment_received_by records the admin');
+          assert(paid.payment_date === '2026-01-20', 'payment_date records the date the admin entered');
         }
 
         console.log('\nmarking payment received a second time is rejected...');
-        const { error: rePaymentErr } = await clientAdmin.rpc('mark_dispatch_payment_received', { target_dispatch_id: dispatch.id });
+        const { error: rePaymentErr } = await clientAdmin.rpc('mark_dispatch_payment_received', { target_dispatch_id: dispatch.id, payment_date_in: '2026-01-21' });
         assert(!!rePaymentErr, 'marking payment received twice fails');
       } else {
         assert(false, 'skipped all post-authorization checks — the authorize call above failed, see its message');
@@ -185,7 +225,10 @@ async function run() {
       .select()
       .single();
     if (unauthorizedDispatch) dispatchIds.push(unauthorizedDispatch.id);
-    const { error: paymentBeforeAuthorizeErr } = await clientAdmin.rpc('mark_dispatch_payment_received', { target_dispatch_id: unauthorizedDispatch?.id });
+    const { error: paymentBeforeAuthorizeErr } = await clientAdmin.rpc('mark_dispatch_payment_received', {
+      target_dispatch_id: unauthorizedDispatch?.id,
+      payment_date_in: '2026-01-20',
+    });
     assert(!!paymentBeforeAuthorizeErr, 'cannot mark payment received before the dispatch is authorized');
 
     console.log('\nauthorize_material_dispatch is blocked all-or-nothing when a line item is short on stock...');

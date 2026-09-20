@@ -24,6 +24,7 @@ export const routes = {
   '/action-log': () => import('./screens/actionLog.js'),
   '/bill-payments': () => import('./screens/billPayments.js'),
   '/material-dispatch': () => import('./screens/materialDispatch.js'),
+  '/delivery-challans': () => import('./screens/deliveryChallans.js'),
   '/help': () => import('./screens/help.js'),
 };
 

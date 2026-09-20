@@ -1885,3 +1885,94 @@ before this change — a synchronous `expect(rpcBody)` immediately after
 `checkbox.click()` with no wait for the click's `change` handler to
 finish its network round trip); production build clean. No
 `schema.sql` change — pure client-side fix, nothing to migrate.
+
+## Phase 13: Delivery Challans — DC No./Party/client PO/invoice #/rate on Material Dispatch, plus an admin-only billing register
+
+Direct request: Material Dispatch already recorded what left the
+warehouse, but had no way to tie a dispatch to the client's own PO, no
+per-line rate to bill against, and nowhere to see it all as a proper
+Delivery Challan register with payment status.
+
+- `supabase/schema.sql`: `material_dispatch` gains `dc_number`,
+  `client_po_number`, `our_invoice_number`, `payment_date` (all
+  nullable, additive — same "the app enforces required, not the
+  column" convention as `item_code` etc. in Phase 12); `material_
+  dispatch_line_items` gains a nullable `rate` (checked `>= 0`) so a
+  line amount, and a dispatch total, can actually be computed.
+  `client_po_number` is admin-only to set, enforced in the insert
+  policy itself (`with check`), not just hidden in the UI — a non-admin
+  attempting it (directly, not through any UI path) is rejected by RLS.
+  New `admin_update_dispatch_billing(target_dispatch_id, po_number_in,
+  invoice_number_in)` RPC — admin-only, the one edit path for these two
+  fields once a dispatch already exists (this table still has no
+  direct update policy at all; every mutable column goes through its
+  own security-definer RPC, same discipline as authorize/mark-payment).
+  `mark_dispatch_payment_received` now takes a required
+  `payment_date_in` — the date payment actually came in, not assumed
+  to be "today" — so it was dropped and recreated rather than
+  `create or replace`d (Postgres treats a changed parameter list as a
+  new overload otherwise, leaving the old zero-arg version callable
+  forever).
+- `src/materialDispatch.js`: `createMaterialDispatch` takes the new
+  fields (`dcNumber`, `party` — renamed from `reference` at the form
+  level, though the underlying column is unchanged — `ourInvoiceNumber`,
+  `clientPoNumber`, and `rate` per line item); new
+  `updateDispatchBilling()`; `markDispatchPaymentReceived(dispatchId,
+  paymentDate)` now takes the payment date instead of always stamping
+  "now".
+- `src/validation.js`: `validateMaterialDispatchForm` now requires DC
+  No. and Party (client PO stays unvalidated here — it's admin-only to
+  set at all, simply absent from the form for anyone else);
+  `validateMaterialDispatchLineItem` requires a rate (zero allowed — a
+  free-of-cost replacement line is legitimate).
+- Material Dispatch screen: New Dispatch form gains DC No., Party, Our
+  Invoice # (optional) for whoever creates it, plus a Rate column per
+  line item (prefilled from that item's current Unit Rate where one
+  exists, editable) and a computed Amount column. PO No. (Client) only
+  ever renders for an admin creator — a non-admin never sees the field
+  exists. The list swaps its old free-text Reference column for DC No.
+  and Party. Payment tracking (the old admin-only Payment column and
+  Mark Payment Received button) moved off this screen entirely, onto
+  the new screen below — duplicating the same control in two places
+  served no one.
+- New admin-only screen, `src/screens/deliveryChallans.js`
+  (`/delivery-challans`, admin-only in `navPermissions.js` with no
+  `MODULE_PERMISSIONS` reveal — same convention as Users & Roles/Roles
+  & Rights/Action Log, deliberately never reopened to a granted right):
+  a Delivery Challan register listing DC No., date, Party, PO No., Our
+  Invoice #, Total Amount (sum of quantity × rate), and status for
+  every dispatch. Clicking Details expands a dispatch's own item/
+  quantity/rate/amount breakdown with its total. Admin can edit PO No.
+  / Our Invoice # inline (useful when a non-admin created the record,
+  or once an invoice number is assigned after the fact) via
+  `admin_update_dispatch_billing`. An authorized dispatch's Status cell
+  is a Pending/Paid selector; switching to Paid reveals a payment date
+  field (defaulting to today, editable) and a Save button, which calls
+  `mark_dispatch_payment_received` with that date — there's no path
+  back to Pending once saved, same one-way discipline as authorizing a
+  dispatch. An unauthorized dispatch shows "Pending Authorization"
+  instead of a status selector — payment can't be tracked on a challan
+  that hasn't actually gone out.
+- Help manual: Material Dispatch's topic updated for the new required
+  fields and the admin-only PO field, with a note pointing to Delivery
+  Challans for payment tracking; new Delivery Challans topic (admin-
+  only, matching its route); two FAQ entries updated/added for where
+  the Payment column went and why the PO field is admin-only.
+- Tests: `src/validation.test.js` gained full coverage for
+  `validateMaterialDispatchLineItem`/`validateMaterialDispatchForm`
+  (previously untested even before this phase). `e2e/phase11.spec.js`
+  updated for the new required DC No./Party/rate fields and the
+  admin-only PO field, with its payment-tracking tests removed (moved
+  to the new `e2e/deliveryChallans.spec.js`, which also covers the
+  list, item breakdown, PO/invoice editing, and the Paid/Pending +
+  payment-date flow end to end).
+  `scripts/test-rls-material-dispatch.mjs` extended: client_po_number
+  rejected on a non-admin insert, `admin_update_dispatch_billing`
+  admin-only, `mark_dispatch_payment_received` requires a payment date.
+
+Verified locally: lint, typecheck, unit tests, full e2e suite,
+production build. `supabase/schema.sql` needs re-running against the
+live project (additive — new nullable columns, a new function, and a
+dropped-and-recreated one) before this reaches production; the RLS
+integration script needs `SUPABASE_SERVICE_ROLE_KEY` configured to run
+against a real project, same as every other RLS script here.
