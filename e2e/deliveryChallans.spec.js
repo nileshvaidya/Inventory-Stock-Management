@@ -213,6 +213,36 @@ test.describe('Delivery Challans — filters', () => {
     await expect(page.locator('[data-challan-row]')).toHaveCount(1);
     await expect(page.locator('[data-challan-row="dispatch-3"]')).toBeVisible();
   });
+
+  test('Reset Filters clears every field and shows the complete list again', async ({ page }) => {
+    let lastUrl = '';
+    await page.route('**/rest/v1/material_dispatch**', (route) => {
+      lastUrl = route.request().url();
+      const body = lastUrl.includes('payment_received_at=not.is.null') ? [DISPATCH_AUTHORIZED] : [DISPATCH_UNAUTHORIZED, DISPATCH_AUTHORIZED];
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+    });
+
+    await page.goto('/?demoRole=admin#/delivery-challans');
+    await expect(page.locator('[data-challan-row]')).toHaveCount(2);
+
+    await page.fill('[data-action="filter-date-from"]', '2026-01-01');
+    await page.locator('[data-action="filter-date-from"]').blur();
+    await page.fill('[data-action="filter-po"]', 'PO-CLIENT');
+    await page.locator('[data-action="filter-po"]').blur();
+    await page.selectOption('[data-action="filter-status"]', 'paid');
+    await expect(page.locator('[data-challan-row]')).toHaveCount(1);
+
+    await page.click('[data-action="reset-filters"]');
+
+    await expect(page.locator('[data-action="filter-date-from"]')).toHaveValue('');
+    await expect(page.locator('[data-action="filter-date-to"]')).toHaveValue('');
+    await expect(page.locator('[data-action="filter-po"]')).toHaveValue('');
+    await expect(page.locator('[data-action="filter-status"]')).toHaveValue('');
+    await expect(page.locator('[data-challan-row]')).toHaveCount(2);
+    expect(lastUrl).not.toContain('dispatch_date=gte');
+    expect(lastUrl).not.toContain('client_po_number=ilike');
+    expect(lastUrl).not.toContain('payment_received_at=not.is.null');
+  });
 });
 
 test.describe('Delivery Challans — reverting payment status from Paid to Pending', () => {

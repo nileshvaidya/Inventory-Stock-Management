@@ -32,7 +32,10 @@
 // returned rather than always every dispatch — so "the total of all the
 // paid invoices visible" (the direct request's own wording) and Pending
 // Dues both correctly scope to the current filtered view, not the whole
-// table, with no separate unfiltered fetch needed.
+// table, with no separate unfiltered fetch needed. Reset Filters
+// (direct follow-up request) just sets all four filter fields back to
+// '' and reloads — the same "empty means no filter" state this screen
+// already starts in, not a distinct code path.
 import { getCurrentProfile } from '../auth.js';
 import { renderShell } from '../layout.js';
 import { escapeHtml } from '../components.js';
@@ -162,6 +165,9 @@ function renderContent(container, state) {
             <option value="paid" ${state.status === 'paid' ? 'selected' : ''}>Paid</option>
           </select>
         </div>
+      </div>
+      <div style="margin-top:12px">
+        <button type="button" class="btn btn-ghost" data-action="reset-filters" style="padding:5px 12px;font-size:12px">Reset Filters</button>
       </div>
     </div>
 
@@ -343,6 +349,11 @@ function wireEvents(container, store, load) {
 
   container.querySelector('[data-action="filter-status"]')?.addEventListener('change', (e) => {
     store.setState({ status: e.target.value });
+    load();
+  });
+
+  container.querySelector('[data-action="reset-filters"]')?.addEventListener('click', () => {
+    store.setState({ dateFrom: '', dateTo: '', poNumber: '', status: '' });
     load();
   });
 

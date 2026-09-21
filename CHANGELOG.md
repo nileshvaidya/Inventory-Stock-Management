@@ -2093,3 +2093,18 @@ and no figure for money actually collected — only Pending Dues.
 Verified locally: lint, typecheck, unit tests, full e2e suite,
 production build. No `schema.sql` change — pure client-side/query
 addition, nothing to migrate.
+
+## Fourth Phase 13 addendum: Reset Filters button on Delivery Challans
+
+Direct follow-up request. A Reset Filters button below the filter card
+clears From/To Date, PO No., and Status back to their default '' (no
+filter applied — the same state this screen already starts in, not a
+distinct code path) and reloads, showing the complete list again.
+
+Tests: `e2e/deliveryChallans.spec.js` gained a test that applies all
+four filters, clicks Reset Filters, and checks every field is cleared,
+the full (unfiltered) list is back, and the reload's request carries
+none of the filter query params.
+
+Verified locally: lint, typecheck, unit tests, full e2e suite,
+production build. No `schema.sql` change.

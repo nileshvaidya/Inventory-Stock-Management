@@ -709,7 +709,7 @@ function renderDeliveryChallans() {
     <p style="font-size:14px;color:var(--color-neutral-300)">A dispatch not yet authorized shows <strong>Pending Authorization</strong> here too — payment can't be tracked on a challan that hasn't actually gone out yet. Total Amount is the sum of quantity × rate across every line item; <strong>Final Amount</strong> is Total Amount with that dispatch's GST % added on top.</p>
 
     ${h3('Filters')}
-    <p style="font-size:14px;color:var(--color-neutral-300)">From/To narrow by dispatch date, PO No. searches the client PO number, and Status picks one of Pending Authorization/Pending/Paid. All four combine, and every total on the screen (Pending Dues and Total Amount Received, below) reflects only what's currently visible after filtering.</p>
+    <p style="font-size:14px;color:var(--color-neutral-300)">From/To narrow by dispatch date, PO No. searches the client PO number, and Status picks one of Pending Authorization/Pending/Paid. All four combine, and every total on the screen (Pending Dues and Total Amount Received, below) reflects only what's currently visible after filtering. Click <strong>Reset Filters</strong> to clear all four and see the complete list again.</p>
 
     ${h3('Item breakdown')}
     <p style="font-size:14px;color:var(--color-neutral-300)">Click <strong>Details</strong> on any row to see its items, each with quantity, rate, and amount, plus the challan's Total Amount, GST amount, and Final Amount.</p>
