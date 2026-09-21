@@ -23,6 +23,16 @@
 // a later direct request for correcting a payment marked by mistake) and
 // reloading automatically reflects the new figure with no extra
 // bookkeeping.
+//
+// Third Phase 13 addendum (direct request): From/To Date, PO No., and
+// Status filters (all server-side, via fetchMaterialDispatches' new
+// optional filters param — see ../materialDispatch.js), plus a Total
+// Amount Received figure next to Pending Dues. Both totals are computed
+// from state.dispatches, which now holds whatever the active filters
+// returned rather than always every dispatch — so "the total of all the
+// paid invoices visible" (the direct request's own wording) and Pending
+// Dues both correctly scope to the current filtered view, not the whole
+// table, with no separate unfiltered fetch needed.
 import { getCurrentProfile } from '../auth.js';
 import { renderShell } from '../layout.js';
 import { escapeHtml } from '../components.js';
@@ -48,9 +58,14 @@ function omitKey(obj, key) {
   return copy;
 }
 
-/** Sum of Final Amount across every authorized dispatch not yet marked Paid. */
+/** Sum of Final Amount across every authorized dispatch not yet marked Paid, in the current (filtered) list. */
 function pendingDues(dispatches) {
   return dispatches.filter((d) => d.authorized_at && !d.payment_received_at).reduce((sum, d) => sum + dispatchFinalAmount(d), 0);
+}
+
+/** Sum of Final Amount across every dispatch marked Paid, in the current (filtered) list. */
+function amountReceived(dispatches) {
+  return dispatches.filter((d) => d.payment_received_at).reduce((sum, d) => sum + dispatchFinalAmount(d), 0);
 }
 
 function initialState() {
@@ -59,6 +74,13 @@ function initialState() {
     loading: true,
     error: false,
     openDispatchId: null,
+    // Filters — all default to '' (no filter applied, matching Action
+    // Log/Invoices' own filter-state convention), applied server-side by
+    // fetchMaterialDispatches (see ../materialDispatch.js).
+    dateFrom: '',
+    dateTo: '',
+    poNumber: '',
+    status: '',
     // Keyed by dispatch id — only ever holds an in-progress, unsaved edit;
     // committing (or cancelling) removes the key rather than leaving a
     // stale draft around once its row is no longer being edited.
@@ -94,8 +116,9 @@ export async function render(container) {
 
   async function load() {
     store.setState({ loading: true, error: false });
+    const s = store.getState();
     try {
-      const dispatches = await fetchMaterialDispatches();
+      const dispatches = await fetchMaterialDispatches({ dateFrom: s.dateFrom, dateTo: s.dateTo, poNumber: s.poNumber, status: s.status || undefined });
       store.setState({ dispatches, loading: false, error: false });
     } catch {
       store.setState({ loading: false, error: true });
@@ -120,6 +143,28 @@ function renderContent(container, state) {
       <h1 style="margin:0">Delivery Challans</h1>
     </div>
 
+    <div class="card elev-sm" style="margin-bottom:16px">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px">
+        <div class="field"><label for="dc-filter-date-from">From</label>
+          <input class="input" id="dc-filter-date-from" type="date" data-action="filter-date-from" value="${escapeHtml(state.dateFrom)}" />
+        </div>
+        <div class="field"><label for="dc-filter-date-to">To</label>
+          <input class="input" id="dc-filter-date-to" type="date" data-action="filter-date-to" value="${escapeHtml(state.dateTo)}" />
+        </div>
+        <div class="field"><label for="dc-filter-po">PO No.</label>
+          <input class="input" id="dc-filter-po" data-action="filter-po" value="${escapeHtml(state.poNumber)}" placeholder="Search PO No." />
+        </div>
+        <div class="field"><label for="dc-filter-status">Status</label>
+          <select class="input" id="dc-filter-status" data-action="filter-status">
+            <option value="" ${state.status === '' ? 'selected' : ''}>All</option>
+            <option value="pending_authorization" ${state.status === 'pending_authorization' ? 'selected' : ''}>Pending Authorization</option>
+            <option value="pending" ${state.status === 'pending' ? 'selected' : ''}>Pending</option>
+            <option value="paid" ${state.status === 'paid' ? 'selected' : ''}>Paid</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
     <div class="card elev-sm" style="padding:0;overflow-x:auto">
       ${
         state.loading
@@ -130,7 +175,7 @@ function renderContent(container, state) {
                 <button type="button" class="btn btn-secondary" data-action="retry">Retry</button>
               </div>`
             : state.dispatches.length === 0
-              ? `<div style="padding:20px;font-size:13px;color:var(--color-neutral-500)">No delivery challans recorded yet.</div>`
+              ? `<div style="padding:20px;font-size:13px;color:var(--color-neutral-500)">No delivery challans match these filters.</div>`
               : `<table class="table" style="min-width:1020px">
                   <thead><tr><th>DC No.</th><th>Date</th><th>Party</th><th>PO No.</th><th>Our Invoice #</th><th>Total Amount</th><th>Final Amount</th><th>Status</th><th></th></tr></thead>
                   <tbody>${state.dispatches.map((d) => renderRow(d, state)).join('')}</tbody>
@@ -140,9 +185,15 @@ function renderContent(container, state) {
 
     ${
       !state.loading && !state.error && state.dispatches.length > 0
-        ? `<div class="card elev-sm" style="margin-top:16px;padding:14px 20px;display:flex;justify-content:flex-end;align-items:center;gap:10px">
-            <span style="font-size:13px;font-weight:600;color:var(--color-neutral-300)">Pending Dues</span>
-            <span data-role="pending-dues" style="font-size:18px;font-weight:700">₹${pendingDues(state.dispatches).toFixed(2)}</span>
+        ? `<div class="card elev-sm" style="margin-top:16px;padding:14px 20px;display:flex;justify-content:flex-end;align-items:center;gap:24px;flex-wrap:wrap">
+            <span style="display:flex;align-items:center;gap:10px">
+              <span style="font-size:13px;font-weight:600;color:var(--color-neutral-300)">Total Amount Received</span>
+              <span data-role="amount-received" style="font-size:18px;font-weight:700">₹${amountReceived(state.dispatches).toFixed(2)}</span>
+            </span>
+            <span style="display:flex;align-items:center;gap:10px">
+              <span style="font-size:13px;font-weight:600;color:var(--color-neutral-300)">Pending Dues</span>
+              <span data-role="pending-dues" style="font-size:18px;font-weight:700">₹${pendingDues(state.dispatches).toFixed(2)}</span>
+            </span>
           </div>`
         : ''
     }
@@ -258,6 +309,42 @@ function renderRow(dispatch, state) {
 
 function wireEvents(container, store, load) {
   container.querySelector('[data-action="retry"]')?.addEventListener('click', load);
+
+  // Date/text filters commit on blur (not live on every keystroke) and
+  // Status commits on change — same discipline as every other filterable
+  // list in this app (Action Log, Invoices, Stock Statement's date
+  // range), so a re-render never interrupts an in-progress edit or
+  // re-fetches mid-keystroke.
+  const bindDateFilter = (selector, key) => {
+    const input = container.querySelector(selector);
+    if (!input) return;
+    skipDateSegmentsOnTab(input);
+    onRealBlur(input, (e) => {
+      const value = e.target.value;
+      afterFocusSettles(() => {
+        store.setState({ [key]: value });
+        load();
+      });
+    });
+  };
+  bindDateFilter('[data-action="filter-date-from"]', 'dateFrom');
+  bindDateFilter('[data-action="filter-date-to"]', 'dateTo');
+
+  const poFilterInput = container.querySelector('[data-action="filter-po"]');
+  if (poFilterInput) {
+    onRealBlur(poFilterInput, (e) => {
+      const value = e.target.value;
+      afterFocusSettles(() => {
+        store.setState({ poNumber: value });
+        load();
+      });
+    });
+  }
+
+  container.querySelector('[data-action="filter-status"]')?.addEventListener('change', (e) => {
+    store.setState({ status: e.target.value });
+    load();
+  });
 
   container.querySelectorAll('[data-action="toggle-challan"]').forEach((btn) => {
     btn.addEventListener('click', () => {

@@ -708,6 +708,9 @@ function renderDeliveryChallans() {
     ${h3('The list')}
     <p style="font-size:14px;color:var(--color-neutral-300)">A dispatch not yet authorized shows <strong>Pending Authorization</strong> here too — payment can't be tracked on a challan that hasn't actually gone out yet. Total Amount is the sum of quantity × rate across every line item; <strong>Final Amount</strong> is Total Amount with that dispatch's GST % added on top.</p>
 
+    ${h3('Filters')}
+    <p style="font-size:14px;color:var(--color-neutral-300)">From/To narrow by dispatch date, PO No. searches the client PO number, and Status picks one of Pending Authorization/Pending/Paid. All four combine, and every total on the screen (Pending Dues and Total Amount Received, below) reflects only what's currently visible after filtering.</p>
+
     ${h3('Item breakdown')}
     <p style="font-size:14px;color:var(--color-neutral-300)">Click <strong>Details</strong> on any row to see its items, each with quantity, rate, and amount, plus the challan's Total Amount, GST amount, and Final Amount.</p>
 
@@ -720,8 +723,8 @@ function renderDeliveryChallans() {
     ${h3('Reverting a payment marked by mistake')}
     <p style="font-size:14px;color:var(--color-neutral-300)">Switching a Paid challan's selector back to <strong>Pending</strong> asks for confirmation, then clears its payment date — unlike authorizing a dispatch, this can be undone, since it's just a bookkeeping entry. The challan returns to Pending Dues and can be marked Paid again later.</p>
 
-    ${h3('Pending Dues')}
-    <p style="font-size:14px;color:var(--color-neutral-300)">Shown at the bottom of the list: the sum of Final Amount across every authorized challan that isn't marked Paid yet. Marking one Paid removes it from this total immediately — an unauthorized dispatch is never counted here at all, since it has no payment status yet.</p>
+    ${h3('Pending Dues and Total Amount Received')}
+    <p style="font-size:14px;color:var(--color-neutral-300)">Shown at the bottom of the list, side by side. <strong>Pending Dues</strong> sums Final Amount across every authorized challan that isn't marked Paid yet; <strong>Total Amount Received</strong> sums it across every challan that is. Marking one Paid (or reverting one) moves it between the two immediately — an unauthorized dispatch counts toward neither, since it has no payment status yet. Both totals only ever cover challans currently visible after filtering.</p>
     `
   );
 }
@@ -806,6 +809,10 @@ const FAQ = [
   {
     q: 'I marked a Delivery Challan Paid by mistake — can I undo it?',
     a: 'Yes — switch its status selector back to Pending; after confirming, its payment date is cleared and it returns to Pending Dues. It can be marked Paid again later.',
+  },
+  {
+    q: 'Why did Pending Dues/Total Amount Received change after I applied a filter?',
+    a: 'Both totals only cover the challans currently visible on Delivery Challans — narrow the list with the From/To Date, PO No., or Status filters and both figures recompute to match. Clear the filters to see the full totals again.',
   },
   {
     q: 'How do I get data out of the app for Excel?',

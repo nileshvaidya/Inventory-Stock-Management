@@ -18,13 +18,36 @@ export const getDispatchChallanFileUrl = getChallanFileUrl;
 
 const CHALLAN_BUCKET = 'challan-documents';
 
-/** @param {any} [client] */
-export async function fetchMaterialDispatches(client = supabase) {
+/**
+ * filters is optional and defaults to none, so Material Dispatch's own
+ * unfiltered list (which never passes any) is unaffected — only Delivery
+ * Challans (Phase 13, third addendum, direct request) actually filters.
+ * status mirrors the three states both screens display: 'pending_
+ * authorization' (authorized_at is null — not billable yet, so it's
+ * excluded from Delivery Challans' Pending Dues/Total Amount Received
+ * the same way it's excluded from ever showing a payment status),
+ * 'pending' (authorized but payment_received_at is null), and 'paid'
+ * (payment_received_at is not null) — none of these is a stored column,
+ * so each is its own combination of `.is()`/`.not()` filters rather than
+ * a plain `.eq()`.
+ * @param {{ dateFrom?: string, dateTo?: string, poNumber?: string, status?: string }} [filters]
+ * @param {any} [client]
+ */
+export async function fetchMaterialDispatches(filters = {}, client = supabase) {
   if (!client) return [];
-  const { data, error } = await client
+  let query = client
     .from('material_dispatch')
     .select('*, line_items:material_dispatch_line_items(*, item:items(id, name, unit_of_measure))')
     .order('created_at', { ascending: false });
+
+  if (filters.dateFrom) query = query.gte('dispatch_date', filters.dateFrom);
+  if (filters.dateTo) query = query.lte('dispatch_date', filters.dateTo);
+  if (filters.poNumber) query = query.ilike('client_po_number', `%${filters.poNumber}%`);
+  if (filters.status === 'pending_authorization') query = query.is('authorized_at', null);
+  if (filters.status === 'pending') query = query.not('authorized_at', 'is', null).is('payment_received_at', null);
+  if (filters.status === 'paid') query = query.not('payment_received_at', 'is', null);
+
+  const { data, error } = await query;
   if (error) throw error;
   return data;
 }

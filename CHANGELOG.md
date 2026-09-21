@@ -2058,3 +2058,38 @@ mistaken "Paid" entry is a normal need.
 Verified locally: lint, typecheck, unit tests, full e2e suite,
 production build. `supabase/schema.sql` needs re-running against the
 live project (one new function) before this reaches production.
+
+## Third Phase 13 addendum: Delivery Challans filters (From/To Date, PO No., Status) + Total Amount Received
+
+Direct request. Delivery Challans had no way to narrow a long list down,
+and no figure for money actually collected — only Pending Dues.
+
+- `src/materialDispatch.js`: `fetchMaterialDispatches()` gains an
+  optional `filters` param (`dateFrom`/`dateTo`/`poNumber`/`status`),
+  applied server-side via Supabase query filters — `status` is one of
+  `pending_authorization`/`pending`/`paid`, none of which is a stored
+  column, so each maps to its own `.is()`/`.not()` combination rather
+  than a plain `.eq()`. Material Dispatch's own call (never passing
+  filters) is unaffected — only Delivery Challans actually filters.
+- Delivery Challans: a filter card above the list — From/To Date (on
+  `dispatch_date`), PO No. (a case-insensitive search on
+  `client_po_number`), and Status (All/Pending Authorization/Pending/
+  Paid). Date and PO No. commit on blur, Status on change — same
+  discipline as every other filterable list in this app (Action Log,
+  Invoices, Stock Statement's own date range).
+- New **Total Amount Received** figure next to Pending Dues — the sum
+  of Final Amount across every Paid challan. Both totals are computed
+  from `state.dispatches`, which now holds whatever the active filters
+  returned rather than always every dispatch — so, per the direct
+  request's own wording, both correctly reflect only "the challans
+  visible" after filtering, with no separate unfiltered fetch needed.
+- Help manual and a new FAQ entry updated.
+- Tests: `e2e/deliveryChallans.spec.js` gained a new describe block
+  verifying each filter's exact query params (mirroring Action Log's
+  own filter-params test) and that a Status=Paid filter actually
+  narrows the list, plus a Total Amount Received test alongside the
+  existing Pending Dues one.
+
+Verified locally: lint, typecheck, unit tests, full e2e suite,
+production build. No `schema.sql` change — pure client-side/query
+addition, nothing to migrate.

@@ -147,6 +147,72 @@ test.describe('Delivery Challans — Final Amount (Total Amount with GST) and Pe
 
     await expect(page.locator('[data-role="pending-dues"]')).toContainText('0.00');
   });
+
+  test('Total Amount Received sums Final Amount only across challans marked Paid', async ({ page }) => {
+    const PAID = { ...DISPATCH_AUTHORIZED, id: 'dispatch-3', dc_number: 'DC-1003', payment_received_at: '2026-02-01T00:00:00Z', payment_date: '2026-01-31' };
+    // dispatch-1 unauthorized (excluded), dispatch-2 authorized/unpaid
+    // (excluded — it's in Pending Dues, not here), dispatch-3 paid
+    // (included, 165.20).
+    await mockDispatches(page, [DISPATCH_UNAUTHORIZED, DISPATCH_AUTHORIZED, PAID]);
+
+    await page.goto('/?demoRole=admin#/delivery-challans');
+    await expect(page.locator('[data-role="amount-received"]')).toContainText('165.20');
+    await expect(page.locator('[data-role="pending-dues"]')).toContainText('165.20');
+  });
+});
+
+test.describe('Delivery Challans — filters', () => {
+  test('From/To Date, PO No., and Status filters query material_dispatch with the right params', async ({ page }) => {
+    let lastUrl = '';
+    await page.route('**/rest/v1/material_dispatch**', (route) => {
+      lastUrl = route.request().url();
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+    });
+
+    await page.goto('/?demoRole=admin#/delivery-challans');
+
+    // Same blur-to-commit discipline as every other date filter in this
+    // app (see e.g. Action Log/Stock Statement) — fill() alone doesn't
+    // trigger it.
+    await page.fill('[data-action="filter-date-from"]', '2026-01-01');
+    await page.locator('[data-action="filter-date-from"]').blur();
+    await expect.poll(() => lastUrl).toContain('dispatch_date=gte.2026-01-01');
+
+    await page.fill('[data-action="filter-date-to"]', '2026-01-31');
+    await page.locator('[data-action="filter-date-to"]').blur();
+    await expect.poll(() => lastUrl).toContain('dispatch_date=lte.2026-01-31');
+
+    await page.fill('[data-action="filter-po"]', 'PO-CLIENT');
+    await page.locator('[data-action="filter-po"]').blur();
+    await expect.poll(() => lastUrl).toContain('client_po_number=ilike');
+    expect(decodeURIComponent(lastUrl)).toContain('PO-CLIENT');
+
+    await page.selectOption('[data-action="filter-status"]', 'paid');
+    await expect.poll(() => lastUrl).toContain('payment_received_at=not.is.null');
+
+    await page.selectOption('[data-action="filter-status"]', 'pending');
+    await expect.poll(() => lastUrl).toContain('authorized_at=not.is.null');
+    expect(lastUrl).toContain('payment_received_at=is.null');
+
+    await page.selectOption('[data-action="filter-status"]', 'pending_authorization');
+    await expect.poll(() => lastUrl).toContain('authorized_at=is.null');
+  });
+
+  test('a Paid status filter shows only paid challans', async ({ page }) => {
+    const PAID = { ...DISPATCH_AUTHORIZED, id: 'dispatch-3', dc_number: 'DC-1003', payment_received_at: '2026-02-01T00:00:00Z', payment_date: '2026-01-31' };
+    await page.route('**/rest/v1/material_dispatch**', (route) => {
+      const url = route.request().url();
+      const body = url.includes('payment_received_at=not.is.null') ? [PAID] : [DISPATCH_UNAUTHORIZED, DISPATCH_AUTHORIZED, PAID];
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+    });
+
+    await page.goto('/?demoRole=admin#/delivery-challans');
+    await expect(page.locator('[data-challan-row]')).toHaveCount(3);
+
+    await page.selectOption('[data-action="filter-status"]', 'paid');
+    await expect(page.locator('[data-challan-row]')).toHaveCount(1);
+    await expect(page.locator('[data-challan-row="dispatch-3"]')).toBeVisible();
+  });
 });
 
 test.describe('Delivery Challans — reverting payment status from Paid to Pending', () => {
