@@ -1976,3 +1976,50 @@ live project (additive — new nullable columns, a new function, and a
 dropped-and-recreated one) before this reaches production; the RLS
 integration script needs `SUPABASE_SERVICE_ROLE_KEY` configured to run
 against a real project, same as every other RLS script here.
+
+## Phase 13 addendum: GST on Final Amount, plus a Pending Dues total on Delivery Challans
+
+Direct request: Total Amount (quantity × rate) was never inclusive of
+tax, and Delivery Challans had no running total of what's still owed.
+
+- `supabase/schema.sql`: `material_dispatch` gains a nullable
+  `gst_percent` (defaulting to 18, the most common GST slab, but
+  editable per dispatch — 0 is a legitimate rate for exempt goods). A
+  pre-existing dispatch from before this column existed has no default
+  applied retroactively and is treated as 0% GST rather than assuming
+  today's default on a historical record nobody actually charged that
+  on.
+- `src/materialDispatch.js`: new `dispatchTotalAmount()`/
+  `dispatchFinalAmount()` — the shared math both screens now use, so
+  Total Amount and Final Amount (Total Amount × (1 + gst_percent/100))
+  can never drift between them. `createMaterialDispatch` now also
+  accepts `gstPercent`.
+- `src/validation.js`: `validateMaterialDispatchForm` requires a GST %
+  (zero allowed).
+- Material Dispatch: New Dispatch form gains a GST % field (defaults
+  to 18); the list gains a Final Amount column.
+- Delivery Challans: the list gains a Final Amount column next to
+  Total Amount; the item breakdown's footer now shows Total Amount,
+  GST amount, and Final Amount instead of just a bare total; a new
+  card at the bottom of the screen shows <strong>Pending Dues</strong>
+  — the sum of Final Amount across every authorized challan not yet
+  marked Paid. An unauthorized dispatch is never counted (it has no
+  payment status to track yet, same as it shows no Pending/Paid
+  selector at all). Pending Dues is always recomputed from the current
+  dispatch list on every render, never a separately tracked running
+  total, so marking a challan Paid and its subsequent reload
+  automatically show the new, lower figure with no extra bookkeeping.
+- Help manual and two FAQ entries updated for GST %/Final Amount and
+  how Pending Dues is calculated.
+- Tests: new `src/materialDispatch.test.js` for the two shared money
+  helpers; `validation.test.js` extended for GST % validation;
+  `phase11.spec.js` and `deliveryChallans.spec.js` extended for the
+  Final Amount columns, the GST breakdown in Delivery Challans'
+  detail view, and Pending Dues — including that it excludes an
+  unauthorized dispatch and correctly deducts a challan's Final
+  Amount once marked Paid.
+
+Verified locally: lint, typecheck, unit tests, full e2e suite,
+production build. `supabase/schema.sql` needs re-running against the
+live project (one additive nullable column) before this reaches
+production.

@@ -17,6 +17,7 @@ const DISPATCH_UNAUTHORIZED = {
   notes: null,
   client_po_number: null,
   our_invoice_number: null,
+  gst_percent: 18,
   challan_file_path: null,
   challan_file_name: null,
   authorized_by: null,
@@ -95,6 +96,56 @@ test.describe('Delivery Challans — list', () => {
     await expect(detail).toContainText('120.00'); // Widget: 3 * 40
     await expect(detail).toContainText('20.00'); // Gizmo: 2 * 10
     await expect(detail).toContainText('140.00'); // total
+  });
+});
+
+test.describe('Delivery Challans — Final Amount (Total Amount with GST) and Pending Dues', () => {
+  test('Final Amount column includes GST, and the detail breakdown shows GST + Final Amount', async ({ page }) => {
+    await mockDispatches(page, [DISPATCH_AUTHORIZED]);
+
+    await page.goto('/?demoRole=admin#/delivery-challans');
+    const row = page.locator('[data-challan-row="dispatch-2"]');
+    // Total 140 x 1.18 = 165.20
+    await expect(row.locator('[data-role="challan-final-amount"]')).toContainText('165.20');
+
+    await page.click('[data-challan-row="dispatch-2"] [data-action="toggle-challan"]');
+    const detail = page.locator('[data-challan-detail-row="dispatch-2"]');
+    await expect(detail).toContainText('GST (18%)');
+    await expect(detail).toContainText('25.20'); // GST amount: 140 * 0.18
+    await expect(detail).toContainText('Final Amount');
+    await expect(detail).toContainText('165.20');
+  });
+
+  test('Pending Dues sums Final Amount only across authorized-but-unpaid challans', async ({ page }) => {
+    // dispatch-1 is unauthorized (excluded), dispatch-2 is authorized/unpaid
+    // (included, 165.20), a third authorized-but-already-paid dispatch is
+    // also excluded.
+    const PAID = { ...DISPATCH_AUTHORIZED, id: 'dispatch-3', dc_number: 'DC-1003', payment_received_at: '2026-02-01T00:00:00Z', payment_date: '2026-01-31' };
+    await mockDispatches(page, [DISPATCH_UNAUTHORIZED, DISPATCH_AUTHORIZED, PAID]);
+
+    await page.goto('/?demoRole=admin#/delivery-challans');
+    await expect(page.locator('[data-role="pending-dues"]')).toContainText('165.20');
+  });
+
+  test('marking a challan Paid deducts its Final Amount from Pending Dues', async ({ page }) => {
+    let requestCount = 0;
+    await page.route('**/rest/v1/material_dispatch**', (route) => {
+      requestCount += 1;
+      const body = requestCount === 1 ? DISPATCH_AUTHORIZED : { ...DISPATCH_AUTHORIZED, payment_received_at: '2026-02-01T00:00:00Z', payment_date: '2026-01-31' };
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([body]) });
+    });
+    await page.route('**/rest/v1/rpc/mark_dispatch_payment_received**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }));
+
+    await page.goto('/?demoRole=admin#/delivery-challans');
+    await expect(page.locator('[data-role="pending-dues"]')).toContainText('165.20');
+
+    const row = page.locator('[data-challan-row="dispatch-2"]');
+    await row.locator('[data-action="status-select"]').selectOption('paid');
+    await row.locator('[data-action="payment-date"]').fill('2026-01-31');
+    await row.locator('[data-action="payment-date"]').blur();
+    await row.locator('[data-action="save-payment"]').click();
+
+    await expect(page.locator('[data-role="pending-dues"]')).toContainText('0.00');
   });
 });
 

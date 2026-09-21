@@ -453,22 +453,34 @@ describe('validateMaterialDispatchLineItem', () => {
 
 describe('validateMaterialDispatchForm', () => {
   const validRow = { itemId: 'item-1', quantity: 5, rate: 10 };
+  const validForm = { dispatchDate: '2026-01-15', dcNumber: 'DC-1', party: 'Acme Corp', gstPercent: 18, lineItems: [validRow] };
 
   it('accepts a valid form', () => {
-    expect(validateMaterialDispatchForm({ dispatchDate: '2026-01-15', dcNumber: 'DC-1', party: 'Acme Corp', lineItems: [validRow] }).valid).toBe(true);
+    expect(validateMaterialDispatchForm(validForm).valid).toBe(true);
+  });
+
+  it('accepts a zero GST %', () => {
+    expect(validateMaterialDispatchForm({ ...validForm, gstPercent: 0 }).valid).toBe(true);
   });
 
   it('rejects a missing dispatch date, DC number, or party', () => {
-    const base = { dispatchDate: '2026-01-15', dcNumber: 'DC-1', party: 'Acme Corp', lineItems: [validRow] };
-    expect(validateMaterialDispatchForm({ ...base, dispatchDate: '' }).valid).toBe(false);
-    expect(validateMaterialDispatchForm({ ...base, dcNumber: '' }).valid).toBe(false);
-    expect(validateMaterialDispatchForm({ ...base, dcNumber: '   ' }).valid).toBe(false);
-    expect(validateMaterialDispatchForm({ ...base, party: '' }).valid).toBe(false);
-    expect(validateMaterialDispatchForm({ ...base, party: '   ' }).valid).toBe(false);
+    expect(validateMaterialDispatchForm({ ...validForm, dispatchDate: '' }).valid).toBe(false);
+    expect(validateMaterialDispatchForm({ ...validForm, dcNumber: '' }).valid).toBe(false);
+    expect(validateMaterialDispatchForm({ ...validForm, dcNumber: '   ' }).valid).toBe(false);
+    expect(validateMaterialDispatchForm({ ...validForm, party: '' }).valid).toBe(false);
+    expect(validateMaterialDispatchForm({ ...validForm, party: '   ' }).valid).toBe(false);
+  });
+
+  it('rejects a negative, non-numeric, or empty GST %', () => {
+    const { valid, errors } = validateMaterialDispatchForm({ ...validForm, gstPercent: -1 });
+    expect(valid).toBe(false);
+    expect(errors.gstPercent).toBeTruthy();
+    expect(validateMaterialDispatchForm({ ...validForm, gstPercent: 'abc' }).valid).toBe(false);
+    expect(validateMaterialDispatchForm({ ...validForm, gstPercent: '' }).valid).toBe(false);
   });
 
   it('rejects an empty line item list, or one with an invalid row', () => {
-    const base = { dispatchDate: '2026-01-15', dcNumber: 'DC-1', party: 'Acme Corp' };
+    const base = { dispatchDate: '2026-01-15', dcNumber: 'DC-1', party: 'Acme Corp', gstPercent: 18 };
     expect(validateMaterialDispatchForm({ ...base, lineItems: [] }).valid).toBe(false);
     expect(validateMaterialDispatchForm({ ...base, lineItems: [{ itemId: '', quantity: '', rate: '' }] }).valid).toBe(false);
   });

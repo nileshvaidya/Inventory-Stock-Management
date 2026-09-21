@@ -1,19 +1,37 @@
 // Delivery Challans (Phase 13, direct request): the admin-only financial
 // view of every Material Dispatch record, reframed as a Delivery Challan
 // register — DC No., date, Party, the client's PO number, "our" invoice
-// number, total amount, and payment status, with a click-through to each
-// challan's own item/quantity/rate/amount breakdown. This is a read-plus-
-// billing-edit view over the same material_dispatch/material_dispatch_
-// line_items data Material Dispatch itself creates and authorizes — see
-// materialDispatch.js for the create/authorize flow. Admin-only, with no
-// MODULE_PERMISSIONS reveal (see navPermissions.js) — same convention as
-// Users & Roles/Roles & Rights/Action Log.
+// number, total/final amount, and payment status, with a click-through to
+// each challan's own item/quantity/rate/amount breakdown. This is a
+// read-plus-billing-edit view over the same material_dispatch/material_
+// dispatch_line_items data Material Dispatch itself creates and
+// authorizes — see materialDispatch.js for the create/authorize flow.
+// Admin-only, with no MODULE_PERMISSIONS reveal (see navPermissions.js) —
+// same convention as Users & Roles/Roles & Rights/Action Log.
+//
+// Second Phase 13 addendum (direct request): a Final Amount column (Total
+// Amount with GST — see dispatchFinalAmount in ../materialDispatch.js) and
+// a Pending Dues total at the bottom — the sum of Final Amount across
+// every authorized-but-unpaid challan. "Pending" here specifically means
+// awaiting payment, not awaiting authorization: an unauthorized dispatch
+// isn't really billable yet (it has no Paid/Pending control at all, see
+// renderRow below), so it's excluded from this sum, same as it's excluded
+// from ever showing a payment status. Pending Dues is always recomputed
+// from the current dispatch list on every render — never a separately
+// tracked running total — so marking a challan Paid and reloading
+// automatically reflects the new, lower figure with no extra bookkeeping.
 import { getCurrentProfile } from '../auth.js';
 import { renderShell } from '../layout.js';
 import { escapeHtml } from '../components.js';
 import { createStore } from '../state.js';
 import { canViewModule } from '../navPermissions.js';
-import { fetchMaterialDispatches, updateDispatchBilling, markDispatchPaymentReceived } from '../materialDispatch.js';
+import {
+  fetchMaterialDispatches,
+  updateDispatchBilling,
+  markDispatchPaymentReceived,
+  dispatchTotalAmount,
+  dispatchFinalAmount,
+} from '../materialDispatch.js';
 import { fetchRolePermissionsGuarded } from '../rolePermissions.js';
 import { repaintPreservingFocus, afterFocusSettles, skipDateSegmentsOnTab, onRealBlur } from '../domFocus.js';
 
@@ -26,8 +44,9 @@ function omitKey(obj, key) {
   return copy;
 }
 
-function dispatchTotal(dispatch) {
-  return (dispatch.line_items || []).reduce((sum, li) => sum + Number(li.quantity) * Number(li.rate || 0), 0);
+/** Sum of Final Amount across every authorized dispatch not yet marked Paid. */
+function pendingDues(dispatches) {
+  return dispatches.filter((d) => d.authorized_at && !d.payment_received_at).reduce((sum, d) => sum + dispatchFinalAmount(d), 0);
 }
 
 function initialState() {
@@ -106,12 +125,21 @@ function renderContent(container, state) {
               </div>`
             : state.dispatches.length === 0
               ? `<div style="padding:20px;font-size:13px;color:var(--color-neutral-500)">No delivery challans recorded yet.</div>`
-              : `<table class="table" style="min-width:920px">
-                  <thead><tr><th>DC No.</th><th>Date</th><th>Party</th><th>PO No.</th><th>Our Invoice #</th><th>Total Amount</th><th>Status</th><th></th></tr></thead>
+              : `<table class="table" style="min-width:1020px">
+                  <thead><tr><th>DC No.</th><th>Date</th><th>Party</th><th>PO No.</th><th>Our Invoice #</th><th>Total Amount</th><th>Final Amount</th><th>Status</th><th></th></tr></thead>
                   <tbody>${state.dispatches.map((d) => renderRow(d, state)).join('')}</tbody>
                 </table>`
       }
     </div>
+
+    ${
+      !state.loading && !state.error && state.dispatches.length > 0
+        ? `<div class="card elev-sm" style="margin-top:16px;padding:14px 20px;display:flex;justify-content:flex-end;align-items:center;gap:10px">
+            <span style="font-size:13px;font-weight:600;color:var(--color-neutral-300)">Pending Dues</span>
+            <span data-role="pending-dues" style="font-size:18px;font-weight:700">₹${pendingDues(state.dispatches).toFixed(2)}</span>
+          </div>`
+        : ''
+    }
   `;
 }
 
@@ -119,7 +147,8 @@ function renderRow(dispatch, state) {
   const isOpen = state.openDispatchId === dispatch.id;
   const authorized = Boolean(dispatch.authorized_at);
   const paid = Boolean(dispatch.payment_received_at);
-  const total = dispatchTotal(dispatch);
+  const total = dispatchTotalAmount(dispatch);
+  const finalAmount = dispatchFinalAmount(dispatch);
   const billingEdit = state.billingEditByDispatch[dispatch.id];
   const billingError = state.billingErrorByDispatch[dispatch.id];
   const pendingPayment = state.pendingPaymentByDispatch[dispatch.id];
@@ -133,6 +162,7 @@ function renderRow(dispatch, state) {
       <td>${escapeHtml(dispatch.client_po_number || '—')}</td>
       <td>${escapeHtml(dispatch.our_invoice_number || '—')}</td>
       <td>₹${total.toFixed(2)}</td>
+      <td data-role="challan-final-amount">₹${finalAmount.toFixed(2)}</td>
       <td data-role="status-cell">
         ${
           !authorized
@@ -164,7 +194,7 @@ function renderRow(dispatch, state) {
     const lineItems = dispatch.line_items || [];
     rows.push(`
       <tr data-challan-detail-row="${escapeHtml(dispatch.id)}">
-        <td colspan="8" style="padding:12px 14px;border-top:1px solid var(--color-divider)">
+        <td colspan="9" style="padding:12px 14px;border-top:1px solid var(--color-divider)">
           ${
             lineItems.length === 0
               ? `<p style="font-size:13px;color:var(--color-neutral-500)">No items recorded.</p>`
@@ -184,7 +214,9 @@ function renderRow(dispatch, state) {
                       .join('')}
                   </tbody>
                   <tfoot>
-                    <tr style="font-weight:600"><td colspan="3" style="text-align:right">Total</td><td>₹${total.toFixed(2)}</td></tr>
+                    <tr><td colspan="3" style="text-align:right">Total Amount</td><td>₹${total.toFixed(2)}</td></tr>
+                    <tr><td colspan="3" style="text-align:right">GST (${escapeHtml(String(dispatch.gst_percent ?? 0))}%)</td><td>₹${(finalAmount - total).toFixed(2)}</td></tr>
+                    <tr style="font-weight:600"><td colspan="3" style="text-align:right">Final Amount</td><td>₹${finalAmount.toFixed(2)}</td></tr>
                   </tfoot>
                 </table>`
           }

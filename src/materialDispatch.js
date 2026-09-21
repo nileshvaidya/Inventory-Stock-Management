@@ -30,6 +30,31 @@ export async function fetchMaterialDispatches(client = supabase) {
 }
 
 /**
+ * Sum of quantity x rate across a dispatch's line items — the pre-tax
+ * Total Amount shown on both Material Dispatch and Delivery Challans.
+ * Always derived from the current line items rather than stored, same as
+ * every other computed total in this app (e.g. Stock Statement's).
+ * @param {{ line_items?: { quantity: number, rate: number|null }[] }} dispatch
+ */
+export function dispatchTotalAmount(dispatch) {
+  return (dispatch.line_items || []).reduce((sum, li) => sum + Number(li.quantity) * Number(li.rate || 0), 0);
+}
+
+/**
+ * Total Amount with GST added — the Final Amount column on both
+ * screens. A dispatch with no gst_percent recorded (nullable — see
+ * schema.sql's own comment on this column) is treated as 0% GST rather
+ * than assuming today's default, so a pre-GST historical record's Final
+ * Amount just equals its Total Amount.
+ * @param {{ line_items?: { quantity: number, rate: number|null }[], gst_percent?: number|null }} dispatch
+ */
+export function dispatchFinalAmount(dispatch) {
+  const total = dispatchTotalAmount(dispatch);
+  const gstPercent = Number(dispatch.gst_percent || 0);
+  return total * (1 + gstPercent / 100);
+}
+
+/**
  * Two-step insert (dispatch header, then its line items) — same
  * no-nested-insert caveat as createInward in materialInward.js. Creating
  * a dispatch never moves stock by itself; only authorizing it does.
@@ -38,7 +63,7 @@ export async function fetchMaterialDispatches(client = supabase) {
  * non-admin passing one here (there's no UI path that does) is silently
  * rejected by RLS rather than relying on the client to have hidden it.
  * @param {{ dispatchDate: string, dcNumber?: string|null, party?: string|null, notes?: string|null,
- *   clientPoNumber?: string|null, ourInvoiceNumber?: string|null, createdBy: string,
+ *   clientPoNumber?: string|null, ourInvoiceNumber?: string|null, gstPercent?: string|number|null, createdBy: string,
  *   lineItems: { itemId: string, quantity: number, rate: number }[] }} form
  * @param {any} [client]
  */
@@ -54,6 +79,7 @@ export async function createMaterialDispatch(form, client = supabase) {
       notes: form.notes || null,
       client_po_number: form.clientPoNumber || null,
       our_invoice_number: form.ourInvoiceNumber || null,
+      gst_percent: form.gstPercent === '' || form.gstPercent === null || form.gstPercent === undefined ? null : Number(form.gstPercent),
       created_by: form.createdBy,
     })
     .select()

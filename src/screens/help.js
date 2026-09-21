@@ -679,10 +679,12 @@ function renderMaterialDispatch() {
       'Optionally upload the delivery challan — like Material Inward, item/quantity rows are read automatically where possible (including from a scanned or photographed document), but always review every row before saving.',
       'Pick the Dispatch Date, and fill in DC No. and Party (both required) — these identify the delivery challan itself and who it went to.',
       'Add a row (item, quantity, and rate) for everything going out — use <strong>+ Add Row</strong> for more than one item. Rate is prefilled from that item\'s current Unit Rate where one exists, but always review it.',
+      'Set GST % (defaults to 18, the most common slab, but editable — 0 is fine for exempt goods).',
       'Admin only: a PO No. (Client) field also appears, for the client\'s own PO this dispatch fulfills — see the note below.',
       'Click <strong>Save Dispatch</strong>. The record appears immediately, tagged <strong>Pending Authorization</strong> — stock is untouched at this point.',
     ])}
     ${note('The client PO number is deliberately Admin-only to enter — a non-admin creating a dispatch never sees that field at all. If a non-admin created the record, an Admin can still add or edit its PO No. (and Our Invoice #) afterward from ' + jump('help-delivery-challans', 'Delivery Challans') + '.')}
+    ${note('The <strong>Final Amount</strong> column (Total Amount with GST added) shows on every row here too, even though only Delivery Challans breaks it down by item.')}
 
     ${h3('Authorizing a dispatch (Admin only)')}
     <p style="font-size:14px;color:var(--color-neutral-300);margin-bottom:8px">This is the one step that actually deducts inventory — deliberately restricted so a dispatch someone picked can be double-checked before stock leaves the books.</p>
@@ -701,19 +703,22 @@ function renderDeliveryChallans() {
     'help-delivery-challans',
     'Delivery Challans',
     `
-    <p style="font-size:14px;color:var(--color-neutral-300);margin-bottom:10px">Admin-only. The billing view of every ${jump('help-material-dispatch', 'Material Dispatch')} record, reframed as a Delivery Challan register — DC No., dispatch date, Party, the client's PO number, Our Invoice #, total amount, and payment status, all in one list.</p>
+    <p style="font-size:14px;color:var(--color-neutral-300);margin-bottom:10px">Admin-only. The billing view of every ${jump('help-material-dispatch', 'Material Dispatch')} record, reframed as a Delivery Challan register — DC No., dispatch date, Party, the client's PO number, Our Invoice #, Total Amount, Final Amount, and payment status, all in one list.</p>
 
     ${h3('The list')}
-    <p style="font-size:14px;color:var(--color-neutral-300)">A dispatch not yet authorized shows <strong>Pending Authorization</strong> here too — payment can't be tracked on a challan that hasn't actually gone out yet. Total Amount is the sum of quantity × rate across every line item.</p>
+    <p style="font-size:14px;color:var(--color-neutral-300)">A dispatch not yet authorized shows <strong>Pending Authorization</strong> here too — payment can't be tracked on a challan that hasn't actually gone out yet. Total Amount is the sum of quantity × rate across every line item; <strong>Final Amount</strong> is Total Amount with that dispatch's GST % added on top.</p>
 
     ${h3('Item breakdown')}
-    <p style="font-size:14px;color:var(--color-neutral-300)">Click <strong>Details</strong> on any row to see its items, each with quantity, rate, and amount, plus the challan's total.</p>
+    <p style="font-size:14px;color:var(--color-neutral-300)">Click <strong>Details</strong> on any row to see its items, each with quantity, rate, and amount, plus the challan's Total Amount, GST amount, and Final Amount.</p>
 
     ${h3('Editing PO No. / Our Invoice #')}
     <p style="font-size:14px;color:var(--color-neutral-300)">Inside a challan's Details, click <strong>Edit PO / Invoice #</strong> to add or correct either field — useful when a non-admin created the dispatch (and so never saw the PO field at all), or once an invoice number is assigned after the fact.</p>
 
     ${h3('Marking payment received')}
     <p style="font-size:14px;color:var(--color-neutral-300)">Once a dispatch is authorized, its Status cell shows a Pending/Paid selector. Switching it to <strong>Paid</strong> reveals a payment date field (defaulting to today, editable) — enter the actual date payment came in and click <strong>Save</strong>. There's no way to switch a challan back to Pending from the app once it's marked Paid, same as authorizing a dispatch.</p>
+
+    ${h3('Pending Dues')}
+    <p style="font-size:14px;color:var(--color-neutral-300)">Shown at the bottom of the list: the sum of Final Amount across every authorized challan that isn't marked Paid yet. Marking one Paid removes it from this total immediately — an unauthorized dispatch is never counted here at all, since it has no payment status yet.</p>
     `
   );
 }
@@ -786,6 +791,14 @@ const FAQ = [
   {
     q: 'Why can\'t I enter a PO No. when creating a Material Dispatch?',
     a: 'That field is deliberately Admin-only — it\'s only ever shown when you\'re signed in as Admin. If you\'re not an Admin, ask one to add the client PO number afterward from Delivery Challans.',
+  },
+  {
+    q: 'What\'s the difference between Total Amount and Final Amount?',
+    a: 'Total Amount is quantity × rate summed across a dispatch\'s items. Final Amount is Total Amount with that dispatch\'s GST % added — GST defaults to 18% when creating a dispatch, but is editable per dispatch (0% for exempt goods).',
+  },
+  {
+    q: 'How is Pending Dues on Delivery Challans calculated?',
+    a: 'It\'s the sum of Final Amount across every authorized challan not yet marked Paid — an unauthorized dispatch is never included, since it has no payment status to track yet. It updates immediately once a challan is marked Paid.',
   },
   {
     q: 'How do I get data out of the app for Excel?',

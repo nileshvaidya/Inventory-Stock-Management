@@ -20,6 +20,12 @@
 // screen if a store user created the record. That new screen (admin-only)
 // is also where the DC-level Paid/Pending payment status now lives —
 // this screen stays focused on creating and authorizing dispatches.
+//
+// Second Phase 13 addendum (direct request): a GST % per dispatch
+// (defaulting to 18, the most common slab, but editable) so a Final
+// Amount — Total Amount with GST added — can be shown alongside every
+// dispatch, here and on Delivery Challans. See dispatchTotalAmount/
+// dispatchFinalAmount in ../materialDispatch.js for the shared math.
 import { getCurrentProfile } from '../auth.js';
 import { renderShell } from '../layout.js';
 import { escapeHtml } from '../components.js';
@@ -31,6 +37,7 @@ import {
   uploadDispatchChallanFile,
   getDispatchChallanFileUrl,
   authorizeMaterialDispatch,
+  dispatchFinalAmount,
 } from '../materialDispatch.js';
 import { fetchItems } from '../items.js';
 import { fetchCurrentRates } from '../itemPricing.js';
@@ -40,6 +47,7 @@ import { extractPdfText, parseChallanText } from '../pdfParser.js';
 import { fetchRolePermissionsGuarded, hasPermission } from '../rolePermissions.js';
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
+const DEFAULT_GST_PERCENT = '18';
 
 function emptyLineItem() {
   return { itemId: '', quantity: '', rate: '' };
@@ -52,6 +60,7 @@ function emptyForm() {
     party: '',
     ourInvoiceNumber: '',
     clientPoNumber: '',
+    gstPercent: DEFAULT_GST_PERCENT,
     notes: '',
     lineItems: [emptyLineItem()],
     challanFile: null,
@@ -182,8 +191,8 @@ function renderContent(container, state, canCreate, isAdmin) {
               </div>`
             : state.dispatches.length === 0
               ? `<div style="padding:20px;font-size:13px;color:var(--color-neutral-500)">No material dispatch records yet.</div>`
-              : `<table class="table" style="min-width:820px">
-                  <thead><tr><th>Date</th><th>DC No.</th><th>Party</th><th>Items</th><th>Status</th><th>File</th><th></th></tr></thead>
+              : `<table class="table" style="min-width:920px">
+                  <thead><tr><th>Date</th><th>DC No.</th><th>Party</th><th>Items</th><th>Final Amount</th><th>Status</th><th>File</th><th></th></tr></thead>
                   <tbody>${state.dispatches.map((d) => renderDispatchRow(d, state, isAdmin)).join('')}</tbody>
                 </table>`
       }
@@ -218,6 +227,9 @@ function renderForm(state, isAdmin) {
         </div>
         <div class="field"><label for="md-invoice-number">Our Invoice # (optional)</label>
           <input class="input" id="md-invoice-number" data-action="form-invoice-number" value="${escapeHtml(form.ourInvoiceNumber)}" />
+        </div>
+        <div class="field"><label for="md-gst-percent">GST %</label>
+          <input class="input" id="md-gst-percent" data-action="form-gst-percent" type="text" inputmode="decimal" value="${escapeHtml(form.gstPercent)}" />
         </div>
         ${
           isAdmin
@@ -306,6 +318,7 @@ function renderDispatchRow(dispatch, state, isAdmin) {
       <td>${escapeHtml(dispatch.dc_number || '—')}</td>
       <td>${escapeHtml(dispatch.reference || '—')}</td>
       <td>${itemsSummary}</td>
+      <td data-role="dispatch-final-amount">₹${dispatchFinalAmount(dispatch).toFixed(2)}</td>
       <td><span class="tag ${authorized ? 'tag-success' : 'tag-neutral'}" data-role="dispatch-status">${authorized ? 'Authorized' : 'Pending Authorization'}</span></td>
       <td>${hasFile ? `<button type="button" class="btn btn-ghost" data-action="view-dispatch-file" data-path="${escapeHtml(dispatch.challan_file_path)}" style="padding:4px 10px;font-size:12px">View</button>` : '—'}</td>
       <td style="white-space:nowrap">
@@ -322,7 +335,7 @@ function renderDispatchRow(dispatch, state, isAdmin) {
   if (isOpen) {
     rows.push(`
       <tr data-dispatch-detail-row="${escapeHtml(dispatch.id)}">
-        <td colspan="7" style="padding:12px 14px;border-top:1px solid var(--color-divider)">
+        <td colspan="8" style="padding:12px 14px;border-top:1px solid var(--color-divider)">
           ${dispatch.notes ? `<p style="font-size:12px;color:var(--color-neutral-500);margin:0 0 10px">${escapeHtml(dispatch.notes)}</p>` : ''}
           ${
             lineItems.length === 0
@@ -427,6 +440,10 @@ function wireEvents(container, store, user, load, canCreate, isAdmin) {
   container.querySelector('[data-action="form-client-po"]')?.addEventListener('input', (e) => {
     const state = store.getState();
     store.setState({ form: { ...state.form, clientPoNumber: e.target.value } });
+  });
+  container.querySelector('[data-action="form-gst-percent"]')?.addEventListener('input', (e) => {
+    const state = store.getState();
+    store.setState({ form: { ...state.form, gstPercent: e.target.value } });
   });
   container.querySelector('[data-action="form-notes"]')?.addEventListener('input', (e) => {
     const state = store.getState();
@@ -546,6 +563,7 @@ function wireEvents(container, store, user, load, canCreate, isAdmin) {
         // so this is a no-op for anyone but admin, matching what the
         // insert policy would enforce server-side anyway.
         clientPoNumber: isAdmin ? state.form.clientPoNumber : '',
+        gstPercent: state.form.gstPercent,
         notes: state.form.notes,
         createdBy: user.id,
         lineItems: state.form.lineItems

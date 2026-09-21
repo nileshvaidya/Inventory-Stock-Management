@@ -2518,3 +2518,17 @@ end;
 $$;
 
 grant execute on function public.mark_dispatch_payment_received(uuid, date) to authenticated;
+
+-- Phase 13 addendum: GST on a dispatch's Final Amount (direct request).
+-- Total Amount (sum of quantity x rate) was never inclusive of tax —
+-- gst_percent lets whoever creates the dispatch record the rate that
+-- applies (defaulting to 18%, the most common slab, but editable per
+-- dispatch since GST varies by goods category); Final Amount
+-- (Total Amount x (1 + gst_percent/100)) is computed client-side from
+-- this, same as Total Amount itself already is — no stored column for
+-- either, both are always derived from current line items + this rate.
+-- Nullable despite the default: a pre-existing dispatch from before this
+-- column existed has no default applied retroactively, and is treated as
+-- 0% GST (Final Amount = Total Amount) rather than assuming 18% for a
+-- historical record nobody actually charged that on.
+alter table public.material_dispatch add column if not exists gst_percent numeric null default 18 check (gst_percent >= 0);

@@ -404,22 +404,27 @@ export function validateMaterialDispatchLineItem(row) {
 }
 
 /**
- * The Material Dispatch form as a whole (Phase 11, +DC No./Party in the
- * Phase 13 addendum): a dispatch date, a DC number, a party, and at least
- * one valid line item. Client PO number is deliberately never validated
+ * The Material Dispatch form as a whole (Phase 11, +DC No./Party/GST % in
+ * the Phase 13 addendum): a dispatch date, a DC number, a party, a GST %
+ * (zero allowed — some goods are genuinely exempt), and at least one
+ * valid line item. Client PO number is deliberately never validated
  * here — it's admin-only to set at all (see schema.sql), and simply
  * omitted from the form entirely for anyone else.
- * @param {{ dispatchDate?: string, dcNumber?: string, party?: string,
+ * @param {{ dispatchDate?: string, dcNumber?: string, party?: string, gstPercent?: string|number,
  *   lineItems?: { itemId?: string, quantity?: string|number, rate?: string|number }[] }} form
  */
 export function validateMaterialDispatchForm(form) {
   /** @type {Record<string, string>} */
   const errors = {};
-  const { dispatchDate = '', dcNumber = '', party = '', lineItems = [] } = form || {};
+  const { dispatchDate = '', dcNumber = '', party = '', gstPercent = '', lineItems = [] } = form || {};
 
   if (!dispatchDate) errors.dispatchDate = 'Dispatch date is required.';
   if (!dcNumber.trim()) errors.dcNumber = 'DC No. is required.';
   if (!party.trim()) errors.party = 'Party is required.';
+  const gstNum = Number(gstPercent);
+  if (gstPercent === '' || !Number.isFinite(gstNum) || gstNum < 0) {
+    errors.gstPercent = 'GST % must be zero or a positive number.';
+  }
   if (lineItems.length === 0) {
     errors.lineItems = 'Add at least one item to dispatch.';
   } else if (lineItems.some((row) => !validateMaterialDispatchLineItem(row).valid)) {

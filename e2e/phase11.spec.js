@@ -97,6 +97,7 @@ test.describe('Phase 11 — Material Dispatch — create', () => {
       notes: null,
       client_po_number: null,
       our_invoice_number: null,
+      gst_percent: 18,
       created_by: 'demo-u3',
     });
     expect(lineItemsInsertBody).toEqual([{ dispatch_id: 'dispatch-1', item_id: 'item-widget', quantity: 5, rate: 25 }]);
@@ -167,6 +168,7 @@ test.describe('Phase 11 — Material Dispatch — admin authorization', () => {
     notes: null,
     client_po_number: null,
     our_invoice_number: null,
+    gst_percent: 18,
     challan_file_path: null,
     challan_file_name: null,
     authorized_by: null,
@@ -188,6 +190,19 @@ test.describe('Phase 11 — Material Dispatch — admin authorization', () => {
     await page.goto('/?demoRole=store#/material-dispatch');
     await expect(page.locator('[data-dispatch-row="dispatch-1"]')).toContainText('Pending Authorization');
     await expect(page.locator('[data-dispatch-row="dispatch-1"] [data-action="authorize-dispatch"]')).toHaveCount(0);
+  });
+
+  test('shows Final Amount (Total Amount with GST) for each dispatch', async ({ page }) => {
+    await mockDefaultRolePermissions(page);
+    await mockItems(page);
+    await mockCurrentRates(page);
+    // 5 x 25 = 125 total, +18% GST = 147.50
+    await page.route('**/rest/v1/material_dispatch**', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([DISPATCH_UNAUTHORIZED]) })
+    );
+
+    await page.goto('/?demoRole=admin#/material-dispatch');
+    await expect(page.locator('[data-dispatch-row="dispatch-1"] [data-role="dispatch-final-amount"]')).toContainText('147.50');
   });
 
   test('admin authorizes a dispatch, deducting inventory server-side', async ({ page }) => {
