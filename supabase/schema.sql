@@ -2532,3 +2532,42 @@ grant execute on function public.mark_dispatch_payment_received(uuid, date) to a
 -- 0% GST (Final Amount = Total Amount) rather than assuming 18% for a
 -- historical record nobody actually charged that on.
 alter table public.material_dispatch add column if not exists gst_percent numeric null default 18 check (gst_percent >= 0);
+
+-- Second Phase 13 addendum: allow reverting a challan's payment status
+-- from Paid back to Pending (direct request — a payment can be marked
+-- by mistake, unlike authorize() which moves real inventory and is
+-- deliberately one-way, correcting a bookkeeping entry is a normal
+-- need). Clears all three payment columns so the dispatch returns to
+-- exactly its pre-payment state and can be marked paid again later.
+create or replace function public.revert_dispatch_payment(target_dispatch_id uuid)
+returns public.material_dispatch
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  dispatch_row public.material_dispatch%rowtype;
+  updated_row public.material_dispatch%rowtype;
+begin
+  if not public.is_admin(auth.uid()) then
+    raise exception 'Not authorized to revert payment status.';
+  end if;
+
+  select * into dispatch_row from public.material_dispatch where id = target_dispatch_id;
+  if not found then
+    raise exception 'Material dispatch record not found.';
+  end if;
+  if dispatch_row.payment_received_at is null then
+    raise exception 'This dispatch is not marked Paid.';
+  end if;
+
+  update public.material_dispatch
+  set payment_received_by = null, payment_received_at = null, payment_date = null
+  where id = target_dispatch_id
+  returning * into updated_row;
+
+  return updated_row;
+end;
+$$;
+
+grant execute on function public.revert_dispatch_payment(uuid) to authenticated;

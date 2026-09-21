@@ -2023,3 +2023,38 @@ Verified locally: lint, typecheck, unit tests, full e2e suite,
 production build. `supabase/schema.sql` needs re-running against the
 live project (one additive nullable column) before this reaches
 production.
+
+## Second Phase 13 addendum: allow reverting a Delivery Challan's payment status from Paid back to Pending
+
+Direct request. Marking a challan Paid was previously one-way, same as
+authorizing a dispatch — but unlike authorize (which moves real
+inventory), a payment record is pure bookkeeping, and correcting a
+mistaken "Paid" entry is a normal need.
+
+- `supabase/schema.sql`: new `revert_dispatch_payment(target_dispatch_id)`
+  RPC — admin-only, clears `payment_received_by`/`payment_received_at`/
+  `payment_date` back to null. Rejects reverting a dispatch that isn't
+  currently marked Paid.
+- `src/materialDispatch.js`: new `revertDispatchPayment()`.
+- Delivery Challans: an authorized dispatch's Status selector now
+  always reflects Pending/Paid, whether or not it's paid (previously a
+  Paid challan showed a plain tag with no selector at all). Switching
+  a Paid challan back to Pending asks for confirmation first, then
+  calls the new RPC; declining leaves the selector showing Paid and
+  never calls it. A reverted challan reappears in Pending Dues on the
+  next reload, same as any other authorized-but-unpaid challan — no
+  separate bookkeeping needed, since that total is always recomputed
+  from the current dispatch list.
+- Help manual and a new FAQ entry updated.
+- Tests: `scripts/test-rls-material-dispatch.mjs` extended (store/
+  production cannot revert, admin can and it actually clears the
+  columns, reverting an already-Pending dispatch is rejected, and the
+  dispatch can be marked Paid again afterward with a new date).
+  `e2e/deliveryChallans.spec.js` gained a new describe block covering
+  both the decline-the-confirmation and confirm-the-revert paths, the
+  latter checking Pending Dues rises back by that challan's Final
+  Amount.
+
+Verified locally: lint, typecheck, unit tests, full e2e suite,
+production build. `supabase/schema.sql` needs re-running against the
+live project (one new function) before this reaches production.

@@ -167,3 +167,17 @@ export async function markDispatchPaymentReceived(dispatchId, paymentDate, clien
   if (error) throw error;
   return data;
 }
+
+/**
+ * Admin only, server-side. Clears a dispatch's payment status back to
+ * Pending — the counterpart to markDispatchPaymentReceived above, for
+ * correcting a payment marked by mistake.
+ * @param {string} dispatchId
+ * @param {any} [client]
+ */
+export async function revertDispatchPayment(dispatchId, client = supabase) {
+  if (!client) throw new Error('Supabase is not configured.');
+  const { data, error } = await client.rpc('revert_dispatch_payment', { target_dispatch_id: dispatchId });
+  if (error) throw error;
+  return data;
+}

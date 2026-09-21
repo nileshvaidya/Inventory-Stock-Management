@@ -18,8 +18,11 @@
 // renderRow below), so it's excluded from this sum, same as it's excluded
 // from ever showing a payment status. Pending Dues is always recomputed
 // from the current dispatch list on every render — never a separately
-// tracked running total — so marking a challan Paid and reloading
-// automatically reflects the new, lower figure with no extra bookkeeping.
+// tracked running total — so marking a challan Paid (or reverting one
+// back to Pending — see revert_dispatch_payment in schema.sql, added by
+// a later direct request for correcting a payment marked by mistake) and
+// reloading automatically reflects the new figure with no extra
+// bookkeeping.
 import { getCurrentProfile } from '../auth.js';
 import { renderShell } from '../layout.js';
 import { escapeHtml } from '../components.js';
@@ -29,6 +32,7 @@ import {
   fetchMaterialDispatches,
   updateDispatchBilling,
   markDispatchPaymentReceived,
+  revertDispatchPayment,
   dispatchTotalAmount,
   dispatchFinalAmount,
 } from '../materialDispatch.js';
@@ -61,12 +65,14 @@ function initialState() {
     billingEditByDispatch: {},
     billingErrorByDispatch: {},
     // Keyed by dispatch id — the in-progress "mark Paid" date, from the
-    // moment the status select is switched to Paid until Save (or
-    // switching back to Pending) resolves it. No revert-after-Paid path:
-    // once a payment is actually recorded there's no "un-pay" RPC, same
-    // as this table's other admin actions being one-way (authorize).
+    // moment the status select is switched to Paid (on a not-yet-paid
+    // dispatch) until Save or Cancel resolves it.
     pendingPaymentByDispatch: {},
     paymentErrorByDispatch: {},
+    // Keyed by dispatch id — set while a Paid -> Pending revert RPC is
+    // in flight, so the select can be disabled and re-enabled around it.
+    revertingByDispatch: {},
+    revertErrorByDispatch: {},
   };
 }
 
@@ -153,6 +159,8 @@ function renderRow(dispatch, state) {
   const billingError = state.billingErrorByDispatch[dispatch.id];
   const pendingPayment = state.pendingPaymentByDispatch[dispatch.id];
   const paymentError = state.paymentErrorByDispatch[dispatch.id];
+  const reverting = Boolean(state.revertingByDispatch[dispatch.id]);
+  const revertError = state.revertErrorByDispatch[dispatch.id];
 
   const rows = [
     `<tr data-challan-row="${escapeHtml(dispatch.id)}">
@@ -167,21 +175,21 @@ function renderRow(dispatch, state) {
         ${
           !authorized
             ? `<span class="tag tag-neutral">Pending Authorization</span>`
-            : paid
-              ? `<span class="tag tag-success">Paid${dispatch.payment_date ? ` (${escapeHtml(dispatch.payment_date)})` : ''}</span>`
-              : `<select class="input" data-action="status-select" data-id="${escapeHtml(dispatch.id)}" style="width:auto">
-                  <option value="pending" ${!pendingPayment ? 'selected' : ''}>Pending</option>
-                  <option value="paid" ${pendingPayment ? 'selected' : ''}>Paid</option>
-                </select>
-                ${
-                  pendingPayment
-                    ? `<span style="display:inline-flex;align-items:center;gap:6px;margin-left:8px">
-                        <input class="input" type="date" data-action="payment-date" data-id="${escapeHtml(dispatch.id)}" value="${escapeHtml(pendingPayment.date)}" style="width:auto" />
-                        <button type="button" class="btn btn-secondary" data-action="save-payment" data-id="${escapeHtml(dispatch.id)}" style="padding:4px 10px;font-size:12px" ${pendingPayment.saving ? 'disabled' : ''}>${pendingPayment.saving ? 'Saving…' : 'Save'}</button>
-                      </span>`
-                    : ''
-                }
-                ${paymentError ? `<p data-role="payment-error" data-id="${escapeHtml(dispatch.id)}" style="font-size:11px;color:var(--color-accent-2-200);margin:4px 0 0">${escapeHtml(paymentError)}</p>` : ''}`
+            : `<select class="input" data-action="status-select" data-id="${escapeHtml(dispatch.id)}" style="width:auto" ${reverting ? 'disabled' : ''}>
+                <option value="pending" ${!paid && !pendingPayment ? 'selected' : ''}>Pending</option>
+                <option value="paid" ${paid || pendingPayment ? 'selected' : ''}>Paid</option>
+              </select>
+              ${paid ? `<span class="tag tag-success" style="margin-left:8px">${reverting ? 'Reverting…' : `Paid${dispatch.payment_date ? ` (${escapeHtml(dispatch.payment_date)})` : ''}`}</span>` : ''}
+              ${
+                pendingPayment
+                  ? `<span style="display:inline-flex;align-items:center;gap:6px;margin-left:8px">
+                      <input class="input" type="date" data-action="payment-date" data-id="${escapeHtml(dispatch.id)}" value="${escapeHtml(pendingPayment.date)}" style="width:auto" />
+                      <button type="button" class="btn btn-secondary" data-action="save-payment" data-id="${escapeHtml(dispatch.id)}" style="padding:4px 10px;font-size:12px" ${pendingPayment.saving ? 'disabled' : ''}>${pendingPayment.saving ? 'Saving…' : 'Save'}</button>
+                    </span>`
+                  : ''
+              }
+              ${paymentError ? `<p data-role="payment-error" data-id="${escapeHtml(dispatch.id)}" style="font-size:11px;color:var(--color-accent-2-200);margin:4px 0 0">${escapeHtml(paymentError)}</p>` : ''}
+              ${revertError ? `<p data-role="revert-error" data-id="${escapeHtml(dispatch.id)}" style="font-size:11px;color:var(--color-accent-2-200);margin:4px 0 0">${escapeHtml(revertError)}</p>` : ''}`
         }
       </td>
       <td style="white-space:nowrap">
@@ -322,13 +330,44 @@ function wireEvents(container, store, load) {
   });
 
   container.querySelectorAll('[data-action="status-select"]').forEach((el) => {
-    el.addEventListener('change', () => {
+    el.addEventListener('change', async () => {
       const id = el.dataset.id;
       const state = store.getState();
+      const dispatch = state.dispatches.find((d) => d.id === id);
+      const alreadyPaid = Boolean(dispatch?.payment_received_at);
+
       if (el.value === 'paid') {
+        if (alreadyPaid) return; // already paid — nothing to do
         store.setState({ pendingPaymentByDispatch: { ...state.pendingPaymentByDispatch, [id]: { date: todayISO(), saving: false } } });
-      } else {
+        return;
+      }
+
+      // Switched to Pending.
+      if (!alreadyPaid) {
+        // Just cancels an in-progress, unsaved "mark Paid" edit.
         store.setState({ pendingPaymentByDispatch: omitKey(state.pendingPaymentByDispatch, id) });
+        return;
+      }
+
+      // Reverting an actually-paid challan — a real, confirmed action.
+      if (!window.confirm('Revert this challan to Pending? This clears its recorded payment date.')) {
+        el.value = 'paid'; // undo the select's own visual change
+        return;
+      }
+      store.setState({
+        revertingByDispatch: { ...state.revertingByDispatch, [id]: true },
+        revertErrorByDispatch: { ...state.revertErrorByDispatch, [id]: null },
+      });
+      try {
+        await revertDispatchPayment(id);
+        store.setState({ revertingByDispatch: omitKey(store.getState().revertingByDispatch, id) });
+        await load();
+      } catch (err) {
+        const current = store.getState();
+        store.setState({
+          revertingByDispatch: omitKey(current.revertingByDispatch, id),
+          revertErrorByDispatch: { ...current.revertErrorByDispatch, [id]: err.message || "Couldn't revert this challan to Pending." },
+        });
       }
     });
   });

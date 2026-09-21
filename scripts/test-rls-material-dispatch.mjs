@@ -213,6 +213,31 @@ async function run() {
         console.log('\nmarking payment received a second time is rejected...');
         const { error: rePaymentErr } = await clientAdmin.rpc('mark_dispatch_payment_received', { target_dispatch_id: dispatch.id, payment_date_in: '2026-01-21' });
         assert(!!rePaymentErr, 'marking payment received twice fails');
+
+        console.log('\nrevert_dispatch_payment: store/production cannot, admin can, and it clears the payment columns...');
+        const { error: storeRevertErr } = await clientStore.rpc('revert_dispatch_payment', { target_dispatch_id: dispatch.id });
+        assert(!!storeRevertErr, 'store role cannot revert payment status');
+        const { error: productionRevertErr } = await clientProduction.rpc('revert_dispatch_payment', { target_dispatch_id: dispatch.id });
+        assert(!!productionRevertErr, 'production role cannot revert payment status');
+
+        const { data: reverted, error: revertErr } = await clientAdmin.rpc('revert_dispatch_payment', { target_dispatch_id: dispatch.id });
+        assert(!revertErr, `admin role can revert payment status${revertErr ? ` (${revertErr.message})` : ''}`);
+        if (reverted) {
+          assert(reverted.payment_received_at === null, 'payment_received_at was cleared');
+          assert(reverted.payment_received_by === null, 'payment_received_by was cleared');
+          assert(reverted.payment_date === null, 'payment_date was cleared');
+        }
+
+        console.log('\nreverting a dispatch that is not marked Paid is rejected...');
+        const { error: revertNotPaidErr } = await clientAdmin.rpc('revert_dispatch_payment', { target_dispatch_id: dispatch.id });
+        assert(!!revertNotPaidErr, 'reverting an already-Pending dispatch fails');
+
+        console.log('\nthe dispatch can be marked paid again after a revert (full cycle)...');
+        const { data: paidAgain, error: paidAgainErr } = await clientAdmin.rpc('mark_dispatch_payment_received', { target_dispatch_id: dispatch.id, payment_date_in: '2026-01-22' });
+        assert(!paidAgainErr, `admin role can mark payment received again after a revert${paidAgainErr ? ` (${paidAgainErr.message})` : ''}`);
+        if (paidAgain) {
+          assert(paidAgain.payment_date === '2026-01-22', 'the re-marked payment_date is the new date, not the original');
+        }
       } else {
         assert(false, 'skipped all post-authorization checks — the authorize call above failed, see its message');
       }

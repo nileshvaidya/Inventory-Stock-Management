@@ -149,6 +149,66 @@ test.describe('Delivery Challans — Final Amount (Total Amount with GST) and Pe
   });
 });
 
+test.describe('Delivery Challans — reverting payment status from Paid to Pending', () => {
+  const DISPATCH_PAID = { ...DISPATCH_AUTHORIZED, payment_received_by: 'admin-1', payment_received_at: '2026-02-01T00:00:00Z', payment_date: '2026-01-31' };
+
+  test('declining the confirmation leaves the challan Paid and never calls the RPC', async ({ page }) => {
+    await mockDispatches(page, [DISPATCH_PAID]);
+    let revertCalled = false;
+    await page.route('**/rest/v1/rpc/revert_dispatch_payment**', (route) => {
+      revertCalled = true;
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    });
+    page.once('dialog', (dialog) => dialog.dismiss());
+
+    await page.goto('/?demoRole=admin#/delivery-challans');
+    const row = page.locator('[data-challan-row="dispatch-2"]');
+    // The payment date is an unambiguous marker for the "Paid (date)"
+    // badge specifically — unlike the word "Paid" alone, which is also
+    // always present as the select's own <option>Paid</option> label
+    // regardless of which option is actually selected.
+    await expect(row).toContainText('2026-01-31');
+    await row.locator('[data-action="status-select"]').selectOption('pending');
+
+    expect(revertCalled).toBe(false);
+    await expect(row).toContainText('2026-01-31');
+    await expect(row.locator('[data-action="status-select"]')).toHaveValue('paid');
+  });
+
+  test('confirming the revert calls revert_dispatch_payment, returns the challan to Pending, and Pending Dues rises back', async ({ page }) => {
+    let requestCount = 0;
+    await page.route('**/rest/v1/material_dispatch**', (route) => {
+      requestCount += 1;
+      const body = requestCount === 1 ? DISPATCH_PAID : DISPATCH_AUTHORIZED;
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([body]) });
+    });
+    let revertBody = null;
+    await page.route('**/rest/v1/rpc/revert_dispatch_payment**', (route) => {
+      revertBody = route.request().postDataJSON();
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    });
+    page.once('dialog', (dialog) => dialog.accept());
+
+    await page.goto('/?demoRole=admin#/delivery-challans');
+    await expect(page.locator('[data-role="pending-dues"]')).toContainText('0.00');
+
+    const row = page.locator('[data-challan-row="dispatch-2"]');
+    await row.locator('[data-action="status-select"]').selectOption('pending');
+
+    // Wait for a real, polled outcome of the async change handler's RPC
+    // call + reload before checking the value it captured — selectOption()
+    // itself only waits for the DOM action, not the handler chain it
+    // triggers, so asserting on revertBody immediately after is racy.
+    // toHaveValue on the select is the precise signal (unlike checking
+    // for the text "Paid" anywhere in the row — that's always present as
+    // the select's own <option>Paid</option> label either way).
+    await expect(row.locator('[data-action="status-select"]')).toHaveValue('pending');
+    expect(revertBody).toEqual({ target_dispatch_id: 'dispatch-2' });
+    await expect(row).not.toContainText('2026-01-31');
+    await expect(page.locator('[data-role="pending-dues"]')).toContainText('165.20');
+  });
+});
+
 test.describe('Delivery Challans — editing PO No. / Our Invoice #', () => {
   test('admin edits PO No. and Our Invoice #, saving via admin_update_dispatch_billing', async ({ page }) => {
     let requestCount = 0;

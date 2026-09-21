@@ -715,7 +715,10 @@ function renderDeliveryChallans() {
     <p style="font-size:14px;color:var(--color-neutral-300)">Inside a challan's Details, click <strong>Edit PO / Invoice #</strong> to add or correct either field — useful when a non-admin created the dispatch (and so never saw the PO field at all), or once an invoice number is assigned after the fact.</p>
 
     ${h3('Marking payment received')}
-    <p style="font-size:14px;color:var(--color-neutral-300)">Once a dispatch is authorized, its Status cell shows a Pending/Paid selector. Switching it to <strong>Paid</strong> reveals a payment date field (defaulting to today, editable) — enter the actual date payment came in and click <strong>Save</strong>. There's no way to switch a challan back to Pending from the app once it's marked Paid, same as authorizing a dispatch.</p>
+    <p style="font-size:14px;color:var(--color-neutral-300)">Once a dispatch is authorized, its Status cell shows a Pending/Paid selector. Switching it to <strong>Paid</strong> reveals a payment date field (defaulting to today, editable) — enter the actual date payment came in and click <strong>Save</strong>.</p>
+
+    ${h3('Reverting a payment marked by mistake')}
+    <p style="font-size:14px;color:var(--color-neutral-300)">Switching a Paid challan's selector back to <strong>Pending</strong> asks for confirmation, then clears its payment date — unlike authorizing a dispatch, this can be undone, since it's just a bookkeeping entry. The challan returns to Pending Dues and can be marked Paid again later.</p>
 
     ${h3('Pending Dues')}
     <p style="font-size:14px;color:var(--color-neutral-300)">Shown at the bottom of the list: the sum of Final Amount across every authorized challan that isn't marked Paid yet. Marking one Paid removes it from this total immediately — an unauthorized dispatch is never counted here at all, since it has no payment status yet.</p>
@@ -799,6 +802,10 @@ const FAQ = [
   {
     q: 'How is Pending Dues on Delivery Challans calculated?',
     a: 'It\'s the sum of Final Amount across every authorized challan not yet marked Paid — an unauthorized dispatch is never included, since it has no payment status to track yet. It updates immediately once a challan is marked Paid.',
+  },
+  {
+    q: 'I marked a Delivery Challan Paid by mistake — can I undo it?',
+    a: 'Yes — switch its status selector back to Pending; after confirming, its payment date is cleared and it returns to Pending Dues. It can be marked Paid again later.',
   },
   {
     q: 'How do I get data out of the app for Excel?',
