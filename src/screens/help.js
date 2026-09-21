@@ -711,6 +711,9 @@ function renderDeliveryChallans() {
     ${h3('Filters')}
     <p style="font-size:14px;color:var(--color-neutral-300)">From/To narrow by dispatch date, PO No. searches the client PO number, and Status picks one of Pending Authorization/Pending/Paid. All four combine, and every total on the screen (Pending Dues and Total Amount Received, below) reflects only what's currently visible after filtering. Click <strong>Reset Filters</strong> to clear all four and see the complete list again.</p>
 
+    ${h3('Sorting')}
+    <p style="font-size:14px;color:var(--color-neutral-300)">Click the <strong>DC No.</strong> or <strong>Date</strong> column heading to sort the list by that column — click it again to flip between ascending and descending. This just reorders whatever's currently visible after filtering; it doesn't change which challans are shown.</p>
+
     ${h3('Item breakdown')}
     <p style="font-size:14px;color:var(--color-neutral-300)">Click <strong>Details</strong> on any row to see its items, each with quantity, rate, and amount, plus the challan's Total Amount, GST amount, and Final Amount.</p>
 

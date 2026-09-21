@@ -36,6 +36,16 @@
 // (direct follow-up request) just sets all four filter fields back to
 // '' and reloads — the same "empty means no filter" state this screen
 // already starts in, not a distinct code path.
+//
+// Fifth Phase 13 addendum (direct request): clickable DC No./Date column
+// headers sort the currently-loaded (already-filtered) list — purely
+// client-side, since every dispatch the filters return is already in
+// state.dispatches, so there's no need to re-fetch just to reorder it.
+// Clicking a header once sorts ascending, clicking it again flips to
+// descending; clicking the other header switches to sorting by that
+// column instead. The totals below the table sum the same rows
+// regardless of row order, so sorting never changes Pending Dues/Total
+// Amount Received.
 import { getCurrentProfile } from '../auth.js';
 import { renderShell } from '../layout.js';
 import { escapeHtml } from '../components.js';
@@ -71,6 +81,33 @@ function amountReceived(dispatches) {
   return dispatches.filter((d) => d.payment_received_at).reduce((sum, d) => sum + dispatchFinalAmount(d), 0);
 }
 
+/**
+ * Sorts (a copy of) `dispatches` by DC No. or Date per state.sortBy/
+ * sortDir — client-side, since the full (filtered) list is already
+ * loaded. No active sort just returns the list as fetched (newest
+ * dispatch first, per fetchMaterialDispatches' own default order).
+ * @param {any[]} dispatches
+ * @param {{ sortBy: 'dc_number'|'dispatch_date'|null, sortDir: 'asc'|'desc' }} state
+ */
+function sortDispatches(dispatches, state) {
+  if (!state.sortBy) return dispatches;
+  const dir = state.sortDir === 'desc' ? -1 : 1;
+  const key = state.sortBy;
+  return [...dispatches].sort((a, b) => {
+    const av = key === 'dc_number' ? a.dc_number || '' : a.dispatch_date;
+    const bv = key === 'dc_number' ? b.dc_number || '' : b.dispatch_date;
+    if (av === bv) return 0;
+    return av < bv ? -dir : dir;
+  });
+}
+
+/** A clickable `<th>` for the DC No./Date columns — toggles state.sortBy/sortDir on click, wired in wireEvents below. */
+function renderSortableHeader(label, key, state) {
+  const active = state.sortBy === key;
+  const arrow = active ? (state.sortDir === 'asc' ? ' ▲' : ' ▼') : '';
+  return `<th><button type="button" data-action="sort" data-key="${key}" style="background:none;border:none;padding:0;margin:0;font:inherit;color:inherit;text-transform:inherit;letter-spacing:inherit;cursor:pointer">${escapeHtml(label)}${arrow}</button></th>`;
+}
+
 function initialState() {
   return {
     dispatches: [],
@@ -84,6 +121,12 @@ function initialState() {
     dateTo: '',
     poNumber: '',
     status: '',
+    // Which column (if any) the list is sorted by — client-side only,
+    // toggled by clicking the DC No./Date column headers (see
+    // renderSortableHeader/sortDispatches above). Not reset by Reset
+    // Filters, which only touches the four filter fields above.
+    sortBy: null,
+    sortDir: 'asc',
     // Keyed by dispatch id — only ever holds an in-progress, unsaved edit;
     // committing (or cancelling) removes the key rather than leaving a
     // stale draft around once its row is no longer being edited.
@@ -183,8 +226,10 @@ function renderContent(container, state) {
             : state.dispatches.length === 0
               ? `<div style="padding:20px;font-size:13px;color:var(--color-neutral-500)">No delivery challans match these filters.</div>`
               : `<table class="table" style="min-width:1020px">
-                  <thead><tr><th>DC No.</th><th>Date</th><th>Party</th><th>PO No.</th><th>Our Invoice #</th><th>Total Amount</th><th>Final Amount</th><th>Status</th><th></th></tr></thead>
-                  <tbody>${state.dispatches.map((d) => renderRow(d, state)).join('')}</tbody>
+                  <thead><tr>${renderSortableHeader('DC No.', 'dc_number', state)}${renderSortableHeader('Date', 'dispatch_date', state)}<th>Party</th><th>PO No.</th><th>Our Invoice #</th><th>Total Amount</th><th>Final Amount</th><th>Status</th><th></th></tr></thead>
+                  <tbody>${sortDispatches(state.dispatches, state)
+                    .map((d) => renderRow(d, state))
+                    .join('')}</tbody>
                 </table>`
       }
     </div>
@@ -355,6 +400,19 @@ function wireEvents(container, store, load) {
   container.querySelector('[data-action="reset-filters"]')?.addEventListener('click', () => {
     store.setState({ dateFrom: '', dateTo: '', poNumber: '', status: '' });
     load();
+  });
+
+  // Purely client-side — no re-fetch, just re-sorts the already-loaded list.
+  container.querySelectorAll('[data-action="sort"]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.key;
+      const state = store.getState();
+      if (state.sortBy === key) {
+        store.setState({ sortDir: state.sortDir === 'asc' ? 'desc' : 'asc' });
+      } else {
+        store.setState({ sortBy: key, sortDir: 'asc' });
+      }
+    });
   });
 
   container.querySelectorAll('[data-action="toggle-challan"]').forEach((btn) => {

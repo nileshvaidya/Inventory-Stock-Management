@@ -245,6 +245,55 @@ test.describe('Delivery Challans — filters', () => {
   });
 });
 
+test.describe('Delivery Challans — sorting', () => {
+  // A third dispatch, earlier than both existing fixtures on both DC No.
+  // and Date, so the two sort keys have a distinct, unambiguous order.
+  const DISPATCH_EARLIEST = { ...DISPATCH_UNAUTHORIZED, id: 'dispatch-3', dc_number: 'DC-1000', dispatch_date: '2026-01-10' };
+
+  const rowOrder = (page) => page.locator('[data-challan-row]').evaluateAll((rows) => rows.map((r) => r.getAttribute('data-challan-row')));
+
+  test('clicking DC No. sorts ascending, and again sorts descending', async ({ page }) => {
+    await mockDispatches(page, [DISPATCH_AUTHORIZED, DISPATCH_UNAUTHORIZED, DISPATCH_EARLIEST]);
+    await page.goto('/?demoRole=admin#/delivery-challans');
+    await expect(page.locator('[data-challan-row]')).toHaveCount(3);
+    await expect.poll(() => rowOrder(page)).toEqual(['dispatch-2', 'dispatch-1', 'dispatch-3']); // as fetched, unsorted
+
+    await page.click('[data-action="sort"][data-key="dc_number"]');
+    await expect.poll(() => rowOrder(page)).toEqual(['dispatch-3', 'dispatch-1', 'dispatch-2']); // DC-1000, DC-1001, DC-1002
+
+    await page.click('[data-action="sort"][data-key="dc_number"]');
+    await expect.poll(() => rowOrder(page)).toEqual(['dispatch-2', 'dispatch-1', 'dispatch-3']); // descending
+  });
+
+  test('clicking Date sorts ascending by dispatch date', async ({ page }) => {
+    // DISPATCH_AUTHORIZED shares its dispatch_date with DISPATCH_UNAUTHORIZED
+    // (only authorized_at differs) — override it here so all three dates
+    // are distinct and the sort order is unambiguous.
+    const DISPATCH_LATEST = { ...DISPATCH_AUTHORIZED, dispatch_date: '2026-01-20' };
+    await mockDispatches(page, [DISPATCH_LATEST, DISPATCH_UNAUTHORIZED, DISPATCH_EARLIEST]);
+    await page.goto('/?demoRole=admin#/delivery-challans');
+
+    await page.click('[data-action="sort"][data-key="dispatch_date"]');
+    await expect.poll(() => rowOrder(page)).toEqual(['dispatch-3', 'dispatch-1', 'dispatch-2']); // 01-10, 01-15, 01-20
+  });
+
+  test('sorting is purely client-side — no extra request to material_dispatch', async ({ page }) => {
+    let requestCount = 0;
+    await page.route('**/rest/v1/material_dispatch**', (route) => {
+      requestCount += 1;
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([DISPATCH_AUTHORIZED, DISPATCH_UNAUTHORIZED, DISPATCH_EARLIEST]) });
+    });
+
+    await page.goto('/?demoRole=admin#/delivery-challans');
+    await expect(page.locator('[data-challan-row]')).toHaveCount(3);
+    const countAfterLoad = requestCount;
+
+    await page.click('[data-action="sort"][data-key="dc_number"]');
+    await expect(page.locator('[data-challan-row]').first()).toHaveAttribute('data-challan-row', 'dispatch-3');
+    expect(requestCount).toBe(countAfterLoad);
+  });
+});
+
 test.describe('Delivery Challans — reverting payment status from Paid to Pending', () => {
   const DISPATCH_PAID = { ...DISPATCH_AUTHORIZED, payment_received_by: 'admin-1', payment_received_at: '2026-02-01T00:00:00Z', payment_date: '2026-01-31' };
 

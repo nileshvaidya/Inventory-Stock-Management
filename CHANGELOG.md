@@ -2108,3 +2108,21 @@ none of the filter query params.
 
 Verified locally: lint, typecheck, unit tests, full e2e suite,
 production build. No `schema.sql` change.
+
+## Fifth Phase 13 addendum: sorting on Delivery Challans
+
+Direct request. The DC No. and Date column headers are now clickable —
+the first click sorts the currently-loaded (already-filtered) list
+ascending by that column, a second click flips it to descending, and
+clicking the other header switches which column it's sorted by. Purely
+client-side: every dispatch the active filters returned is already in
+memory, so sorting never triggers a re-fetch, and Pending Dues/Total
+Amount Received are unaffected since both just sum the same rows
+regardless of order.
+
+Tests: `e2e/deliveryChallans.spec.js` gained a new describe block
+covering ascending/descending DC No. sort, ascending Date sort, and
+that sorting issues no extra request to `material_dispatch`.
+
+Verified locally: lint, typecheck, unit tests, full e2e suite,
+production build. No `schema.sql` change — pure client-side addition.
