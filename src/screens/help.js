@@ -700,6 +700,9 @@ function renderMaterialDispatch() {
       'Once authorized, the tag changes to <strong>Authorized</strong> and the Authorize button disappears — this can\'t be undone from the app.',
     ])}
     ${note('Click <strong>Details</strong> on any row to see its full item list and notes. If a scanned challan was attached, click <strong>View</strong> to open it. Payment tracking for a dispatch now lives on the admin-only ' + jump('help-delivery-challans', 'Delivery Challans') + ' screen, not here.')}
+
+    ${h3('Editing a dispatch')}
+    <p style="font-size:14px;color:var(--color-neutral-300)">Double-click a row that's still <strong>Pending Authorization</strong> to reopen it for editing — every field, including its items, pre-filled. Change anything and click <strong>Save Changes</strong>, or Cancel to leave it as-is. Not available once a dispatch is <strong>Authorized</strong>: authorizing already deducted stock for exactly those items and quantities, so they're locked in from that point on.</p>
     `
   );
 }
@@ -826,6 +829,10 @@ const FAQ = [
   {
     q: 'Can I fix a mistake on a Purchase Order after saving it?',
     a: 'Yes — double-click its row on Order Status to reopen it on PO Upload, pre-filled, and edit anything (header fields or line items), then Save Changes. Admin only. You can\'t remove a line item that already has material received against it — the error names it instead of corrupting the receiving trail.',
+  },
+  {
+    q: 'Can I fix a mistake on a Material Dispatch after saving it?',
+    a: 'Yes, as long as it\'s still Pending Authorization — double-click its row to reopen it, pre-filled, and edit anything including its items, then Save Changes. Once it\'s Authorized it can\'t be edited this way anymore, since authorizing already deducted exactly those items and quantities from stock.',
   },
   {
     q: 'How do I get data out of the app for Excel?',

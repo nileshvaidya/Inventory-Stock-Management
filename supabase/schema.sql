@@ -2657,3 +2657,85 @@ end;
 $$;
 
 grant execute on function public.revert_dispatch_payment(uuid) to authenticated;
+
+-- Third Phase 13 addendum (direct request): double-clicking an
+-- unauthorized dispatch on Material Dispatch reopens it for editing —
+-- every field a new dispatch has, including its line items. Store/admin,
+-- same as creating one in the first place ("fix a mistake before it's
+-- committed" is really the same right as creating it). Blocked once the
+-- dispatch is authorized: authorizing already wrote real stock movements
+-- for exactly the line items that existed at that moment (see
+-- authorize_material_dispatch above), so letting them change afterward
+-- would drift inventory out of sync with what was actually recorded —
+-- unlike a Purchase Order edit (admin_update_purchase_order), there's no
+-- safe partial case here to allow through, since authorization is
+-- all-or-nothing for the whole dispatch, not per line item.
+--
+-- Line items are a blind delete-and-reinsert, not synced by id like a PO
+-- edit's are: safe here specifically because authorized_at is guaranteed
+-- null at this point (checked below) and nothing references
+-- material_dispatch_line_items.id (no receipts/stock rows point at a
+-- dispatch line the way material_inward_line_items points at a PO line).
+create or replace function public.update_material_dispatch(
+  target_dispatch_id uuid,
+  dispatch_date_in date,
+  dc_number_in text,
+  reference_in text,
+  our_invoice_number_in text,
+  client_po_number_in text,
+  gst_percent_in numeric,
+  notes_in text,
+  line_items_in jsonb
+)
+returns public.material_dispatch
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  dispatch_row public.material_dispatch%rowtype;
+  updated_row public.material_dispatch%rowtype;
+  li jsonb;
+begin
+  if not public.is_store_or_admin(auth.uid()) then
+    raise exception 'Not authorized to edit material dispatch.';
+  end if;
+
+  select * into dispatch_row from public.material_dispatch where id = target_dispatch_id;
+  if not found then
+    raise exception 'Material dispatch record not found.';
+  end if;
+  if dispatch_row.authorized_at is not null then
+    raise exception 'Cannot edit a dispatch that has already been authorized.';
+  end if;
+
+  update public.material_dispatch
+  set dispatch_date = dispatch_date_in,
+      dc_number = nullif(trim(dc_number_in), ''),
+      reference = nullif(trim(reference_in), ''),
+      our_invoice_number = nullif(trim(our_invoice_number_in), ''),
+      -- Only admin may set/change the client PO number, even here — a
+      -- non-admin's own edit form never sends one (see
+      -- screens/materialDispatch.js), so a non-admin caller keeps
+      -- whatever was already there rather than being trusted to have
+      -- sent null on purpose, same restriction as this table's insert
+      -- policy above.
+      client_po_number = case when public.is_admin(auth.uid()) then nullif(trim(client_po_number_in), '') else dispatch_row.client_po_number end,
+      gst_percent = gst_percent_in,
+      notes = nullif(trim(notes_in), '')
+  where id = target_dispatch_id
+  returning * into updated_row;
+
+  delete from public.material_dispatch_line_items where dispatch_id = target_dispatch_id;
+
+  for li in select * from jsonb_array_elements(line_items_in)
+  loop
+    insert into public.material_dispatch_line_items (dispatch_id, item_id, quantity, rate)
+    values (target_dispatch_id, (li->>'item_id')::uuid, (li->>'quantity')::numeric, (li->>'rate')::numeric);
+  end loop;
+
+  return updated_row;
+end;
+$$;
+
+grant execute on function public.update_material_dispatch(uuid, date, text, text, text, text, numeric, text, jsonb) to authenticated;

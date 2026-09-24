@@ -26,6 +26,16 @@
 // Amount — Total Amount with GST added — can be shown alongside every
 // dispatch, here and on Delivery Challans. See dispatchTotalAmount/
 // dispatchFinalAmount in ../materialDispatch.js for the shared math.
+//
+// Third Phase 13 addendum (direct request): double-clicking an
+// unauthorized dispatch's row opens this same form in edit mode instead
+// of a fresh "New Dispatch", pre-filled from that dispatch — the Upload
+// Delivery Challan card is hidden while editing (nothing to re-parse
+// onto an existing entry), the heading/Save button read "Edit
+// Dispatch"/"Save Changes", and Save calls updateMaterialDispatch
+// instead of createMaterialDispatch. Blocked once a dispatch is
+// authorized (no cursor-pointer affordance, dblclick does nothing) —
+// see update_material_dispatch() in supabase/schema.sql for why.
 import { getCurrentProfile } from '../auth.js';
 import { renderShell } from '../layout.js';
 import { escapeHtml } from '../components.js';
@@ -34,6 +44,7 @@ import { canViewModule } from '../navPermissions.js';
 import {
   fetchMaterialDispatches,
   createMaterialDispatch,
+  updateMaterialDispatch,
   uploadDispatchChallanFile,
   getDispatchChallanFileUrl,
   authorizeMaterialDispatch,
@@ -79,6 +90,10 @@ function initialState() {
     error: false,
     formMode: false,
     form: emptyForm(),
+    // Set while the open form is editing an existing (unauthorized)
+    // dispatch rather than creating a new one — see the double-click
+    // wiring below and updateMaterialDispatch in ../materialDispatch.js.
+    editingDispatchId: null,
     formError: null,
     saving: false,
     openDispatchId: null,
@@ -86,6 +101,32 @@ function initialState() {
     authorizeErrorByDispatch: {},
     fileActionError: null,
     rolePermissions: [],
+  };
+}
+
+/**
+ * Maps an existing dispatch (with its line items) onto the same form
+ * shape emptyForm() produces, for edit mode.
+ * @param {any} dispatch
+ */
+function formFromDispatch(dispatch) {
+  return {
+    dispatchDate: dispatch.dispatch_date,
+    dcNumber: dispatch.dc_number || '',
+    party: dispatch.reference || '',
+    ourInvoiceNumber: dispatch.our_invoice_number || '',
+    clientPoNumber: dispatch.client_po_number || '',
+    gstPercent: dispatch.gst_percent === null || dispatch.gst_percent === undefined ? '' : String(dispatch.gst_percent),
+    notes: dispatch.notes || '',
+    lineItems: (dispatch.line_items || []).map((li) => ({
+      itemId: li.item_id,
+      quantity: String(li.quantity),
+      rate: li.rate === null || li.rate === undefined ? '' : String(li.rate),
+    })),
+    challanFile: null,
+    challanFileName: '',
+    challanParseNote: null,
+    challanOcrBusy: false,
   };
 }
 
@@ -172,13 +213,16 @@ export async function render(container) {
 function renderContent(container, state, canCreate, isAdmin) {
   container.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px">
-      <h1 style="margin:0">Material Dispatch</h1>
+      <div>
+        <h1 style="margin:0">Material Dispatch</h1>
+        ${canCreate && !state.formMode ? `<p style="margin:4px 0 0;font-size:12px;color:var(--color-neutral-500)">Double-click a not-yet-authorized row to edit it.</p>` : ''}
+      </div>
       ${canCreate && !state.formMode ? `<button type="button" class="btn btn-secondary" data-action="new-dispatch">+ New Dispatch</button>` : ''}
     </div>
 
     ${state.fileActionError ? `<p data-role="file-action-error" style="font-size:13px;color:var(--color-accent-2-200);background:var(--color-accent-2-900);border:1px solid var(--color-accent-2-700);border-radius:var(--radius-md);padding:8px 12px;margin-bottom:14px">${escapeHtml(state.fileActionError)}</p>` : ''}
 
-    ${state.formMode ? renderForm(state, isAdmin) : ''}
+    ${state.formMode ? renderForm(state, isAdmin, Boolean(state.editingDispatchId)) : ''}
 
     <div class="card elev-sm" style="padding:0;overflow-x:auto">
       ${
@@ -193,27 +237,31 @@ function renderContent(container, state, canCreate, isAdmin) {
               ? `<div style="padding:20px;font-size:13px;color:var(--color-neutral-500)">No material dispatch records yet.</div>`
               : `<table class="table" style="min-width:920px">
                   <thead><tr><th>Date</th><th>DC No.</th><th>Party</th><th>Items</th><th>Final Amount</th><th>Status</th><th>File</th><th></th></tr></thead>
-                  <tbody>${state.dispatches.map((d) => renderDispatchRow(d, state, isAdmin)).join('')}</tbody>
+                  <tbody>${state.dispatches.map((d) => renderDispatchRow(d, state, isAdmin, canCreate)).join('')}</tbody>
                 </table>`
       }
     </div>
   `;
 }
 
-function renderForm(state, isAdmin) {
+function renderForm(state, isAdmin, editing) {
   const { form } = state;
   return `
     <div class="card elev-sm" style="margin-bottom:16px" data-role="dispatch-form">
-      <h3 class="card-title" style="font-size:16px">New Dispatch</h3>
+      <h3 class="card-title" style="font-size:16px">${editing ? 'Edit Dispatch' : 'New Dispatch'}</h3>
 
-      <div class="field" style="margin-top:10px">
+      ${
+        editing
+          ? ''
+          : `<div class="field" style="margin-top:10px">
         <label for="md-challan-file">Upload Delivery Challan (optional)</label>
         <input id="md-challan-file" type="file" accept="application/pdf,image/*" data-action="challan-file" class="input" style="padding:6px" ${form.challanOcrBusy ? 'disabled' : ''} />
         <p style="font-size:12px;color:var(--color-neutral-500);margin-top:6px">Item and quantity are read automatically where possible — review and correct every row before saving.</p>
         ${form.challanFileName ? `<p style="font-size:12px;color:var(--color-neutral-500);margin-top:6px">Selected: ${escapeHtml(form.challanFileName)}</p>` : ''}
         ${form.challanOcrBusy ? `<p data-role="challan-ocr-busy" style="font-size:12px;color:var(--color-neutral-500);margin-top:4px">Scanning document for item/quantity lines… this can take up to a minute on a scanned/photographed file.</p>` : ''}
         ${!form.challanOcrBusy && form.challanParseNote ? `<p data-role="challan-parse-note" style="font-size:12px;color:var(--color-neutral-500);margin-top:4px">${escapeHtml(form.challanParseNote)}</p>` : ''}
-      </div>
+      </div>`
+      }
 
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-top:10px">
         <div class="field"><label for="md-date">Dispatch Date</label>
@@ -256,7 +304,7 @@ function renderForm(state, isAdmin) {
 
       ${state.formError ? `<p data-role="form-error" style="font-size:12px;color:var(--color-accent-2-200);margin-top:10px">${escapeHtml(state.formError)}</p>` : ''}
       <div style="margin-top:14px;display:flex;gap:8px">
-        <button type="button" class="btn btn-primary" data-action="save-dispatch" ${state.saving || form.challanOcrBusy ? 'disabled' : ''}>${state.saving ? 'Saving…' : 'Save Dispatch'}</button>
+        <button type="button" class="btn btn-primary" data-action="save-dispatch" ${state.saving || form.challanOcrBusy ? 'disabled' : ''}>${state.saving ? 'Saving…' : editing ? 'Save Changes' : 'Save Dispatch'}</button>
         <button type="button" class="btn btn-ghost" data-action="cancel-form">Cancel</button>
       </div>
     </div>
@@ -299,7 +347,7 @@ function validateMaterialDispatchLineItemLocal(row) {
   return { valid: Object.keys(errors).length === 0, errors };
 }
 
-function renderDispatchRow(dispatch, state, isAdmin) {
+function renderDispatchRow(dispatch, state, isAdmin, canCreate) {
   const isOpen = state.openDispatchId === dispatch.id;
   const lineItems = dispatch.line_items || [];
   const itemsSummary =
@@ -311,9 +359,10 @@ function renderDispatchRow(dispatch, state, isAdmin) {
   const authorized = Boolean(dispatch.authorized_at);
   const hasFile = Boolean(dispatch.challan_file_path);
   const authorizeError = state.authorizeErrorByDispatch[dispatch.id];
+  const dblClickable = canCreate && !authorized;
 
   const rows = [
-    `<tr data-dispatch-row="${escapeHtml(dispatch.id)}">
+    `<tr data-dispatch-row="${escapeHtml(dispatch.id)}" style="${dblClickable ? 'cursor:pointer' : ''}" ${dblClickable ? 'title="Double-click to edit"' : ''}>
       <td>${escapeHtml(dispatch.dispatch_date)}</td>
       <td>${escapeHtml(dispatch.dc_number || '—')}</td>
       <td>${escapeHtml(dispatch.reference || '—')}</td>
@@ -404,10 +453,19 @@ function wireEvents(container, store, user, load, canCreate, isAdmin) {
   if (!canCreate) return;
 
   container.querySelector('[data-action="new-dispatch"]')?.addEventListener('click', () => {
-    store.setState({ formMode: true, form: emptyForm(), formError: null });
+    store.setState({ formMode: true, editingDispatchId: null, form: emptyForm(), formError: null });
   });
   container.querySelector('[data-action="cancel-form"]')?.addEventListener('click', () => {
-    store.setState({ formMode: false });
+    store.setState({ formMode: false, editingDispatchId: null });
+  });
+
+  container.querySelectorAll('[data-dispatch-row]').forEach((row) => {
+    row.addEventListener('dblclick', () => {
+      const state = store.getState();
+      const dispatch = state.dispatches.find((d) => d.id === row.dataset.dispatchRow);
+      if (!dispatch || dispatch.authorized_at) return; // already authorized — nothing to edit
+      store.setState({ formMode: true, editingDispatchId: dispatch.id, form: formFromDispatch(dispatch), formError: null });
+    });
   });
 
   const dateInput = container.querySelector('[data-action="form-dispatch-date"]');
@@ -552,7 +610,26 @@ function wireEvents(container, store, user, load, canCreate, isAdmin) {
       return;
     }
     store.setState({ saving: true, formError: null });
+    const lineItems = state.form.lineItems
+      .filter((row) => row.itemId && String(row.quantity).trim() !== '' && String(row.rate).trim() !== '')
+      .map((row) => ({ itemId: row.itemId, quantity: Number(row.quantity), rate: Number(row.rate) }));
     try {
+      if (state.editingDispatchId) {
+        await updateMaterialDispatch(state.editingDispatchId, {
+          dispatchDate: state.form.dispatchDate,
+          dcNumber: state.form.dcNumber,
+          party: state.form.party,
+          ourInvoiceNumber: state.form.ourInvoiceNumber,
+          clientPoNumber: isAdmin ? state.form.clientPoNumber : '',
+          gstPercent: state.form.gstPercent,
+          notes: state.form.notes,
+          lineItems,
+        });
+        store.setState({ saving: false, formMode: false, editingDispatchId: null });
+        await load();
+        return;
+      }
+
       const dispatch = await createMaterialDispatch({
         dispatchDate: state.form.dispatchDate,
         dcNumber: state.form.dcNumber,
@@ -566,9 +643,7 @@ function wireEvents(container, store, user, load, canCreate, isAdmin) {
         gstPercent: state.form.gstPercent,
         notes: state.form.notes,
         createdBy: user.id,
-        lineItems: state.form.lineItems
-          .filter((row) => row.itemId && String(row.quantity).trim() !== '' && String(row.rate).trim() !== '')
-          .map((row) => ({ itemId: row.itemId, quantity: Number(row.quantity), rate: Number(row.rate) })),
+        lineItems,
       });
       if (state.form.challanFile) {
         try {

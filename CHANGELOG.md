@@ -2177,3 +2177,42 @@ Verified locally: lint, typecheck, unit tests, full e2e suite,
 production build. `schema.sql` gained one new function — apply the
 full file to any already-provisioned Supabase project (see
 `supabase/README.md`) before using this feature there.
+
+## Phase 11 addendum: edit a Material Dispatch before authorization
+
+Direct request. Double-clicking a dispatch row that's still Pending
+Authorization reopens the same New Dispatch form, pre-filled, to edit
+and save — every field, including its line items. Store/admin, same
+as creating one (fixing a mistake before it's committed is the same
+right as creating it). Blocked once authorized: authorizing already
+wrote real stock movements for exactly those line items, so letting
+them change afterward would drift inventory out of sync with what was
+actually recorded — there's no safe partial case here the way a
+Purchase Order edit has (that one only blocks removing a line item
+with a receipt against it; this one blocks the whole edit outright,
+since authorization is all-or-nothing for the dispatch).
+
+- `supabase/schema.sql`: new `update_material_dispatch()` RPC
+  (store/admin, security definer, rejects an already-authorized
+  dispatch). Line items are a blind delete-and-reinsert rather than
+  synced by id like the PO edit's are — safe here specifically because
+  nothing references `material_dispatch_line_items.id` the way
+  `material_inward_line_items` points at a PO line. A non-admin's
+  `client_po_number` is ignored server-side, same restriction as this
+  table's insert policy.
+- `materialDispatch.js`: new `updateMaterialDispatch()`.
+- `screens/materialDispatch.js`: double-clicking an unauthorized row
+  opens the form in edit mode (Upload Delivery Challan card hidden —
+  nothing to re-parse), heading/Save button read "Edit Dispatch"/"Save
+  Changes", Cancel returns to a blank state.
+- Help manual, FAQ, and `scripts/test-rls-material-dispatch.mjs`
+  (real-DB RLS/RPC coverage) updated.
+
+Tests: `e2e/phase11.spec.js` gained a new describe block covering the
+pre-filled edit form, that an authorized dispatch's dblclick does
+nothing, Save's exact RPC payload, and Cancel.
+
+Verified locally: lint, typecheck, unit tests, full e2e suite,
+production build. `schema.sql` gained one new function — apply the
+full file to any already-provisioned Supabase project (see
+`supabase/README.md`) before using this feature there.

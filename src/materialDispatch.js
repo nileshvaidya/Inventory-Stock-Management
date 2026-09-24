@@ -7,6 +7,14 @@
 // and marking payment received. Every write beyond the initial create
 // goes through a security-definer RPC, not a plain table update — the
 // table itself has no update policy at all.
+//
+// Addendum (direct request): double-clicking an unauthorized dispatch on
+// Material Dispatch opens it for editing in place — see
+// updateMaterialDispatch below and the double-click wiring in
+// screens/materialDispatch.js. Only while unauthorized: once authorized,
+// its line items are already reflected in real stock movements, so
+// editing them further is blocked server-side rather than risking
+// inventory drifting out of sync with what was actually recorded.
 import { supabase } from './api.js';
 import { getChallanFileUrl } from './materialInward.js';
 
@@ -122,10 +130,44 @@ export async function createMaterialDispatch(form, client = supabase) {
 }
 
 /**
+ * Store/admin, server-side — same role as creating a dispatch, since this
+ * is really "fix a mistake before it's committed": edits every field a
+ * new dispatch has, including its line items, but only while the
+ * dispatch is still unauthorized (the RPC itself rejects an authorized
+ * one — see update_material_dispatch() in supabase/schema.sql). A
+ * non-admin's clientPoNumber is ignored server-side rather than trusted,
+ * same restriction as this table's own insert policy; this screen's own
+ * edit form never even sends one for a non-admin (see
+ * screens/materialDispatch.js).
+ * @param {string} dispatchId
+ * @param {{ dispatchDate: string, dcNumber?: string|null, party?: string|null, notes?: string|null,
+ *   clientPoNumber?: string|null, ourInvoiceNumber?: string|null, gstPercent?: string|number|null,
+ *   lineItems: { itemId: string, quantity: number, rate: number }[] }} form
+ * @param {any} [client]
+ */
+export async function updateMaterialDispatch(dispatchId, form, client = supabase) {
+  if (!client) throw new Error('Supabase is not configured.');
+  const { data, error } = await client.rpc('update_material_dispatch', {
+    target_dispatch_id: dispatchId,
+    dispatch_date_in: form.dispatchDate,
+    dc_number_in: form.dcNumber || null,
+    reference_in: form.party || null,
+    our_invoice_number_in: form.ourInvoiceNumber || null,
+    client_po_number_in: form.clientPoNumber || null,
+    gst_percent_in: form.gstPercent === '' || form.gstPercent === null || form.gstPercent === undefined ? null : Number(form.gstPercent),
+    notes_in: form.notes || null,
+    line_items_in: form.lineItems.map((li) => ({ item_id: li.itemId, quantity: li.quantity, rate: li.rate })),
+  });
+  if (error) throw error;
+  return data;
+}
+
+/**
  * Admin only, server-side. Sets/edits the client PO number and/or "our"
- * invoice number on an existing dispatch — the one edit path this table
- * has beyond its initial insert, alongside authorize/payment below (see
- * this file's own top comment on the no-update-policy discipline).
+ * invoice number on an already-authorized dispatch — updateMaterialDispatch
+ * above can't be used once a dispatch is authorized (see this file's own
+ * top comment on the no-update-policy discipline), so this stays the only
+ * edit path for those two billing fields after that point.
  * @param {string} dispatchId
  * @param {{ clientPoNumber?: string|null, ourInvoiceNumber?: string|null }} form
  * @param {any} [client]

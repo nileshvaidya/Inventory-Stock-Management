@@ -161,6 +161,60 @@ async function run() {
       assert(!attachErr, `store role can attach a challan file${attachErr ? ` (${attachErr.message})` : ''}`);
       assert(attached?.challan_file_name === 'challan.pdf', 'the attached file name was persisted');
 
+      console.log('\nupdate_material_dispatch (double-click to edit, before authorization): production cannot, store/admin can, client_po_number stays admin-only...');
+      const { error: productionEditErr } = await clientProduction.rpc('update_material_dispatch', {
+        target_dispatch_id: dispatch.id,
+        dispatch_date_in: '2026-01-15',
+        dc_number_in: 'DC-RLS-1',
+        reference_in: 'RLS Test',
+        our_invoice_number_in: null,
+        client_po_number_in: null,
+        gst_percent_in: 18,
+        notes_in: null,
+        line_items_in: [{ item_id: gadget.id, quantity: 30, rate: 12.5 }],
+      });
+      assert(!!productionEditErr, 'production role cannot call update_material_dispatch');
+
+      const { data: storeEdited, error: storeEditErr } = await clientStore.rpc('update_material_dispatch', {
+        target_dispatch_id: dispatch.id,
+        dispatch_date_in: '2026-01-17',
+        dc_number_in: 'DC-RLS-1-REV',
+        reference_in: 'RLS Test (revised)',
+        our_invoice_number_in: 'INV-RLS-EDIT',
+        client_po_number_in: 'PO-NOT-ALLOWED', // store — should be ignored, not applied
+        gst_percent_in: 12,
+        notes_in: 'edited by store',
+        line_items_in: [{ item_id: gadget.id, quantity: 45, rate: 15 }],
+      });
+      assert(!storeEditErr, `store role can edit its own unauthorized dispatch${storeEditErr ? ` (${storeEditErr.message})` : ''}`);
+      if (storeEdited) {
+        assert(storeEdited.dc_number === 'DC-RLS-1-REV', "the dispatch's dc_number was updated");
+        assert(storeEdited.dispatch_date === '2026-01-17', "the dispatch's dispatch_date was updated");
+        assert(Number(storeEdited.gst_percent) === 12, "the dispatch's gst_percent was updated");
+        assert(storeEdited.client_po_number === 'PO-CLIENT-RLS', 'a non-admin edit cannot change client_po_number, even by sending one — it keeps the value admin_update_dispatch_billing set earlier');
+      }
+      const { data: lineItemsAfterStoreEdit } = await admin.from('material_dispatch_line_items').select('quantity, rate').eq('dispatch_id', dispatch.id);
+      assert(
+        (lineItemsAfterStoreEdit ?? []).length === 1 && Number(lineItemsAfterStoreEdit[0].quantity) === 45,
+        "the line item's quantity was replaced (45), not appended alongside the old one"
+      );
+
+      const { data: adminEdited, error: adminEditErr } = await clientAdmin.rpc('update_material_dispatch', {
+        target_dispatch_id: dispatch.id,
+        dispatch_date_in: '2026-01-17',
+        dc_number_in: 'DC-RLS-1-REV',
+        reference_in: 'RLS Test (revised)',
+        our_invoice_number_in: 'INV-RLS-EDIT',
+        client_po_number_in: 'PO-CLIENT-EDIT',
+        gst_percent_in: 12,
+        notes_in: 'edited by admin',
+        // Restored to the original quantity (30) — the authorization
+        // assertions further below expect exactly that much deducted.
+        line_items_in: [{ item_id: gadget.id, quantity: 30, rate: 12.5 }],
+      });
+      assert(!adminEditErr, `admin role can edit an unauthorized dispatch${adminEditErr ? ` (${adminEditErr.message})` : ''}`);
+      assert(adminEdited?.client_po_number === 'PO-CLIENT-EDIT', 'admin can set client_po_number via update_material_dispatch');
+
       console.log('\nA direct client update is blocked entirely — no update policy exists on this table...');
       const { error: directUpdateErr } = await clientStore.from('material_dispatch').update({ authorized_at: new Date().toISOString() }).eq('id', dispatch.id);
       const { data: dispatchAfterDirectAttempt } = await admin.from('material_dispatch').select('authorized_at').eq('id', dispatch.id).single();
@@ -181,6 +235,20 @@ async function run() {
       if (authorized) {
         assert(authorized.authorized_at !== null, 'authorized_at was stamped');
         assert(authorized.authorized_by === adminUser.id, 'authorized_by records the authorizing admin');
+
+        console.log('\nupdate_material_dispatch is rejected once the dispatch is authorized, even for admin...');
+        const { error: editAfterAuthorizeErr } = await clientAdmin.rpc('update_material_dispatch', {
+          target_dispatch_id: dispatch.id,
+          dispatch_date_in: '2026-01-17',
+          dc_number_in: 'DC-RLS-1-REV',
+          reference_in: 'RLS Test (revised)',
+          our_invoice_number_in: 'INV-RLS-EDIT',
+          client_po_number_in: 'PO-CLIENT-EDIT',
+          gst_percent_in: 12,
+          notes_in: 'should not apply',
+          line_items_in: [{ item_id: gadget.id, quantity: 99, rate: 12.5 }],
+        });
+        assert(!!editAfterAuthorizeErr, 'editing an already-authorized dispatch is rejected — its line items are already reflected in real stock movements');
 
         const { data: movements } = await admin.from('stock_movements').select('*').eq('reference_type', 'material_dispatch').eq('reference_id', dispatch.id);
         const gadgetOut = (movements ?? []).find((m) => m.item_id === gadget.id && m.movement_type === 'out');

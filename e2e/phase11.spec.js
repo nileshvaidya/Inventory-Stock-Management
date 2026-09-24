@@ -255,3 +255,121 @@ test.describe('Phase 11 — Material Dispatch — admin authorization', () => {
     await expect(page.locator('[data-role="authorize-error"]')).toContainText('Cannot authorize');
   });
 });
+
+test.describe('Phase 11 — Material Dispatch — edit (double-click)', () => {
+  const DISPATCH_UNAUTHORIZED = {
+    id: 'dispatch-1',
+    dispatch_date: '2026-01-15',
+    dc_number: 'DC-1001',
+    reference: 'Acme Corp',
+    notes: null,
+    client_po_number: null,
+    our_invoice_number: null,
+    gst_percent: 18,
+    challan_file_path: null,
+    challan_file_name: null,
+    authorized_by: null,
+    authorized_at: null,
+    payment_received_by: null,
+    payment_received_at: null,
+    payment_date: null,
+    line_items: [{ id: 'li-1', item_id: 'item-widget', quantity: 5, rate: 25, item: { id: 'item-widget', name: 'Widget', unit_of_measure: 'Nos.' } }],
+  };
+  const DISPATCH_AUTHORIZED = { ...DISPATCH_UNAUTHORIZED, id: 'dispatch-2', authorized_by: 'admin-1', authorized_at: '2026-01-16T00:00:00Z' };
+
+  test('double-clicking an unauthorized dispatch opens it pre-filled, with Upload Delivery Challan hidden', async ({ page }) => {
+    await mockDefaultRolePermissions(page);
+    await mockItems(page);
+    await mockCurrentRates(page);
+    await page.route('**/rest/v1/material_dispatch**', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([DISPATCH_UNAUTHORIZED]) })
+    );
+
+    await page.goto('/?demoRole=store#/material-dispatch');
+    await page.dblclick('[data-dispatch-row="dispatch-1"]');
+
+    const form = page.locator('[data-role="dispatch-form"]');
+    await expect(form).toContainText('Edit Dispatch');
+    await expect(page.locator('[data-action="form-dc-number"]')).toHaveValue('DC-1001');
+    await expect(page.locator('[data-action="form-party"]')).toHaveValue('Acme Corp');
+    const row = page.locator('[data-dispatch-line-row="0"]');
+    await expect(row.locator('[data-action="line-quantity"]')).toHaveValue('5');
+    await expect(row.locator('[data-action="line-rate"]')).toHaveValue('25');
+    await expect(page.locator('#md-challan-file')).toHaveCount(0);
+    await expect(page.locator('[data-action="save-dispatch"]')).toHaveText('Save Changes');
+  });
+
+  test('double-clicking an already-authorized dispatch does nothing', async ({ page }) => {
+    await mockDefaultRolePermissions(page);
+    await mockItems(page);
+    await mockCurrentRates(page);
+    await page.route('**/rest/v1/material_dispatch**', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([DISPATCH_AUTHORIZED]) })
+    );
+
+    await page.goto('/?demoRole=admin#/material-dispatch');
+    await page.dblclick('[data-dispatch-row="dispatch-2"]');
+    await expect(page.locator('[data-role="dispatch-form"]')).toHaveCount(0);
+  });
+
+  test('Save calls update_material_dispatch with the edited fields, then reloads the list', async ({ page }) => {
+    await mockDefaultRolePermissions(page);
+    await mockItems(page);
+    await mockCurrentRates(page);
+    let requestCount = 0;
+    await page.route('**/rest/v1/material_dispatch**', (route) => {
+      requestCount += 1;
+      const body = requestCount === 1 ? DISPATCH_UNAUTHORIZED : { ...DISPATCH_UNAUTHORIZED, dc_number: 'DC-1001-REV2' };
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([body]) });
+    });
+    let updateBody = null;
+    await page.route('**/rest/v1/rpc/update_material_dispatch**', (route) => {
+      updateBody = route.request().postDataJSON();
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(DISPATCH_UNAUTHORIZED) });
+    });
+
+    await page.goto('/?demoRole=store#/material-dispatch');
+    await page.dblclick('[data-dispatch-row="dispatch-1"]');
+    await expect(page.locator('[data-action="form-dc-number"]')).toHaveValue('DC-1001');
+
+    await page.fill('[data-action="form-dc-number"]', 'DC-1001-REV2');
+    await page.fill('[data-dispatch-line-row="0"] [data-action="line-quantity"]', '7');
+    await page.click('[data-action="save-dispatch"]');
+
+    await expect(page.locator('[data-role="dispatch-form"]')).toHaveCount(0);
+    expect(updateBody).toMatchObject({
+      target_dispatch_id: 'dispatch-1',
+      dc_number_in: 'DC-1001-REV2',
+      client_po_number_in: null, // store role — never sent
+      gst_percent_in: 18,
+    });
+    expect(updateBody.line_items_in).toEqual([{ item_id: 'item-widget', quantity: 7, rate: 25 }]);
+    await expect(page.locator('[data-dispatch-row="dispatch-1"]')).toContainText('DC-1001-REV2');
+  });
+
+  test('Cancel returns to the list without saving', async ({ page }) => {
+    await mockDefaultRolePermissions(page);
+    await mockItems(page);
+    await mockCurrentRates(page);
+    await page.route('**/rest/v1/material_dispatch**', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([DISPATCH_UNAUTHORIZED]) })
+    );
+    let updateCalled = false;
+    await page.route('**/rest/v1/rpc/update_material_dispatch**', (route) => {
+      updateCalled = true;
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    });
+
+    await page.goto('/?demoRole=store#/material-dispatch');
+    await page.dblclick('[data-dispatch-row="dispatch-1"]');
+    await page.click('[data-action="cancel-form"]');
+
+    await expect(page.locator('[data-role="dispatch-form"]')).toHaveCount(0);
+    expect(updateCalled).toBe(false);
+
+    // A fresh "+ New Dispatch" afterward starts blank, not still "editing".
+    await page.click('[data-action="new-dispatch"]');
+    await expect(page.locator('[data-role="dispatch-form"]')).toContainText('New Dispatch');
+    await expect(page.locator('[data-action="form-dc-number"]')).toHaveValue('');
+  });
+});
