@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { normalizePath, renderRoute, PROTECTED_ROUTES } from './router.js';
+import { normalizePath, getHashParams, renderRoute, PROTECTED_ROUTES } from './router.js';
 
 describe('normalizePath', () => {
   it('resolves known routes', () => {
@@ -10,6 +10,21 @@ describe('normalizePath', () => {
   it('falls back to /login for unknown routes', () => {
     expect(normalizePath('#/nope')).toBe('/login');
     expect(normalizePath('')).toBe('/login');
+  });
+
+  it('ignores a trailing ?query string when matching the route', () => {
+    expect(normalizePath('#/po-upload?edit=po-1')).toBe('/po-upload');
+  });
+});
+
+describe('getHashParams', () => {
+  it('parses key=value pairs after the route path', () => {
+    expect(getHashParams('#/po-upload?edit=po-1')).toEqual({ edit: 'po-1' });
+  });
+
+  it('returns an empty object when there is no query string', () => {
+    expect(getHashParams('#/po-upload')).toEqual({});
+    expect(getHashParams('')).toEqual({});
   });
 });
 

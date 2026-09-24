@@ -32,8 +32,20 @@ export const PROTECTED_ROUTES = new Set(Object.keys(routes).filter((r) => r !== 
 export const DEFAULT_ROUTE = '/login';
 
 export function normalizePath(hash) {
-  const path = String(hash || '').replace(/^#/, '');
+  const path = String(hash || '').replace(/^#/, '').split('?')[0];
   return path in routes ? path : DEFAULT_ROUTE;
+}
+
+/**
+ * Parses `?key=value` pairs off the current hash, after the route path —
+ * e.g. '#/po-upload?edit=<id>' (Order Status' "double-click to edit",
+ * see orderStatus.js/poUpload.js) -> { edit: '<id>' }. No route currently
+ * needs more than this flat, single-segment form.
+ * @param {string} [hash]
+ */
+export function getHashParams(hash = window.location.hash) {
+  const queryString = String(hash || '').split('?')[1] || '';
+  return Object.fromEntries(new URLSearchParams(queryString));
 }
 
 /**

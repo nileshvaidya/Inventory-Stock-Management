@@ -791,6 +791,92 @@ create trigger recompute_po_status_after_inspection
 after insert or update or delete on public.inspection_results
 for each row execute function public.trg_recompute_po_status_from_inspection();
 
+-- Order Status' "double-click a row to edit" (direct request): re-opens the
+-- PO on PO Upload, pre-filled, for admin to edit and save. Admin only, same
+-- as this table's own direct-update policy above and Order Status' existing
+-- Delete action — not purchase, even though purchase can create a PO in the
+-- first place. security definer so it can write po_line_items too (which
+-- has no update/delete policy of its own, only insert — same "no direct
+-- grant beyond create, everything else through a narrow RPC" shape as
+-- Material Dispatch/Delivery Challans).
+--
+-- Line items are synced by id rather than a blind delete-and-reinsert:
+-- existing rows are updated in place, rows with no id are new inserts, and
+-- any existing row missing from line_items_in is deleted — but deleting a
+-- line item that already has material received against it would violate
+-- material_inward_line_items' FK (po_line_item_id has no ON DELETE
+-- CASCADE/SET NULL, deliberately — see that table above), so that case is
+-- caught and turned into a clear error naming the item, rather than either
+-- corrupting the receiving trail or silently refusing the whole edit.
+create or replace function public.admin_update_purchase_order(
+  target_po_id uuid,
+  po_number_in text,
+  project_id_in uuid,
+  vendor_id_in uuid,
+  order_date_in date,
+  payment_terms_days_in integer,
+  stated_total_in numeric,
+  line_items_in jsonb
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  li jsonb;
+  li_id uuid;
+  keep_ids uuid[] := '{}';
+  removed record;
+begin
+  if not public.is_admin(auth.uid()) then
+    raise exception 'Only an admin can edit a purchase order.';
+  end if;
+
+  update public.purchase_orders
+  set po_number = po_number_in,
+      project_id = project_id_in,
+      vendor_id = vendor_id_in,
+      order_date = order_date_in,
+      payment_terms_days = payment_terms_days_in,
+      stated_total = stated_total_in
+  where id = target_po_id;
+
+  for li in select * from jsonb_array_elements(line_items_in)
+  loop
+    li_id := nullif(li->>'id', '')::uuid;
+    if li_id is not null then
+      update public.po_line_items
+      set item_name = li->>'item_name',
+          quantity = (li->>'quantity')::numeric,
+          rate = (li->>'rate')::numeric,
+          item_id = nullif(li->>'item_id', '')::uuid
+      where id = li_id and po_id = target_po_id;
+    else
+      insert into public.po_line_items (po_id, item_name, quantity, rate, item_id)
+      values (target_po_id, li->>'item_name', (li->>'quantity')::numeric, (li->>'rate')::numeric, nullif(li->>'item_id', '')::uuid)
+      returning id into li_id;
+    end if;
+    keep_ids := keep_ids || li_id;
+  end loop;
+
+  for removed in
+    select id, item_name from public.po_line_items
+    where po_id = target_po_id and not (id = any(keep_ids))
+  loop
+    begin
+      delete from public.po_line_items where id = removed.id;
+    exception when foreign_key_violation then
+      raise exception 'Cannot remove "%": material has already been received against it.', removed.item_name;
+    end;
+  end loop;
+
+  perform public.recompute_po_status(target_po_id);
+end;
+$$;
+
+grant execute on function public.admin_update_purchase_order(uuid, text, uuid, uuid, date, integer, numeric, jsonb) to authenticated;
+
 -- Master Material Status (P3): one row per PO line item with its running
 -- Ordered/Received/Accepted/Rejected/Pending quantities — a plain view
 -- (security invoker by default), so it inherits the exact same

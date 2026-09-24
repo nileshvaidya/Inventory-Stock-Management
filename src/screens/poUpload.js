@@ -1,17 +1,30 @@
 // PO Upload (Phase 2): upload a PO PDF, review/edit the parsed line items,
 // link to a Project/Order (create-inline if new) and optionally a Vendor
 // (create-inline if new), then save. Admin/Purchase only (navPermissions).
+//
+// Edit-mode addendum (direct request): double-clicking a row on Order
+// Status opens it here, at '#/po-upload?edit=<id>', pre-filled from
+// fetchPurchaseOrderById — Save then calls updatePurchaseOrder (the
+// admin_update_purchase_order() RPC) instead of createPurchaseOrder, and
+// returns to Order Status on success. Admin only, same as Order Status'
+// own Delete action and purchase_orders' direct-update policy — a
+// non-admin landing on this URL (there's no UI path that does, but
+// nothing stops typing it) is redirected away like any other guard
+// failure. The Upload PDF/Map Fields Manually cards are hidden while
+// editing: they exist to populate a new PO's line items from a document,
+// not to re-parse one onto an order that already exists.
 import { getCurrentProfile } from '../auth.js';
 import { renderShell } from '../layout.js';
 import { escapeHtml } from '../components.js';
 import { createStore } from '../state.js';
 import { canViewModule } from '../navPermissions.js';
+import { getHashParams } from '../router.js';
 import { extractPdfText, parsePoText, parseStatedTotal, parsePoNumber, parseOrderDate } from '../pdfParser.js';
 import { tokenizeLine, parseNumberToken, deriveColumnTemplate, applyColumnTemplate } from '../docMapping.js';
 import { fetchProjects, createProject } from '../projects.js';
 import { fetchVendors, createVendor } from '../vendors.js';
 import { fetchItems, createItem } from '../items.js';
-import { createPurchaseOrder } from '../purchaseOrders.js';
+import { createPurchaseOrder, fetchPurchaseOrderById, updatePurchaseOrder } from '../purchaseOrders.js';
 import { fetchMappingForVendor, saveMappingForVendor } from '../importMappings.js';
 import { validatePurchaseOrderForm, validateLineItem } from '../validation.js';
 import { repaintPreservingFocus, afterFocusSettles, skipDateSegmentsOnTab, onRealBlur } from '../domFocus.js';
@@ -23,6 +36,7 @@ const todayISO = () => new Date().toISOString().slice(0, 10);
 
 function initialState() {
   return {
+    editingPoId: null,
     projects: [],
     vendors: [],
     items: [],
@@ -107,6 +121,30 @@ async function applyExtractedText(store, text, { fileName } = {}) {
   });
 }
 
+/**
+ * Maps a fetched purchase order (with its line items) onto this screen's
+ * form state, for edit mode — see this file's own top comment.
+ * @param {any} po
+ */
+function stateFromPurchaseOrder(po) {
+  return {
+    editingPoId: po.id,
+    poNumber: po.po_number || '',
+    projectId: po.project_id,
+    vendorId: po.vendor_id || '',
+    orderDate: po.order_date,
+    paymentTermsDays: po.payment_terms_days != null ? String(po.payment_terms_days) : '',
+    statedTotal: po.stated_total,
+    lineItems: (po.line_items || []).map((li) => ({
+      id: li.id,
+      itemName: li.item_name,
+      quantity: li.quantity,
+      rate: li.rate,
+      itemId: li.item_id || '',
+    })),
+  };
+}
+
 export async function render(container) {
   const user = await getCurrentProfile();
   if (!user) {
@@ -123,9 +161,28 @@ export async function render(container) {
     return;
   }
 
+  const { edit: editingPoId } = getHashParams();
+  let editState = null;
+  if (editingPoId) {
+    // Editing is admin-only (see this file's own top comment) — there's no
+    // UI path that links here as non-admin, but the URL itself has no
+    // other gate, so it's checked the same way every other guard above is.
+    if (user.role !== 'admin') {
+      window.location.hash = '#/dashboard';
+      return;
+    }
+    try {
+      const po = await fetchPurchaseOrderById(editingPoId);
+      editState = stateFromPurchaseOrder(po);
+    } catch {
+      window.location.hash = '#/order-status';
+      return;
+    }
+  }
+
   const content = await renderShell(container, { activeRoute: '/po-upload', user, rolePermissions });
   content.setAttribute('data-screen', 'po-upload');
-  const store = createStore(initialState());
+  const store = createStore({ ...initialState(), ...editState });
 
   async function loadLookups() {
     const [projects, vendors, items] = await Promise.all([fetchProjects(), fetchVendors(), fetchItems()]);
@@ -163,14 +220,18 @@ function renderContent(container, state) {
   const total = computedTotal(state.lineItems);
   const totalsMismatch =
     state.statedTotal !== null && Math.abs(total - state.statedTotal) > 0.01 && state.lineItems.length > 0;
+  const editing = Boolean(state.editingPoId);
 
   container.innerHTML = `
-    <h1 style="margin-bottom:16px">PO Upload</h1>
+    <h1 style="margin-bottom:16px">${editing ? 'Edit Purchase Order' : 'PO Upload'}</h1>
 
     ${state.savedOk ? `<p style="font-size:13px;color:var(--color-accent-100);background:var(--color-accent-900);border:1px solid var(--color-accent-700);border-radius:var(--radius-md);padding:8px 12px;margin-bottom:14px">Purchase order saved.</p>` : ''}
     ${state.saveError ? `<p data-role="save-error" style="font-size:13px;color:var(--color-accent-2-200);background:var(--color-accent-2-900);border:1px solid var(--color-accent-2-700);border-radius:var(--radius-md);padding:8px 12px;margin-bottom:14px">${escapeHtml(state.saveError)}</p>` : ''}
 
-    <div class="card elev-sm" style="margin-bottom:16px">
+    ${
+      editing
+        ? ''
+        : `<div class="card elev-sm" style="margin-bottom:16px">
       <div class="card-kicker">Step 1</div>
       <h3 class="card-title" style="font-size:16px">Upload PO PDF</h3>
       <p class="card-body" style="margin-bottom:8px">Items, quantity, and rate are parsed automatically where possible — review and correct every row below before saving.</p>
@@ -187,7 +248,8 @@ function renderContent(container, state) {
       </div>
       <p class="card-body" style="margin-top:4px">If a PDF's layout wasn't recognized, use the raw extracted text below to build line items by hand: click a line, then click its words to fill Item Name/Qty/Rate.</p>
       ${state.mappingOpen ? renderMappingPanel(state) : ''}
-    </div>
+    </div>`
+    }
 
     <div class="card elev-sm" style="margin-bottom:16px;padding:0;overflow-x:auto">
       <div style="padding:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
@@ -206,7 +268,7 @@ function renderContent(container, state) {
       <p class="card-body" style="padding:0 14px 10px;margin:0">Linking a row to an Item Master entry feeds Inventory's stock ledger once it's received — optional, and existing/unlinked rows still save fine with just their item name.</p>
       ${
         state.lineItems.length === 0
-          ? `<div style="padding:0 14px 14px;font-size:13px;color:var(--color-neutral-500)">No line items yet — upload a PDF or add a row manually.</div>`
+          ? `<div style="padding:0 14px 14px;font-size:13px;color:var(--color-neutral-500)">No line items yet — ${editing ? 'add a row manually.' : 'upload a PDF or add a row manually.'}</div>`
           : `<table class="table" style="min-width:680px">
               <thead><tr><th>Item</th><th>Linked Item</th><th>Qty</th><th>Rate</th><th>Amount</th><th></th></tr></thead>
               <tbody>${state.lineItems.map((row, i) => renderLineItemRow(row, i, state.items)).join('')}</tbody>
@@ -278,7 +340,10 @@ function renderContent(container, state) {
       </div>
     </div>
 
-    <button type="button" class="btn btn-primary" data-action="save" ${state.saving || state.ocrBusy ? 'disabled' : ''}>${state.saving ? 'Saving…' : 'Save Purchase Order'}</button>
+    <div style="display:flex;gap:8px;align-items:center">
+      <button type="button" class="btn btn-primary" data-action="save" ${state.saving || state.ocrBusy ? 'disabled' : ''}>${state.saving ? 'Saving…' : editing ? 'Save Changes' : 'Save Purchase Order'}</button>
+      ${editing ? `<button type="button" class="btn btn-ghost" data-action="cancel-edit" ${state.saving ? 'disabled' : ''}>Cancel</button>` : ''}
+    </div>
   `;
 }
 
@@ -657,6 +722,10 @@ function wireEvents(container, store, user) {
   container.querySelector('[data-action="po-number"]')?.addEventListener('input', (e) => store.setState({ poNumber: e.target.value }));
   container.querySelector('[data-action="payment-terms"]')?.addEventListener('input', (e) => store.setState({ paymentTermsDays: e.target.value }));
 
+  container.querySelector('[data-action="cancel-edit"]')?.addEventListener('click', () => {
+    window.location.hash = '#/order-status';
+  });
+
   container.querySelector('[data-action="save"]')?.addEventListener('click', async () => {
     const state = store.getState();
     const { valid, errors } = validatePurchaseOrderForm(state);
@@ -666,7 +735,30 @@ function wireEvents(container, store, user) {
     }
 
     store.setState({ saving: true, saveError: null });
+    const lineItems = state.lineItems.map((row) => ({
+      id: row.id || null,
+      itemName: row.itemName.trim(),
+      quantity: Number(row.quantity),
+      rate: Number(row.rate),
+      itemId: row.itemId || null,
+    }));
     try {
+      if (state.editingPoId) {
+        await updatePurchaseOrder(state.editingPoId, {
+          poNumber: state.poNumber,
+          projectId: state.projectId,
+          vendorId: state.vendorId || null,
+          orderDate: state.orderDate,
+          paymentTermsDays: state.paymentTermsDays === '' ? null : Number(state.paymentTermsDays),
+          statedTotal: state.statedTotal,
+          lineItems,
+        });
+        // Back to the list rather than resetting to a blank create form —
+        // this was an edit of an existing order, not a new upload.
+        window.location.hash = '#/order-status';
+        return;
+      }
+
       await createPurchaseOrder({
         poNumber: state.poNumber,
         projectId: state.projectId,
@@ -676,12 +768,7 @@ function wireEvents(container, store, user) {
         statedTotal: state.statedTotal,
         sourcePdfName: state.parsedFileName,
         createdBy: user.id,
-        lineItems: state.lineItems.map((row) => ({
-          itemName: row.itemName.trim(),
-          quantity: Number(row.quantity),
-          rate: Number(row.rate),
-          itemId: row.itemId || null,
-        })),
+        lineItems,
       });
       store.setState({
         ...initialState(),

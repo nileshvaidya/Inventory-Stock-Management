@@ -3,6 +3,13 @@
 // soft-delete ("Delete") action is admin-only (per user request),
 // enforced both here (button hidden for non-admin) and at the RLS layer
 // (purchase_orders' update policy — see supabase/schema.sql).
+//
+// Addendum (direct request): double-clicking a (non-archived) row opens
+// that PO on PO Upload, pre-filled, to edit and save — same admin-only
+// gate as Delete, for the same reason (purchase_orders' own direct-update
+// policy, and the new admin_update_purchase_order() RPC it goes through,
+// are both admin-only). See poUpload.js's edit-mode handling and
+// purchaseOrders.js's fetchPurchaseOrderById/updatePurchaseOrder.
 import { getCurrentProfile } from '../auth.js';
 import { renderShell } from '../layout.js';
 import { escapeHtml } from '../components.js';
@@ -72,7 +79,7 @@ export async function render(container) {
     // wrapper for anything that re-renders while a field has focus.
     repaintPreservingFocus(content, () => {
       renderContent(content, store.getState(), canEdit);
-      wireEvents(content, store, load);
+      wireEvents(content, store, load, canEdit);
     });
   }
 
@@ -86,7 +93,10 @@ export async function render(container) {
 function renderContent(container, state, canEdit) {
   container.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px">
-      <h1 style="margin:0">Order Status</h1>
+      <div>
+        <h1 style="margin:0">Order Status</h1>
+        ${canEdit ? `<p style="margin:4px 0 0;font-size:12px;color:var(--color-neutral-500)">Double-click a row to edit that purchase order.</p>` : ''}
+      </div>
       <button type="button" class="btn btn-secondary" data-action="export-csv">Export CSV</button>
     </div>
 
@@ -138,8 +148,9 @@ function renderContent(container, state, canEdit) {
 
 function renderRow(po, canEdit) {
   const archived = Boolean(po.deleted_at);
+  const dblClickable = canEdit && !archived;
   return `
-    <tr data-po-row="${escapeHtml(po.id)}" style="${archived ? 'opacity:0.55' : ''}">
+    <tr data-po-row="${escapeHtml(po.id)}" style="${archived ? 'opacity:0.55' : ''}${dblClickable ? 'cursor:pointer' : ''}" ${dblClickable ? 'title="Double-click to edit"' : ''}>
       <td>${escapeHtml(po.po_number || '—')}</td>
       <td>${escapeHtml(po.project?.name || '—')}</td>
       <td>${escapeHtml(po.vendor?.name || '—')}</td>
@@ -155,7 +166,7 @@ function renderRow(po, canEdit) {
     </tr>`;
 }
 
-function wireEvents(container, store, load) {
+function wireEvents(container, store, load, canEdit) {
   const bindFilter = (selector, key, transform = (v) => v) => {
     container.querySelector(selector)?.addEventListener('change', (e) => {
       store.setState({ [key]: transform(e.target.value) });
@@ -203,6 +214,17 @@ function wireEvents(container, store, load) {
       await load();
     });
   });
+
+  if (canEdit) {
+    container.querySelectorAll('[data-po-row]').forEach((row) => {
+      row.addEventListener('dblclick', () => {
+        const state = store.getState();
+        const po = state.orders.find((o) => o.id === row.dataset.poRow);
+        if (!po || po.deleted_at) return; // archived — nothing to edit
+        window.location.hash = `#/po-upload?edit=${encodeURIComponent(po.id)}`;
+      });
+    });
+  }
 
   container.querySelector('[data-action="export-csv"]')?.addEventListener('click', () => {
     const { orders } = store.getState();

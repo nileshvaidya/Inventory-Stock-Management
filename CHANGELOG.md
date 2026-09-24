@@ -2126,3 +2126,54 @@ that sorting issues no extra request to `material_dispatch`.
 
 Verified locally: lint, typecheck, unit tests, full e2e suite,
 production build. No `schema.sql` change — pure client-side addition.
+
+## Phase 2 addendum: edit a Purchase Order from Order Status
+
+Direct request. Double-clicking a (non-archived) row on Order Status
+opens that PO on PO Upload, pre-filled from `fetchPurchaseOrderById`,
+to edit and save — the Upload PDF/Map Fields Manually cards are hidden
+there, since editing doesn't re-parse a document. Admin only, same as
+Order Status' existing Delete action and `purchase_orders`' own
+direct-update policy.
+
+- `supabase/schema.sql`: new `admin_update_purchase_order()` RPC
+  (admin-only, security definer). Line items are synced by id rather
+  than a blind delete-and-reinsert: existing rows are updated in
+  place, rows with no id are new inserts, and any existing row missing
+  from the submitted set is deleted — unless material has already been
+  received against it (`material_inward_line_items.po_line_item_id`
+  has no cascading delete from `po_line_items`, deliberately), in
+  which case that's caught and raised as a clear error naming the
+  item, instead of either corrupting the receiving trail or blocking
+  the whole edit.
+- `purchaseOrders.js`: new `fetchPurchaseOrderById()` and
+  `updatePurchaseOrder()` (the RPC above) — `po_line_items` has no
+  update/delete policy of its own, only insert, same "no direct grant
+  beyond create" shape as Material Dispatch/Delivery Challans.
+- `router.js`: routes now ignore a trailing `?query` string when
+  matching (`normalizePath`), and a new `getHashParams()` reads it —
+  `'#/po-upload?edit=<id>'` is the only route that currently needs one.
+- `orderStatus.js`: double-clicking a row (admin, not archived)
+  navigates to `#/po-upload?edit=<id>`.
+- `poUpload.js`: in edit mode, the form is pre-filled from the PO
+  instead of starting blank, the heading/Save button read "Edit
+  Purchase Order"/"Save Changes", a Cancel button returns to Order
+  Status without saving, and Save calls `updatePurchaseOrder` instead
+  of `createPurchaseOrder`, returning to Order Status on success
+  rather than resetting to a blank create form.
+- Help manual and a new FAQ entry updated.
+
+Tests: `e2e/phase2.spec.js` gained coverage for the double-click
+navigation (admin only, archived rows inert), the edit form loading
+pre-filled with the Upload/Map cards hidden, a non-admin being
+redirected off the edit URL, Save's exact RPC payload, and Cancel.
+`src/router.test.js` covers the new query-string handling.
+`scripts/test-rls-purchase-orders.mjs` gained real-DB coverage of the
+new RPC: purchase role rejected, admin editing header fields/line
+items (update in place, add, remove one with no receipts), and
+removing a line item that already has a receipt against it rejected.
+
+Verified locally: lint, typecheck, unit tests, full e2e suite,
+production build. `schema.sql` gained one new function — apply the
+full file to any already-provisioned Supabase project (see
+`supabase/README.md`) before using this feature there.

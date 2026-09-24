@@ -274,4 +274,120 @@ test.describe('Phase 2 — Order Status', () => {
     await expect(row).toContainText('PO-1001');
     await expect(row.locator('[data-action="delete-po"]')).toHaveCount(0);
   });
+
+  test('double-clicking a row (admin) opens it on PO Upload to edit; archived rows and non-admin are inert', async ({ page }) => {
+    await page.route('**/rest/v1/projects**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
+    await page.route('**/rest/v1/purchase_orders**', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([
+          { id: 'po-1', po_number: 'PO-1001', order_date: '2026-01-15', status: 'to_be_received', deleted_at: null, project: { id: 'p1', name: 'Bridge Build' }, vendor: null },
+          { id: 'po-2', po_number: 'PO-1002', order_date: '2026-01-10', status: 'to_be_received', deleted_at: '2026-01-20T00:00:00Z', project: { id: 'p1', name: 'Bridge Build' }, vendor: null },
+        ]),
+      })
+    );
+
+    await page.goto('/?demoRole=purchase#/order-status');
+    await page.dblclick('[data-po-row="po-1"]');
+    await expect(page).toHaveURL(/#\/order-status$/); // purchase role — no edit rights, dblclick does nothing
+
+    await page.goto('/?demoRole=admin#/order-status');
+    await page.dblclick('[data-po-row="po-2"]'); // archived — nothing to edit
+    await expect(page).toHaveURL(/#\/order-status$/);
+
+    await page.dblclick('[data-po-row="po-1"]');
+    await expect(page).toHaveURL(/#\/po-upload\?edit=po-1$/);
+  });
+});
+
+test.describe('Phase 2 — PO Upload edit mode (double-click from Order Status)', () => {
+  const PO_FIXTURE = {
+    id: 'po-1',
+    po_number: 'PO-1001',
+    order_date: '2026-01-15',
+    payment_terms_days: 30,
+    stated_total: 50,
+    status: 'to_be_received',
+    deleted_at: null,
+    project_id: 'p1',
+    vendor_id: 'v1',
+    project: { id: 'p1', name: 'Bridge Build' },
+    vendor: { id: 'v1', name: 'Acme Supplies' },
+    line_items: [{ id: 'pli-1', item_name: 'Widget', quantity: 10, rate: 5, item_id: null }],
+  };
+
+  async function mockLookupsAndPo(page) {
+    await page.route('**/rest/v1/projects**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ id: 'p1', name: 'Bridge Build' }]) }));
+    await page.route('**/rest/v1/vendors**', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ id: 'v1', name: 'Acme Supplies', gstin: null, contact: null, default_payment_terms_days: null }]) })
+    );
+    await page.route('**/rest/v1/items**', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
+    // Order Status' own list fetch (no id filter) and PO Upload's
+    // single-PO fetch (id=eq.po-1) share this same table — branch on the
+    // request URL, same approach as Delivery Challans' Reset Filters test.
+    await page.route('**/rest/v1/purchase_orders**', (route) => {
+      const url = route.request().url();
+      const body = url.includes('id=eq.po-1') ? PO_FIXTURE : [PO_FIXTURE];
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+    });
+  }
+
+  test('opens pre-filled from the PO, with the upload/mapping cards hidden', async ({ page }) => {
+    await mockLookupsAndPo(page);
+    await page.goto('/?demoRole=admin#/po-upload?edit=po-1');
+
+    await expect(page.locator('[data-screen="po-upload"]')).toContainText('Edit Purchase Order');
+    await expect(page.locator('[data-action="po-number"]')).toHaveValue('PO-1001');
+    await expect(page.locator('[data-action="order-date"]')).toHaveValue('2026-01-15');
+    await expect(page.locator('[data-action="payment-terms"]')).toHaveValue('30');
+    const row = page.locator('[data-line-item-row="0"]');
+    await expect(row.locator('[data-action="item-name"]')).toHaveValue('Widget');
+    await expect(row.locator('[data-action="item-qty"]')).toHaveValue('10');
+    await expect(row.locator('[data-action="item-rate"]')).toHaveValue('5');
+    await expect(page.locator('[data-action="pdf-file"]')).toHaveCount(0);
+    await expect(page.locator('[data-action="save"]')).toHaveText('Save Changes');
+  });
+
+  test('a non-admin navigating to the edit URL directly is redirected to the dashboard', async ({ page }) => {
+    await mockLookupsAndPo(page);
+    await page.goto('/?demoRole=purchase#/po-upload?edit=po-1');
+    await expect(page).toHaveURL(/#\/dashboard$/);
+  });
+
+  test('Save calls admin_update_purchase_order with the edited fields, then returns to Order Status', async ({ page }) => {
+    await mockLookupsAndPo(page);
+    let rpcBody = null;
+    await page.route('**/rest/v1/rpc/admin_update_purchase_order**', (route) => {
+      rpcBody = route.request().postDataJSON();
+      return route.fulfill({ status: 200, contentType: 'application/json', body: 'null' });
+    });
+
+    await page.goto('/?demoRole=admin#/po-upload?edit=po-1');
+    await expect(page.locator('[data-line-item-row="0"] [data-action="item-name"]')).toHaveValue('Widget');
+
+    await page.fill('[data-action="po-number"]', 'PO-1001-REV2');
+    await page.fill('[data-line-item-row="0"] [data-action="item-qty"]', '12');
+    await page.click('[data-action="save"]');
+
+    await expect(page).toHaveURL(/#\/order-status$/);
+    expect(rpcBody.target_po_id).toBe('po-1');
+    expect(rpcBody.po_number_in).toBe('PO-1001-REV2');
+    expect(rpcBody.line_items_in).toEqual([{ id: 'pli-1', item_name: 'Widget', quantity: 12, rate: 5, item_id: null }]);
+  });
+
+  test('Cancel returns to Order Status without saving', async ({ page }) => {
+    await mockLookupsAndPo(page);
+    let rpcCalled = false;
+    await page.route('**/rest/v1/rpc/admin_update_purchase_order**', (route) => {
+      rpcCalled = true;
+      return route.fulfill({ status: 200, contentType: 'application/json', body: 'null' });
+    });
+
+    await page.goto('/?demoRole=admin#/po-upload?edit=po-1');
+    await page.click('[data-action="cancel-edit"]');
+
+    await expect(page).toHaveURL(/#\/order-status$/);
+    expect(rpcCalled).toBe(false);
+  });
 });

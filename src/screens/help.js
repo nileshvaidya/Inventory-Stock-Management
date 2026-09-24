@@ -293,6 +293,9 @@ function renderPoUpload() {
       'If something required is missing (no Project, no line items, an invalid row), an error message appears and nothing is saved — fix it and click Save again.',
       `Once saved, the form clears and a confirmation message appears — find it afterwards on ${jump('help-order-status', 'Order Status')}.`,
     ])}
+
+    ${h3('Editing an existing order')}
+    <p style="font-size:14px;color:var(--color-neutral-300)">Opening a PO from Order Status (see below) shows this same Details/Line Items form pre-filled instead — the Upload PDF and Map Fields Manually steps above don't apply, since there's nothing to (re-)parse. Edit any field, then click <strong>Save Changes</strong> to update the order and return to Order Status, or <strong>Cancel</strong> to go back without saving. <strong>Admin only.</strong> Removing a line item that already has material received against it isn't allowed — an error names it instead of silently corrupting the receiving trail.</p>
     `
   );
 }
@@ -320,6 +323,9 @@ function renderOrderStatus() {
       'Click <strong>Export CSV</strong> to download the filtered list as a spreadsheet.',
       'Click <strong>Delete</strong> on a row to archive that PO (a confirmation pop-up appears first) — this doesn\'t erase it, it just hides it from the list unless "Show archived" is ticked. <strong>Admin only</strong> — a Purchase user can view and filter every PO here but can\'t archive one.',
     ])}
+
+    ${h3('Editing an order')}
+    <p style="font-size:14px;color:var(--color-neutral-300)">Double-click any row (except an archived one) to open that PO on ${jump('help-po-upload', 'PO Upload')} for editing — change any field or line item and click Save Changes, or Cancel to leave it as-is. <strong>Admin only</strong>, same as Delete above.</p>
     `
   );
 }
@@ -816,6 +822,10 @@ const FAQ = [
   {
     q: 'Why did Pending Dues/Total Amount Received change after I applied a filter?',
     a: 'Both totals only cover the challans currently visible on Delivery Challans — narrow the list with the From/To Date, PO No., or Status filters and both figures recompute to match. Clear the filters to see the full totals again.',
+  },
+  {
+    q: 'Can I fix a mistake on a Purchase Order after saving it?',
+    a: 'Yes — double-click its row on Order Status to reopen it on PO Upload, pre-filled, and edit anything (header fields or line items), then Save Changes. Admin only. You can\'t remove a line item that already has material received against it — the error names it instead of corrupting the receiving trail.',
   },
   {
     q: 'How do I get data out of the app for Excel?',

@@ -52,8 +52,14 @@ async function signedInClient(email) {
   return client;
 }
 
-async function cleanup({ userIds, projectId, vendorId, poId, mappingId }) {
+async function cleanup({ userIds, projectId, vendorId, poId, mappingId, inwardId }) {
   if (mappingId) await admin.from('import_field_mappings').delete().eq('id', mappingId);
+  // Deleted before the PO itself — material_inward_line_items.po_line_item_id
+  // has no ON DELETE CASCADE from po_line_items (deliberately, see
+  // supabase/schema.sql), so a leftover receipt fixture would otherwise
+  // block po_line_items' own cascade off purchase_orders' delete below,
+  // leaking the PO (and in turn the project/vendor it still references).
+  if (inwardId) await admin.from('material_inward').delete().eq('id', inwardId);
   if (poId) await admin.from('purchase_orders').delete().eq('id', poId);
   if (projectId) await admin.from('projects').delete().eq('id', projectId);
   if (vendorId) await admin.from('vendors').delete().eq('id', vendorId);
@@ -68,7 +74,7 @@ async function run() {
   const storeUser = await createUser({ name: `RLS Test Store ${stamp}`, email: `rls-store-po-${stamp}@example.com`, role: 'store' });
   const adminUser = await createUser({ name: `RLS Test Admin ${stamp}`, email: `rls-admin-po-${stamp}@example.com`, role: 'admin' });
   const userIds = [purchaseUser.id, storeUser.id, adminUser.id];
-  let projectId, vendorId, poId, mappingId;
+  let projectId, vendorId, poId, mappingId, inwardId;
 
   try {
     const clientPurchase = await signedInClient(purchaseUser.email);
@@ -150,6 +156,80 @@ async function run() {
 
     await admin.from('purchase_orders').update({ deleted_at: null }).eq('id', poId);
 
+    console.log('\nPurchase orders: editing (Order Status "double-click to edit") — admin_update_purchase_order() is admin-only...');
+    const { data: lineItemB, error: lineItemBErr } = await clientPurchase
+      .from('po_line_items')
+      .insert({ po_id: poId, item_name: 'Test Gadget', quantity: 5, rate: 2 })
+      .select()
+      .single();
+    assert(!lineItemBErr, 'purchase role can add a second line item to their PO (for the edit tests below)');
+    const lineItemBId = lineItemB?.id;
+
+    // Fixture: a receipt against the PO's first line item, so the edit
+    // RPC's "can't remove a line item material has already been received
+    // against" guard below has something real to trip on. Set up directly
+    // via the service-role client — material inward's own RLS is covered
+    // by phase3's RLS script, not this one.
+    const { data: firstLineItem } = await admin.from('po_line_items').select('id').eq('po_id', poId).neq('id', lineItemBId).single();
+    const { data: inward, error: inwardErr } = await admin.from('material_inward').insert({ po_id: poId, received_by: storeUser.id }).select().single();
+    assert(!inwardErr, 'fixture: material inward record created');
+    inwardId = inward?.id;
+    const { error: inwardLineErr } = await admin
+      .from('material_inward_line_items')
+      .insert({ inward_id: inwardId, po_line_item_id: firstLineItem.id, received_qty: 3 });
+    assert(!inwardLineErr, 'fixture: material received against the first line item');
+
+    const editPayload = (lineItems) => ({
+      target_po_id: poId,
+      po_number_in: 'PO-EDITED',
+      project_id_in: projectId,
+      vendor_id_in: vendorId,
+      order_date_in: '2026-01-02',
+      payment_terms_days_in: 15,
+      stated_total_in: 75,
+      line_items_in: lineItems,
+    });
+
+    const { error: purchaseEditErr } = await clientPurchase.rpc(
+      'admin_update_purchase_order',
+      editPayload([
+        { id: firstLineItem.id, item_name: 'Test Widget', quantity: 10, rate: 5, item_id: null },
+        { id: lineItemBId, item_name: 'Test Gadget', quantity: 5, rate: 2, item_id: null },
+      ])
+    );
+    assert(!!purchaseEditErr, 'purchase role cannot call admin_update_purchase_order (admin-only)');
+
+    console.log('\nPurchase orders: admin can edit header fields and line items — update in place, add a new one, remove one with no receipts against it...');
+    const { error: adminEditErr } = await clientAdmin.rpc(
+      'admin_update_purchase_order',
+      // lineItemB deliberately omitted — it has no receipts against it, so
+      // it should be removed rather than blocked.
+      editPayload([{ id: firstLineItem.id, item_name: 'Test Widget (rev)', quantity: 10, rate: 6, item_id: null }, { item_name: 'Test Widget New Row', quantity: 2, rate: 3, item_id: null }])
+    );
+    assert(!adminEditErr, `admin can edit the PO${adminEditErr ? ` (${adminEditErr.message})` : ''}`);
+
+    const { data: afterEdit } = await admin.from('purchase_orders').select('po_number, payment_terms_days, stated_total').eq('id', poId).single();
+    assert(afterEdit?.po_number === 'PO-EDITED', "the PO's edited header fields persisted");
+    assert(afterEdit?.payment_terms_days === 15, 'payment terms persisted');
+
+    const { data: lineItemsAfterEdit } = await admin.from('po_line_items').select('id, item_name, quantity, rate').eq('po_id', poId).order('created_at');
+    assert(lineItemsAfterEdit?.length === 2, 'the PO now has exactly two line items — the edited original plus the new row, with the omitted one removed');
+    assert(
+      lineItemsAfterEdit?.some((li) => li.id === firstLineItem.id && Number(li.rate) === 6),
+      "the first line item's rate was updated in place (same id), not replaced"
+    );
+    assert(!lineItemsAfterEdit?.some((li) => li.id === lineItemBId), 'the omitted line item (no receipts against it) was removed');
+
+    console.log("\nPurchase orders: editing cannot remove a line item that already has material received against it...");
+    const { error: blockedRemovalErr } = await clientAdmin.rpc(
+      'admin_update_purchase_order',
+      // Omits firstLineItem, which has the receipt fixture set up above.
+      editPayload((lineItemsAfterEdit ?? []).filter((li) => li.id !== firstLineItem.id).map((li) => ({ id: li.id, item_name: li.item_name, quantity: li.quantity, rate: li.rate, item_id: null })))
+    );
+    assert(!!blockedRemovalErr, 'removing a line item that already has material received against it is rejected, not silently corrupted');
+    const { data: firstLineItemStillThere } = await admin.from('po_line_items').select('id').eq('id', firstLineItem.id);
+    assert((firstLineItemStillThere ?? []).length === 1, 'the line item with a receipt against it is still there');
+
     console.log('\nImport field mappings (Map Fields Manually, Phase 2 addendum): purchase role can save one, store role cannot...');
     const templateV1 = { tokenCount: 5, itemNameTokenIndices: [0, 1], qtyTokenIndex: 2, rateTokenIndex: 3 };
     const { data: mapping, error: mappingErr } = await clientPurchase
@@ -205,7 +285,7 @@ async function run() {
     }
   } finally {
     console.log('\nCleaning up test data...');
-    await cleanup({ userIds, projectId, vendorId, poId, mappingId });
+    await cleanup({ userIds, projectId, vendorId, poId, mappingId, inwardId });
   }
 
   console.log(`\n${passed} passed, ${failed} failed`);
