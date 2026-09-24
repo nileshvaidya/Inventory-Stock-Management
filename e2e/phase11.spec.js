@@ -299,7 +299,20 @@ test.describe('Phase 11 — Material Dispatch — edit (double-click)', () => {
     await expect(page.locator('[data-action="save-dispatch"]')).toHaveText('Save Changes');
   });
 
-  test('double-clicking an already-authorized dispatch does nothing', async ({ page }) => {
+  test('store role double-clicking an authorized dispatch does nothing — editing an authorized one is admin only', async ({ page }) => {
+    await mockDefaultRolePermissions(page);
+    await mockItems(page);
+    await mockCurrentRates(page);
+    await page.route('**/rest/v1/material_dispatch**', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([DISPATCH_AUTHORIZED]) })
+    );
+
+    await page.goto('/?demoRole=store#/material-dispatch');
+    await page.dblclick('[data-dispatch-row="dispatch-2"]');
+    await expect(page.locator('[data-role="dispatch-form"]')).toHaveCount(0);
+  });
+
+  test('admin double-clicks an authorized dispatch: opens pre-filled with a stock-adjustment warning', async ({ page }) => {
     await mockDefaultRolePermissions(page);
     await mockItems(page);
     await mockCurrentRates(page);
@@ -309,7 +322,64 @@ test.describe('Phase 11 — Material Dispatch — edit (double-click)', () => {
 
     await page.goto('/?demoRole=admin#/material-dispatch');
     await page.dblclick('[data-dispatch-row="dispatch-2"]');
+
+    const form = page.locator('[data-role="dispatch-form"]');
+    await expect(form).toContainText('Edit Dispatch');
+    await expect(page.locator('[data-role="editing-authorized-warning"]')).toContainText('already Authorized');
+    await expect(page.locator('[data-action="form-dc-number"]')).toHaveValue('DC-1001');
+  });
+
+  test('admin saving an edit to an authorized dispatch asks for confirmation, then calls update_material_dispatch', async ({ page }) => {
+    await mockDefaultRolePermissions(page);
+    await mockItems(page);
+    await mockCurrentRates(page);
+    let requestCount = 0;
+    await page.route('**/rest/v1/material_dispatch**', (route) => {
+      requestCount += 1;
+      const body = requestCount === 1 ? DISPATCH_AUTHORIZED : { ...DISPATCH_AUTHORIZED, dc_number: 'DC-1001-REV3' };
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([body]) });
+    });
+    let updateBody = null;
+    await page.route('**/rest/v1/rpc/update_material_dispatch**', (route) => {
+      updateBody = route.request().postDataJSON();
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(DISPATCH_AUTHORIZED) });
+    });
+
+    page.once('dialog', (dialog) => dialog.accept());
+    await page.goto('/?demoRole=admin#/material-dispatch');
+    await page.dblclick('[data-dispatch-row="dispatch-2"]');
+    await page.fill('[data-action="form-dc-number"]', 'DC-1001-REV3');
+    await page.click('[data-action="save-dispatch"]');
+
     await expect(page.locator('[data-role="dispatch-form"]')).toHaveCount(0);
+    expect(updateBody.target_dispatch_id).toBe('dispatch-2');
+    expect(updateBody.dc_number_in).toBe('DC-1001-REV3');
+    await expect(page.locator('[data-dispatch-row="dispatch-2"]')).toContainText('DC-1001-REV3');
+  });
+
+  test('declining the confirmation on an authorized edit never calls update_material_dispatch', async ({ page }) => {
+    await mockDefaultRolePermissions(page);
+    await mockItems(page);
+    await mockCurrentRates(page);
+    await page.route('**/rest/v1/material_dispatch**', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([DISPATCH_AUTHORIZED]) })
+    );
+    let updateCalled = false;
+    await page.route('**/rest/v1/rpc/update_material_dispatch**', (route) => {
+      updateCalled = true;
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    });
+
+    page.once('dialog', (dialog) => dialog.dismiss());
+    await page.goto('/?demoRole=admin#/material-dispatch');
+    await page.dblclick('[data-dispatch-row="dispatch-2"]');
+    await page.fill('[data-action="form-dc-number"]', 'DC-SHOULD-NOT-SAVE');
+    await page.click('[data-action="save-dispatch"]');
+
+    expect(updateCalled).toBe(false);
+    // Declining leaves the form open, still in edit mode, with the typed value intact.
+    await expect(page.locator('[data-role="dispatch-form"]')).toBeVisible();
+    await expect(page.locator('[data-action="form-dc-number"]')).toHaveValue('DC-SHOULD-NOT-SAVE');
   });
 
   test('Save calls update_material_dispatch with the edited fields, then reloads the list', async ({ page }) => {

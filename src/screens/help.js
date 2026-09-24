@@ -702,7 +702,8 @@ function renderMaterialDispatch() {
     ${note('Click <strong>Details</strong> on any row to see its full item list and notes. If a scanned challan was attached, click <strong>View</strong> to open it. Payment tracking for a dispatch now lives on the admin-only ' + jump('help-delivery-challans', 'Delivery Challans') + ' screen, not here.')}
 
     ${h3('Editing a dispatch')}
-    <p style="font-size:14px;color:var(--color-neutral-300)">Double-click a row that's still <strong>Pending Authorization</strong> to reopen it for editing — every field, including its items, pre-filled. Change anything and click <strong>Save Changes</strong>, or Cancel to leave it as-is. Not available once a dispatch is <strong>Authorized</strong>: authorizing already deducted stock for exactly those items and quantities, so they're locked in from that point on.</p>
+    <p style="font-size:14px;color:var(--color-neutral-300)">Double-click any row to reopen it for editing — every field, including its items, pre-filled. Change anything and click <strong>Save Changes</strong>, or Cancel to leave it as-is.</p>
+    <p style="font-size:14px;color:var(--color-neutral-300)">Editing a dispatch that's still <strong>Pending Authorization</strong> has no stock effect. Editing one that's already <strong>Authorized</strong> is Admin only, and asks for confirmation before saving — the items and quantities were already deducted from stock when it was authorized, so saving a change to them adjusts stock to match: increasing a quantity deducts the extra amount (blocked if there isn't enough on hand), decreasing one (or removing an item) gives the difference back.</p>
     `
   );
 }
@@ -832,7 +833,7 @@ const FAQ = [
   },
   {
     q: 'Can I fix a mistake on a Material Dispatch after saving it?',
-    a: 'Yes, as long as it\'s still Pending Authorization — double-click its row to reopen it, pre-filled, and edit anything including its items, then Save Changes. Once it\'s Authorized it can\'t be edited this way anymore, since authorizing already deducted exactly those items and quantities from stock.',
+    a: 'Yes — double-click its row to reopen it, pre-filled, and edit anything including its items, then Save Changes. If it\'s still Pending Authorization, anyone who could create one can edit it, with no stock effect. If it\'s already Authorized, editing is Admin only and asks for confirmation, since saving then also adjusts stock to match the change (deducting more for an increase, blocked if there isn\'t enough on hand; giving stock back for a decrease or a removed item).',
   },
   {
     q: 'How do I get data out of the app for Excel?',

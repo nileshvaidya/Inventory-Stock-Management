@@ -236,8 +236,14 @@ async function run() {
         assert(authorized.authorized_at !== null, 'authorized_at was stamped');
         assert(authorized.authorized_by === adminUser.id, 'authorized_by records the authorizing admin');
 
-        console.log('\nupdate_material_dispatch is rejected once the dispatch is authorized, even for admin...');
-        const { error: editAfterAuthorizeErr } = await clientAdmin.rpc('update_material_dispatch', {
+        const { data: movements } = await admin.from('stock_movements').select('*').eq('reference_type', 'material_dispatch').eq('reference_id', dispatch.id);
+        const gadgetOut = (movements ?? []).find((m) => m.item_id === gadget.id && m.movement_type === 'out');
+        assert(!!gadgetOut && Number(gadgetOut.quantity) === 30, 'a Gadget "out" movement of 30 was recorded, tagged to this dispatch');
+
+        const { data: gadgetStockAfter } = await admin.from('current_stock').select('current_qty').eq('item_id', gadget.id).single();
+        assert(Number(gadgetStockAfter.current_qty) === 70, 'Gadget current_qty actually dropped to 70 (100 - 30)');
+
+        const editPayload = (quantity) => ({
           target_dispatch_id: dispatch.id,
           dispatch_date_in: '2026-01-17',
           dc_number_in: 'DC-RLS-1-REV',
@@ -245,17 +251,41 @@ async function run() {
           our_invoice_number_in: 'INV-RLS-EDIT',
           client_po_number_in: 'PO-CLIENT-EDIT',
           gst_percent_in: 12,
-          notes_in: 'should not apply',
-          line_items_in: [{ item_id: gadget.id, quantity: 99, rate: 12.5 }],
+          notes_in: 'edited after authorization',
+          line_items_in: [{ item_id: gadget.id, quantity, rate: 12.5 }],
         });
-        assert(!!editAfterAuthorizeErr, 'editing an already-authorized dispatch is rejected — its line items are already reflected in real stock movements');
 
-        const { data: movements } = await admin.from('stock_movements').select('*').eq('reference_type', 'material_dispatch').eq('reference_id', dispatch.id);
-        const gadgetOut = (movements ?? []).find((m) => m.item_id === gadget.id && m.movement_type === 'out');
-        assert(!!gadgetOut && Number(gadgetOut.quantity) === 30, 'a Gadget "out" movement of 30 was recorded, tagged to this dispatch');
+        console.log('\nupdate_material_dispatch on an authorized dispatch: store/production cannot (admin only from this point on)...');
+        const { error: storeEditAfterAuthorizeErr } = await clientStore.rpc('update_material_dispatch', editPayload(30));
+        assert(!!storeEditAfterAuthorizeErr, 'store role cannot edit an already-authorized dispatch');
+        const { error: productionEditAfterAuthorizeErr } = await clientProduction.rpc('update_material_dispatch', editPayload(30));
+        assert(!!productionEditAfterAuthorizeErr, 'production role cannot edit an already-authorized dispatch');
 
-        const { data: gadgetStockAfter } = await admin.from('current_stock').select('current_qty').eq('item_id', gadget.id).single();
-        assert(Number(gadgetStockAfter.current_qty) === 70, 'Gadget current_qty actually dropped to 70 (100 - 30)');
+        console.log('\nadmin can edit an authorized dispatch: increasing quantity records an additional "out" movement for just the delta...');
+        const { error: increaseErr } = await clientAdmin.rpc('update_material_dispatch', editPayload(50)); // 30 -> 50, delta +20
+        assert(!increaseErr, `admin can increase quantity on an authorized dispatch${increaseErr ? ` (${increaseErr.message})` : ''}`);
+        const { data: stockAfterIncrease } = await admin.from('current_stock').select('current_qty').eq('item_id', gadget.id).single();
+        assert(Number(stockAfterIncrease.current_qty) === 50, 'Gadget current_qty dropped by exactly the +20 delta, to 50 (not re-deducting the full new quantity)');
+
+        console.log('\nadmin can edit an authorized dispatch: decreasing quantity gives stock back via an "in" movement for the delta...');
+        const { error: decreaseErr } = await clientAdmin.rpc('update_material_dispatch', editPayload(10)); // 50 -> 10, delta -40
+        assert(!decreaseErr, `admin can decrease quantity on an authorized dispatch${decreaseErr ? ` (${decreaseErr.message})` : ''}`);
+        const { data: stockAfterDecrease } = await admin.from('current_stock').select('current_qty').eq('item_id', gadget.id).single();
+        assert(Number(stockAfterDecrease.current_qty) === 90, 'Gadget current_qty rose by exactly the 40 given back, to 90');
+
+        console.log('\nediting an authorized dispatch is blocked, all-or-nothing, if the increase exceeds available stock...');
+        const { error: shortfallEditErr } = await clientAdmin.rpc('update_material_dispatch', editPayload(200)); // 10 -> 200, delta +190, only 90 available
+        assert(!!shortfallEditErr, 'increasing a line item beyond available stock on an authorized dispatch is rejected');
+        const { data: lineItemsAfterBlockedEdit } = await admin.from('material_dispatch_line_items').select('quantity').eq('dispatch_id', dispatch.id).single();
+        assert(Number(lineItemsAfterBlockedEdit.quantity) === 10, "the line item's quantity is unchanged after the blocked edit (still 10)");
+        const { data: stockAfterBlockedEdit } = await admin.from('current_stock').select('current_qty').eq('item_id', gadget.id).single();
+        assert(Number(stockAfterBlockedEdit.current_qty) === 90, 'Gadget current_qty is unchanged at 90 — the blocked edit moved nothing');
+
+        console.log('\nrestoring the original quantity (10 -> 30) for the assertions further below...');
+        const { error: restoreErr } = await clientAdmin.rpc('update_material_dispatch', editPayload(30));
+        assert(!restoreErr, `admin can restore the original quantity${restoreErr ? ` (${restoreErr.message})` : ''}`);
+        const { data: stockAfterRestore } = await admin.from('current_stock').select('current_qty').eq('item_id', gadget.id).single();
+        assert(Number(stockAfterRestore.current_qty) === 70, 'Gadget current_qty is back to 70 after restoring the original quantity');
 
         console.log('\nauthorizing an already-authorized dispatch is rejected...');
         const { error: reAuthorizeErr } = await clientAdmin.rpc('authorize_material_dispatch', { target_dispatch_id: dispatch.id });

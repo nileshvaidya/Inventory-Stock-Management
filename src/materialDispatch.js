@@ -8,13 +8,14 @@
 // goes through a security-definer RPC, not a plain table update — the
 // table itself has no update policy at all.
 //
-// Addendum (direct request): double-clicking an unauthorized dispatch on
-// Material Dispatch opens it for editing in place — see
-// updateMaterialDispatch below and the double-click wiring in
-// screens/materialDispatch.js. Only while unauthorized: once authorized,
-// its line items are already reflected in real stock movements, so
-// editing them further is blocked server-side rather than risking
-// inventory drifting out of sync with what was actually recorded.
+// Addendum (direct request): double-clicking a dispatch on Material
+// Dispatch opens it for editing in place — see updateMaterialDispatch
+// below and the double-click wiring in screens/materialDispatch.js.
+// Editing an already-authorized dispatch is admin only (unauthorized
+// stays store/admin) and reconciles real stock movements to match the
+// edit server-side, rather than letting inventory drift out of sync with
+// what the dispatch now says — see update_material_dispatch() in
+// supabase/schema.sql for how.
 import { supabase } from './api.js';
 import { getChallanFileUrl } from './materialInward.js';
 
@@ -130,14 +131,13 @@ export async function createMaterialDispatch(form, client = supabase) {
 }
 
 /**
- * Store/admin, server-side — same role as creating a dispatch, since this
- * is really "fix a mistake before it's committed": edits every field a
- * new dispatch has, including its line items, but only while the
- * dispatch is still unauthorized (the RPC itself rejects an authorized
- * one — see update_material_dispatch() in supabase/schema.sql). A
- * non-admin's clientPoNumber is ignored server-side rather than trusted,
- * same restriction as this table's own insert policy; this screen's own
- * edit form never even sends one for a non-admin (see
+ * Store/admin while unauthorized (zero stock effect); admin only once
+ * authorized, since saving then also adjusts real stock movements to
+ * match the edited line items — see update_material_dispatch() in
+ * supabase/schema.sql for the delta computation and its own shortfall
+ * check. A non-admin's clientPoNumber is ignored server-side rather than
+ * trusted, same restriction as this table's own insert policy; this
+ * screen's own edit form never even sends one for a non-admin (see
  * screens/materialDispatch.js).
  * @param {string} dispatchId
  * @param {{ dispatchDate: string, dcNumber?: string|null, party?: string|null, notes?: string|null,

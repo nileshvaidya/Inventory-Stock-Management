@@ -2216,3 +2216,45 @@ Verified locally: lint, typecheck, unit tests, full e2e suite,
 production build. `schema.sql` gained one new function — apply the
 full file to any already-provisioned Supabase project (see
 `supabase/README.md`) before using this feature there.
+
+## Second Phase 11 addendum: allow editing an authorized Material Dispatch too
+
+Direct follow-up request, reversing the previous addendum's own
+restriction. Double-clicking any dispatch now reopens it for editing,
+including an already-authorized one — admin only from that point on
+(unauthorized stays store/admin, unchanged), and a confirmation dialog
+plus an on-form warning both call out that saving will adjust stock.
+
+- `supabase/schema.sql`: `update_material_dispatch()` no longer
+  rejects an authorized dispatch outright. Instead it computes each
+  line item's net quantity delta against what was previously recorded
+  for this dispatch (before the line items table is replaced), blocks
+  the whole save if any increased item doesn't have enough available
+  stock for just the delta (same all-or-nothing shortfall check as
+  `authorize_material_dispatch`, scoped to the delta rather than the
+  full new quantity), then records one incremental `stock_movements`
+  row per changed item — `out` for an increase, `in` for a decrease or
+  a removed item giving stock back — rather than mutating the original
+  movement rows, keeping the ledger's append-only audit trail intact.
+- `screens/materialDispatch.js`: double-click now works on an
+  authorized row too (admin only — the hint text, `title` attribute,
+  and the dblclick handler itself all reflect this). The edit form
+  shows a warning when editing an authorized dispatch, and Save asks
+  for confirmation before calling `updateMaterialDispatch` in that
+  case.
+- Help manual and FAQ updated.
+
+Tests: `e2e/phase11.spec.js`'s edit describe block gained coverage for
+a store role being blocked from editing an authorized dispatch, an
+admin seeing the warning and confirmation flow, and declining the
+confirmation leaving nothing saved.
+`scripts/test-rls-material-dispatch.mjs` gained real-DB coverage of
+the reconciliation itself: store/production rejected post-authorization,
+an admin's increase/decrease each moving exactly the delta (not the
+full quantity), a shortfall on the delta blocking the whole edit with
+nothing changed, and stock ending up correct after a full cycle.
+
+Verified locally: lint, typecheck, unit tests, full e2e suite,
+production build. `schema.sql`'s `update_material_dispatch()` function
+changed — apply the full file to any already-provisioned Supabase
+project (see `supabase/README.md`) before using this feature there.

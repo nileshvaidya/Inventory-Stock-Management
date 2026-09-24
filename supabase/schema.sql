@@ -2658,24 +2658,34 @@ $$;
 
 grant execute on function public.revert_dispatch_payment(uuid) to authenticated;
 
--- Third Phase 13 addendum (direct request): double-clicking an
--- unauthorized dispatch on Material Dispatch reopens it for editing —
--- every field a new dispatch has, including its line items. Store/admin,
--- same as creating one in the first place ("fix a mistake before it's
--- committed" is really the same right as creating it). Blocked once the
--- dispatch is authorized: authorizing already wrote real stock movements
--- for exactly the line items that existed at that moment (see
--- authorize_material_dispatch above), so letting them change afterward
--- would drift inventory out of sync with what was actually recorded —
--- unlike a Purchase Order edit (admin_update_purchase_order), there's no
--- safe partial case here to allow through, since authorization is
--- all-or-nothing for the whole dispatch, not per line item.
+-- Third Phase 13 addendum (direct request): double-clicking a dispatch on
+-- Material Dispatch reopens it for editing — every field a new dispatch
+-- has, including its line items. Store/admin while unauthorized, same as
+-- creating one in the first place ("fix a mistake before it's committed"
+-- is really the same right as creating it).
 --
--- Line items are a blind delete-and-reinsert, not synced by id like a PO
--- edit's are: safe here specifically because authorized_at is guaranteed
--- null at this point (checked below) and nothing references
--- material_dispatch_line_items.id (no receipts/stock rows point at a
--- dispatch line the way material_inward_line_items points at a PO line).
+-- Fourth Phase 13 addendum (direct request): editing is now also allowed
+-- once a dispatch is authorized — admin only from that point on, since
+-- authorizing already wrote real stock movements for exactly the line
+-- items that existed at that moment (see authorize_material_dispatch
+-- above), so an authorized edit has to reconcile stock too, not just the
+-- line items table, or inventory would silently drift from what's
+-- actually recorded. It does this the same way as authorize itself:
+-- compute each item's net quantity delta (new total minus what was
+-- previously recorded for this dispatch), block the whole edit if any
+-- increased item doesn't have enough available stock for the increase
+-- (same all-or-nothing shortfall check, just against the delta rather
+-- than the full new quantity), then record one incremental stock_movements
+-- row per changed item — 'out' for an increase, 'in' for a decrease or a
+-- removed item giving stock back — rather than mutating the original
+-- movement rows, keeping stock_movements' append-only audit trail intact.
+--
+-- Line items themselves are still a blind delete-and-reinsert either way
+-- (safe because nothing references material_dispatch_line_items.id, no
+-- receipts/stock rows point at a dispatch line the way
+-- material_inward_line_items points at a PO line) — the delta computation
+-- above is what makes that safe for stock even once authorized, by
+-- reading the old per-item totals before that delete happens.
 create or replace function public.update_material_dispatch(
   target_dispatch_id uuid,
   dispatch_date_in date,
@@ -2696,6 +2706,10 @@ declare
   dispatch_row public.material_dispatch%rowtype;
   updated_row public.material_dispatch%rowtype;
   li jsonb;
+  rec record;
+  shortfall_msg text := '';
+  available numeric;
+  item_name text;
 begin
   if not public.is_store_or_admin(auth.uid()) then
     raise exception 'Not authorized to edit material dispatch.';
@@ -2705,8 +2719,48 @@ begin
   if not found then
     raise exception 'Material dispatch record not found.';
   end if;
+  if dispatch_row.authorized_at is not null and not public.is_admin(auth.uid()) then
+    raise exception 'Only an admin can edit a dispatch that has already been authorized.';
+  end if;
+
+  -- The new per-item totals (summed, in case the same item ends up on
+  -- more than one submitted row) — used below to compute each item's
+  -- delta against what material_dispatch_line_items currently holds,
+  -- before that table is replaced further down.
+  create temporary table if not exists tmp_dispatch_new_totals (item_id uuid primary key, quantity numeric) on commit drop;
+  delete from tmp_dispatch_new_totals;
+  for li in select * from jsonb_array_elements(line_items_in)
+  loop
+    insert into tmp_dispatch_new_totals (item_id, quantity)
+    values ((li->>'item_id')::uuid, (li->>'quantity')::numeric)
+    on conflict (item_id) do update set quantity = tmp_dispatch_new_totals.quantity + excluded.quantity;
+  end loop;
+
+  create temporary table if not exists tmp_dispatch_deltas (item_id uuid primary key, delta numeric) on commit drop;
+  delete from tmp_dispatch_deltas;
+  insert into tmp_dispatch_deltas (item_id, delta)
+  select coalesce(new_totals.item_id, old_totals.item_id), coalesce(new_totals.quantity, 0) - coalesce(old_totals.quantity, 0)
+  from tmp_dispatch_new_totals new_totals
+  full outer join (
+    select item_id, sum(quantity) as quantity
+    from public.material_dispatch_line_items
+    where dispatch_id = target_dispatch_id
+    group by item_id
+  ) old_totals on old_totals.item_id = new_totals.item_id;
+
   if dispatch_row.authorized_at is not null then
-    raise exception 'Cannot edit a dispatch that has already been authorized.';
+    for rec in select item_id, delta from tmp_dispatch_deltas where delta > 0
+    loop
+      select coalesce(cs.current_qty, 0) into available from public.current_stock cs where cs.item_id = rec.item_id;
+      select name into item_name from public.items where id = rec.item_id;
+      if coalesce(available, 0) < rec.delta then
+        shortfall_msg := shortfall_msg || format('%s (need %s more, have %s); ', item_name, rec.delta, coalesce(available, 0));
+      end if;
+    end loop;
+
+    if shortfall_msg <> '' then
+      raise exception 'Cannot save — insufficient stock for the increased quantity: %', shortfall_msg;
+    end if;
   end if;
 
   update public.material_dispatch
@@ -2725,6 +2779,14 @@ begin
       notes = nullif(trim(notes_in), '')
   where id = target_dispatch_id
   returning * into updated_row;
+
+  if dispatch_row.authorized_at is not null then
+    for rec in select item_id, delta from tmp_dispatch_deltas where delta <> 0
+    loop
+      insert into public.stock_movements (item_id, movement_type, quantity, reference_type, reference_id, created_by)
+      values (rec.item_id, case when rec.delta > 0 then 'out' else 'in' end, abs(rec.delta), 'material_dispatch', target_dispatch_id, auth.uid());
+    end loop;
+  end if;
 
   delete from public.material_dispatch_line_items where dispatch_id = target_dispatch_id;
 

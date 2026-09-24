@@ -27,15 +27,20 @@
 // dispatch, here and on Delivery Challans. See dispatchTotalAmount/
 // dispatchFinalAmount in ../materialDispatch.js for the shared math.
 //
-// Third Phase 13 addendum (direct request): double-clicking an
-// unauthorized dispatch's row opens this same form in edit mode instead
-// of a fresh "New Dispatch", pre-filled from that dispatch — the Upload
-// Delivery Challan card is hidden while editing (nothing to re-parse
-// onto an existing entry), the heading/Save button read "Edit
-// Dispatch"/"Save Changes", and Save calls updateMaterialDispatch
-// instead of createMaterialDispatch. Blocked once a dispatch is
-// authorized (no cursor-pointer affordance, dblclick does nothing) —
-// see update_material_dispatch() in supabase/schema.sql for why.
+// Third Phase 13 addendum (direct request): double-clicking a dispatch's
+// row opens this same form in edit mode instead of a fresh "New
+// Dispatch", pre-filled from that dispatch — the Upload Delivery Challan
+// card is hidden while editing (nothing to re-parse onto an existing
+// entry), the heading/Save button read "Edit Dispatch"/"Save Changes",
+// and Save calls updateMaterialDispatch instead of createMaterialDispatch.
+//
+// Fourth Phase 13 addendum (direct request): editing now also works on
+// an already-authorized dispatch, admin only (unauthorized stays
+// store/admin, per canCreate) — saving then adjusts real stock to match
+// the edit, not just the line items, so a confirmation dialog and an
+// on-form warning both call that out before it happens. See
+// update_material_dispatch() in supabase/schema.sql for how the stock
+// adjustment itself is computed.
 import { getCurrentProfile } from '../auth.js';
 import { renderShell } from '../layout.js';
 import { escapeHtml } from '../components.js';
@@ -90,9 +95,9 @@ function initialState() {
     error: false,
     formMode: false,
     form: emptyForm(),
-    // Set while the open form is editing an existing (unauthorized)
-    // dispatch rather than creating a new one — see the double-click
-    // wiring below and updateMaterialDispatch in ../materialDispatch.js.
+    // Set while the open form is editing an existing dispatch rather than
+    // creating a new one — see the double-click wiring below and
+    // updateMaterialDispatch in ../materialDispatch.js.
     editingDispatchId: null,
     formError: null,
     saving: false,
@@ -128,6 +133,13 @@ function formFromDispatch(dispatch) {
     challanParseNote: null,
     challanOcrBusy: false,
   };
+}
+
+/** True while the form is editing a dispatch that's already authorized — see renderForm/wireEvents below. */
+function isEditingAuthorizedDispatch(state) {
+  if (!state.editingDispatchId) return false;
+  const dispatch = state.dispatches.find((d) => d.id === state.editingDispatchId);
+  return Boolean(dispatch?.authorized_at);
 }
 
 /**
@@ -215,14 +227,18 @@ function renderContent(container, state, canCreate, isAdmin) {
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px">
       <div>
         <h1 style="margin:0">Material Dispatch</h1>
-        ${canCreate && !state.formMode ? `<p style="margin:4px 0 0;font-size:12px;color:var(--color-neutral-500)">Double-click a not-yet-authorized row to edit it.</p>` : ''}
+        ${
+          canCreate && !state.formMode
+            ? `<p style="margin:4px 0 0;font-size:12px;color:var(--color-neutral-500)">${isAdmin ? 'Double-click any row to edit it — editing an authorized one also adjusts stock.' : 'Double-click a not-yet-authorized row to edit it.'}</p>`
+            : ''
+        }
       </div>
       ${canCreate && !state.formMode ? `<button type="button" class="btn btn-secondary" data-action="new-dispatch">+ New Dispatch</button>` : ''}
     </div>
 
     ${state.fileActionError ? `<p data-role="file-action-error" style="font-size:13px;color:var(--color-accent-2-200);background:var(--color-accent-2-900);border:1px solid var(--color-accent-2-700);border-radius:var(--radius-md);padding:8px 12px;margin-bottom:14px">${escapeHtml(state.fileActionError)}</p>` : ''}
 
-    ${state.formMode ? renderForm(state, isAdmin, Boolean(state.editingDispatchId)) : ''}
+    ${state.formMode ? renderForm(state, isAdmin, Boolean(state.editingDispatchId), isEditingAuthorizedDispatch(state)) : ''}
 
     <div class="card elev-sm" style="padding:0;overflow-x:auto">
       ${
@@ -244,11 +260,16 @@ function renderContent(container, state, canCreate, isAdmin) {
   `;
 }
 
-function renderForm(state, isAdmin, editing) {
+function renderForm(state, isAdmin, editing, editingAuthorized) {
   const { form } = state;
   return `
     <div class="card elev-sm" style="margin-bottom:16px" data-role="dispatch-form">
       <h3 class="card-title" style="font-size:16px">${editing ? 'Edit Dispatch' : 'New Dispatch'}</h3>
+      ${
+        editingAuthorized
+          ? `<p data-role="editing-authorized-warning" style="font-size:12px;color:var(--color-accent-2-200);margin-top:6px">This dispatch is already Authorized — saving will adjust stock levels to match your changes.</p>`
+          : ''
+      }
 
       ${
         editing
@@ -359,10 +380,13 @@ function renderDispatchRow(dispatch, state, isAdmin, canCreate) {
   const authorized = Boolean(dispatch.authorized_at);
   const hasFile = Boolean(dispatch.challan_file_path);
   const authorizeError = state.authorizeErrorByDispatch[dispatch.id];
-  const dblClickable = canCreate && !authorized;
+  // Unauthorized: store/admin, zero stock effect. Authorized: admin only,
+  // since saving now also adjusts real stock (see update_material_dispatch
+  // in supabase/schema.sql) — the same admin-only bar as Authorize itself.
+  const dblClickable = authorized ? isAdmin : canCreate;
 
   const rows = [
-    `<tr data-dispatch-row="${escapeHtml(dispatch.id)}" style="${dblClickable ? 'cursor:pointer' : ''}" ${dblClickable ? 'title="Double-click to edit"' : ''}>
+    `<tr data-dispatch-row="${escapeHtml(dispatch.id)}" style="${dblClickable ? 'cursor:pointer' : ''}" ${dblClickable ? `title="Double-click to edit${authorized ? ' (adjusts stock)' : ''}"` : ''}>
       <td>${escapeHtml(dispatch.dispatch_date)}</td>
       <td>${escapeHtml(dispatch.dc_number || '—')}</td>
       <td>${escapeHtml(dispatch.reference || '—')}</td>
@@ -463,7 +487,13 @@ function wireEvents(container, store, user, load, canCreate, isAdmin) {
     row.addEventListener('dblclick', () => {
       const state = store.getState();
       const dispatch = state.dispatches.find((d) => d.id === row.dataset.dispatchRow);
-      if (!dispatch || dispatch.authorized_at) return; // already authorized — nothing to edit
+      if (!dispatch) return;
+      // Editing an already-authorized dispatch is admin only, since saving
+      // adjusts real stock (see update_material_dispatch in schema.sql) —
+      // same bar as Authorize itself. Editing an unauthorized one is
+      // already gated by canCreate, above the `if (!canCreate) return;`
+      // this whole block sits under.
+      if (dispatch.authorized_at && !isAdmin) return;
       store.setState({ formMode: true, editingDispatchId: dispatch.id, form: formFromDispatch(dispatch), formError: null });
     });
   });
@@ -607,6 +637,9 @@ function wireEvents(container, store, user, load, canCreate, isAdmin) {
     const { valid, errors } = validateMaterialDispatchForm(state.form);
     if (!valid) {
       store.setState({ formError: Object.values(errors)[0] });
+      return;
+    }
+    if (isEditingAuthorizedDispatch(state) && !window.confirm('This dispatch is already Authorized. Saving will adjust stock levels to match your changes. Continue?')) {
       return;
     }
     store.setState({ saving: true, formError: null });
