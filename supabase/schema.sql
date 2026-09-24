@@ -2726,9 +2726,12 @@ begin
   -- The new per-item totals (summed, in case the same item ends up on
   -- more than one submitted row) — used below to compute each item's
   -- delta against what material_dispatch_line_items currently holds,
-  -- before that table is replaced further down.
-  create temporary table if not exists tmp_dispatch_new_totals (item_id uuid primary key, quantity numeric) on commit drop;
-  delete from tmp_dispatch_new_totals;
+  -- before that table is replaced further down. Dropped and recreated
+  -- rather than a bare "delete from" to clear a prior call's rows within
+  -- the same session — Supabase's default pg-safeupdate extension blocks
+  -- any DELETE/UPDATE with no WHERE clause, including on a temp table.
+  drop table if exists tmp_dispatch_new_totals;
+  create temporary table tmp_dispatch_new_totals (item_id uuid primary key, quantity numeric) on commit drop;
   for li in select * from jsonb_array_elements(line_items_in)
   loop
     insert into tmp_dispatch_new_totals (item_id, quantity)
@@ -2736,8 +2739,8 @@ begin
     on conflict (item_id) do update set quantity = tmp_dispatch_new_totals.quantity + excluded.quantity;
   end loop;
 
-  create temporary table if not exists tmp_dispatch_deltas (item_id uuid primary key, delta numeric) on commit drop;
-  delete from tmp_dispatch_deltas;
+  drop table if exists tmp_dispatch_deltas;
+  create temporary table tmp_dispatch_deltas (item_id uuid primary key, delta numeric) on commit drop;
   insert into tmp_dispatch_deltas (item_id, delta)
   select coalesce(new_totals.item_id, old_totals.item_id), coalesce(new_totals.quantity, 0) - coalesce(old_totals.quantity, 0)
   from tmp_dispatch_new_totals new_totals
